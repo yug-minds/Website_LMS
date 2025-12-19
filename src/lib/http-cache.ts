@@ -1,0 +1,201 @@
+/**
+ * HTTP caching utilities
+ * Provides Cache-Control, ETag, and Last-Modified headers for API responses
+ */
+
+import { NextResponse } from 'next/server';
+import { recordHttpCacheOperation } from './http-cache-monitor';
+
+export interface CacheOptions {
+  maxAge?: number; // Max age in seconds
+  sMaxAge?: number; // Shared max age (CDN) in seconds
+  staleWhileRevalidate?: number; // Stale-while-revalidate in seconds
+  mustRevalidate?: boolean;
+  noCache?: boolean;
+  noStore?: boolean;
+  private?: boolean;
+  public?: boolean;
+}
+
+/**
+ * Create Cache-Control header value
+ */
+export function createCacheControlHeader(options: CacheOptions = {}): string {
+  const directives: string[] = [];
+
+  if (options.noStore) {
+    directives.push('no-store');
+    return directives.join(', ');
+  }
+
+  if (options.noCache) {
+    directives.push('no-cache');
+  }
+
+  if (options.private) {
+    directives.push('private');
+  } else if (options.public) {
+    directives.push('public');
+  }
+
+  if (options.maxAge !== undefined) {
+    directives.push(`max-age=${options.maxAge}`);
+  }
+
+  if (options.sMaxAge !== undefined) {
+    directives.push(`s-maxage=${options.sMaxAge}`);
+  }
+
+  if (options.staleWhileRevalidate !== undefined) {
+    directives.push(`stale-while-revalidate=${options.staleWhileRevalidate}`);
+  }
+
+  if (options.mustRevalidate) {
+    directives.push('must-revalidate');
+  }
+
+  return directives.join(', ') || 'no-cache';
+}
+
+/**
+ * Generate ETag from data
+ */
+export function generateETag(data: any): string {
+  const str = typeof data === 'string' ? data : JSON.stringify(data);
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return `"${Math.abs(hash).toString(16)}"`;
+}
+
+/**
+ * Add caching headers to response
+ */
+export function addCacheHeaders(
+  response: NextResponse,
+  data: any,
+  options: CacheOptions & {
+    lastModified?: Date | string;
+    etag?: string;
+  } = {}
+): NextResponse {
+  const cacheControl = createCacheControlHeader(options);
+  response.headers.set('Cache-Control', cacheControl);
+
+  // Add ETag if data provided
+  if (data && !options.etag) {
+    const etag = generateETag(data);
+    response.headers.set('ETag', etag);
+  } else if (options.etag) {
+    response.headers.set('ETag', options.etag);
+  }
+
+  // Add Last-Modified if provided
+  if (options.lastModified) {
+    const lastModified = typeof options.lastModified === 'string'
+      ? new Date(options.lastModified)
+      : options.lastModified;
+    response.headers.set('Last-Modified', lastModified.toUTCString());
+  }
+
+  return response;
+}
+
+/**
+ * Check if request has matching ETag (304 Not Modified)
+ */
+export function checkETag(request: Request, etag: string): boolean {
+  const ifNoneMatch = request.headers.get('If-None-Match');
+  return ifNoneMatch === etag || (ifNoneMatch?.includes(etag) ?? false);
+}
+
+/**
+ * Create 304 Not Modified response with tracking
+ */
+export function create304Response(
+  request: Request,
+  endpoint: string,
+  startTime: number
+): NextResponse {
+  const response = new NextResponse(null, { status: 304 });
+  
+  // Track the 304 response
+  try {
+    const { recordHttpCacheOperation } = require('./http-cache-monitor');
+    recordHttpCacheOperation({
+      endpoint,
+      statusCode: 304,
+      is304: true,
+      hasETag: true,
+      cacheControl: undefined,
+      responseSize: 0,
+      duration: Date.now() - startTime
+    });
+  } catch (error) {
+    // Silently fail tracking
+  }
+  
+  return response;
+}
+
+/**
+ * Check if request has matching Last-Modified (304 Not Modified)
+ */
+export function checkLastModified(request: Request, lastModified: Date): boolean {
+  const ifModifiedSince = request.headers.get('If-Modified-Since');
+  if (!ifModifiedSince) return false;
+  
+  const modifiedSince = new Date(ifModifiedSince);
+  return lastModified <= modifiedSince;
+}
+
+/**
+ * Preset cache configurations
+ */
+export const CachePresets = {
+  // Dashboard stats - cached for 7.5 minutes, stale for 10 minutes
+  DASHBOARD_STATS: {
+    maxAge: 450, // 7.5 minutes (optimized from 5 min based on 96.7% hit rate)
+    sMaxAge: 450,
+    staleWhileRevalidate: 600, // 10 minutes
+    public: true
+  } as CacheOptions,
+
+  // User dashboard - cached for 3 minutes, stale for 5 minutes
+  USER_DASHBOARD: {
+    maxAge: 180, // 3 minutes (optimized from 2 min based on 96.7% hit rate)
+    sMaxAge: 180,
+    staleWhileRevalidate: 300, // 5 minutes
+    private: true
+  } as CacheOptions,
+
+  // Static content - cached for 1 hour
+  STATIC_CONTENT: {
+    maxAge: 3600, // 1 hour
+    sMaxAge: 3600,
+    public: true
+  } as CacheOptions,
+
+  // Semi-static content - cached for 5 minutes
+  SEMI_STATIC: {
+    maxAge: 300, // 5 minutes
+    sMaxAge: 300,
+    public: true
+  } as CacheOptions,
+
+  // No cache - for dynamic content
+  NO_CACHE: {
+    noCache: true,
+    mustRevalidate: true
+  } as CacheOptions,
+
+  // No store - for sensitive data
+  NO_STORE: {
+    noStore: true
+  } as CacheOptions
+};
+

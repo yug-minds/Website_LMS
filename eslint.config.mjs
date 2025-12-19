@@ -12,6 +12,13 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Utility scripts
+    "fix-*.js",
+    "remove-unused-imports.js",
+    "static-analysis-script.js",
+    "*.sql",
+    "*.sh",
+    "*.md",
   ]),
 ]);
 
