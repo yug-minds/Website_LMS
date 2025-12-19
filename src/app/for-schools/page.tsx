@@ -90,8 +90,8 @@ export default function ForSchoolsPage() {
           <div className="flex flex-col lg:flex-row items-center lg:items-stretch gap-0">
             {/* Left Column - Text */}
             <div className="flex-1 w-full flex flex-col justify-center pl-8 pr-4 md:pl-16 md:pr-8 lg:pl-24 lg:pr-12 xl:pl-32 xl:pr-16 py-12 md:py-16 lg:py-20 text-center lg:text-left">
-              <div className="relative z-10 max-w-2xl lg:max-w-none mx-auto lg:mx-0">
-                <h1 className="text-4xl md:text-6xl lg:text-7xl xl:text-8xl font-extrabold leading-tight">
+              <div className="relative z-10 max-w-2xl lg:max-w-4xl xl:max-w-5xl mx-auto lg:mx-0">
+                <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl font-extrabold leading-tight max-w-full">
                   <span className="block">Empower Your</span>
                   <span className="block">School with</span>
                   <span className="block text-blue-600 font-extrabold">World-Class</span>
@@ -113,13 +113,13 @@ export default function ForSchoolsPage() {
               </div>
             </div>
             {/* Right Column - Image */}
-            <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
+            <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] max-h-[800px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
               <Image 
                 src="/For School.png"  
                 alt="Students Learning STEM Activity" 
                 fill
                 sizes="(max-width: 1023px) 100vw, (max-width: 1279px) 45vw, 50vw"
-                className="object-cover"
+                className="object-cover max-w-full max-h-full"
                 priority
               />
               <div className="absolute left-0 top-0 bottom-0 w-[10px] lg:w-[20px] bg-blue-600 lg:rounded-l-[61px] z-20 pointer-events-none"></div>
@@ -131,7 +131,7 @@ export default function ForSchoolsPage() {
       {/* Why Schools Choose Us Section */}
       <section className="min-h-screen flex items-center justify-center bg-blue-600 text-white py-20">
         <div className="container">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6">Why Schools Choose Us</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6 max-w-5xl mx-auto">Why Schools Choose Us</h2>
           <p className="text-center text-blue-100 mb-10 md:mb-12 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">
             We make it easy to bring cutting-edge technology education to your campus
           </p>
@@ -160,7 +160,7 @@ export default function ForSchoolsPage() {
         {/* Simple Onboarding Process Section */}
         <div className="flex-1 flex items-center justify-center bg-white min-h-0 py-8 md:py-12 overflow-y-auto">
           <div className="container py-4 md:py-6">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4 max-w-5xl mx-auto">
               <span className="text-gray-900">Simple</span>{" "}
               <span className="text-blue-600">Onboarding Process</span>
             </h2>
@@ -184,7 +184,7 @@ export default function ForSchoolsPage() {
         {/* Call to Action Section */}
         <div className="flex-1 flex items-center justify-center bg-blue-600 text-white min-h-0 py-8 md:py-12 overflow-y-auto">
           <div className="container text-center py-4 md:py-6">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-4 md:mb-6">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-4 md:mb-6 max-w-5xl mx-auto">
               Ready to Transform Your School&apos;s Tech Education?
             </h2>
             <p className="text-blue-100 mb-6 md:mb-8 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">

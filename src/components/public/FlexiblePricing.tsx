@@ -10,7 +10,7 @@ export default function FlexiblePricing() {
       
       <div className="container mx-auto px-4 md:px-6 lg:px-8 relative z-10">
         <div className="text-center">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-white mb-6">
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-white mb-6 max-w-5xl mx-auto">
             Flexible Pricing
           </h2>
           <p className="text-blue-100 text-lg md:text-xl max-w-2xl mx-auto mb-10">

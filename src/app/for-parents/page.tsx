@@ -116,8 +116,8 @@ export default function ForParentsPage() {
           <div className="flex flex-col lg:flex-row items-center lg:items-stretch gap-0">
             {/* Left Column - Text */}
             <div className="flex-1 w-full flex flex-col justify-center pl-8 pr-4 md:pl-16 md:pr-8 lg:pl-24 lg:pr-12 xl:pl-32 xl:pr-16 py-12 md:py-16 lg:py-20 text-center lg:text-left">
-              <div className="relative z-10 max-w-2xl lg:max-w-none mx-auto lg:mx-0">
-                <h1 className="text-4xl md:text-6xl lg:text-7xl xl:text-8xl font-extrabold leading-tight">
+              <div className="relative z-10 max-w-2xl lg:max-w-4xl xl:max-w-5xl mx-auto lg:mx-0">
+                <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl font-extrabold leading-tight max-w-full">
                   <span className="block">Give Your Child</span>
                   <span className="block">a <span className="text-blue-600">Head Start</span> in</span>
                   <span className="block text-blue-600 font-extrabold">Technology</span>
@@ -138,13 +138,13 @@ export default function ForParentsPage() {
               </div>
             </div>
             {/* Right Column - Image */}
-            <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
+            <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] max-h-[800px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
               <Image 
                 src="/child-making-robot.jpg"  
                 alt="Child Learning STEM Activity" 
                 fill
                 sizes="(max-width: 1023px) 100vw, (max-width: 1279px) 45vw, 50vw"
-                className="object-cover"
+                className="object-cover max-w-full max-h-full"
                 priority
               />
               <div className="absolute left-0 top-0 bottom-0 w-[10px] lg:w-[20px] bg-blue-600 lg:rounded-l-[61px] z-20 pointer-events-none"></div>
@@ -158,7 +158,7 @@ export default function ForParentsPage() {
         {/* Why Parents Trust Us Section */}
         <div className="flex-1 flex items-start justify-center bg-blue-600 text-white flex-shrink-0 py-8 md:py-12">
           <div className="container w-full py-4 md:py-6">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4">Why Parents Trust Us</h2>
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4 max-w-5xl mx-auto">Why Parents Trust Us</h2>
             <p className="text-center text-blue-100 mb-6 md:mb-8 max-w-2xl mx-auto text-sm md:text-base lg:text-lg">
               We&apos;re more than just coding classes—we&apos;re partners in your child&apos;s development.
             </p>
@@ -185,7 +185,7 @@ export default function ForParentsPage() {
         {/* What Your Child Will Learn Section */}
         <div className="flex-1 flex items-start justify-center bg-white flex-shrink-0 py-8 md:py-12">
           <div className="container w-full py-4 md:py-6">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-4 md:mb-6">What Your Child Will Learn</h2>
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-4 md:mb-6 max-w-5xl mx-auto">What Your Child Will Learn</h2>
             <div className="grid md:grid-cols-2 gap-8 md:gap-10 items-center">
               <div className="space-y-4">
                 {learningSkills.map((skill, idx) => (
@@ -195,12 +195,12 @@ export default function ForParentsPage() {
                   </div>
                 ))}
               </div>
-              <div className="bg-gray-100 rounded-2xl aspect-video relative overflow-hidden">
+              <div className="bg-gray-100 rounded-2xl aspect-video relative overflow-hidden max-h-[600px]">
                 <Image
                   src="/Kids Dong Robotics.png"
                   alt="Students Learning Robotics Activity"
                   fill
-                  className="object-cover"
+                  className="object-cover max-w-full max-h-full"
                   sizes="(max-width: 768px) 100vw, 50vw"
                 />
               </div>
@@ -212,7 +212,7 @@ export default function ForParentsPage() {
       {/* Flexible Pricing Section */}
       <section className="flex items-center justify-center bg-blue-600 text-white py-12 md:py-16">
         <div className="container">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4">Flexible Pricing</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-3 md:mb-4 max-w-5xl mx-auto">Flexible Pricing</h2>
           <p className="text-center text-blue-100 mb-6 md:mb-8 max-w-2xl mx-auto text-sm md:text-base lg:text-lg">
             Affordable options with payment plans available
           </p>
@@ -245,7 +245,7 @@ export default function ForParentsPage() {
       {/* Frequently Asked Questions Section */}
       <section className="min-h-screen flex items-center justify-center bg-gray-50 py-20">
         <div className="container py-8">
-        <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-8 md:mb-10">Frequently Asked Questions</h2>
+        <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-8 md:mb-10 max-w-5xl mx-auto">Frequently Asked Questions</h2>
         <FAQAccordion faqs={faqs} />
         </div>
       </section>
@@ -253,7 +253,7 @@ export default function ForParentsPage() {
       {/* CTA Section */}
       <section className="flex items-center justify-center bg-blue-600 text-white py-12 md:py-16">
         <div className="container text-center">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-4 md:mb-6">
+          <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-4 md:mb-6 max-w-5xl mx-auto">
             Start Your Child&apos;s Tech Journey Today
           </h2>
           <p className="text-blue-100 mb-6 md:mb-8 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">

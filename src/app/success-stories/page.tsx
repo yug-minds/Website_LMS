@@ -135,7 +135,7 @@ export default async function SuccessStoriesPage() {
       <section className="bg-white py-12 md:py-16 lg:py-20">
         <div className="container mx-auto px-4 md:px-6 lg:px-8">
           <div className="max-w-7xl mx-auto text-center">
-            <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-extrabold mb-4 md:mb-6 text-gray-900">Success Stories</h1>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-extrabold mb-4 md:mb-6 text-gray-900 max-w-6xl mx-auto">Success Stories</h1>
             <p className="text-lg md:text-xl lg:text-2xl text-gray-700 max-w-3xl mx-auto leading-relaxed">
               Discover how our students are building the future, one project at a time
             </p>
@@ -150,7 +150,7 @@ export default async function SuccessStoriesPage() {
       {/* Impact by the Numbers Section */}
       <section className="min-h-screen flex items-center justify-center bg-blue-600 text-white py-20">
         <div className="container">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6">Impact by the Numbers</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6 max-w-5xl mx-auto">Impact by the Numbers</h2>
           <p className="text-blue-100 text-center mb-10 md:mb-12 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">
             See how our students are excelling and achieving remarkable results
           </p>

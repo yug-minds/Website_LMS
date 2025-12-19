@@ -26,8 +26,8 @@ export default function HomeHero() {
         <div className="flex flex-col lg:flex-row items-center lg:items-stretch gap-0">
           {/* Left Column - Text */}
           <div className="flex-1 w-full flex flex-col justify-center pl-8 pr-4 md:pl-16 md:pr-8 lg:pl-24 lg:pr-12 xl:pl-32 xl:pr-16 py-12 md:py-16 lg:py-20 text-center lg:text-left">
-            <div className="relative z-10 max-w-2xl lg:max-w-none mx-auto lg:mx-0">
-              <h1 className="text-4xl md:text-6xl lg:text-7xl xl:text-8xl font-extrabold leading-tight">
+            <div className="relative z-10 max-w-2xl lg:max-w-4xl xl:max-w-5xl mx-auto lg:mx-0">
+              <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl font-extrabold leading-tight max-w-full">
                 <span className="block text-gray-900">Empowering</span>
                 <span className="block text-gray-900">Students to</span>
                 <span className="block text-blue-600 font-extrabold">Code, Create,</span>
@@ -50,13 +50,13 @@ export default function HomeHero() {
             </div>
           </div>
           {/* Right Column - Image */}
-          <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
+          <div className="w-full lg:w-[45%] xl:w-[50%] relative h-[300px] sm:h-[400px] md:h-[450px] lg:h-auto lg:min-h-[450px] max-h-[800px] rounded-none lg:rounded-l-[61px] overflow-hidden bg-white shadow-2xl">
             <Image 
               src="/image.png"  
               alt="Students Learning STEM Activity" 
               fill
               sizes="(max-width: 1023px) 100vw, (max-width: 1279px) 45vw, 50vw"
-              className="object-cover"
+              className="object-cover max-w-full max-h-full"
               priority
             />
             <div className="absolute left-0 top-0 bottom-0 w-[10px] lg:w-[20px] bg-blue-600 lg:rounded-l-[61px] z-20 pointer-events-none"></div>

@@ -33,8 +33,8 @@ export default function ResizableNavbar() {
       <NavBody>
         <NavbarLogo />
         <NavItems items={navItems} />
-        <div className="flex items-center gap-3 ml-4">
-          <NavbarButton href="/login" variant="secondary">Student Portal</NavbarButton>
+        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+          <NavbarButton href="/login" variant="secondary" className="text-sm px-3 py-1.5">Student Portal</NavbarButton>
         </div>
       </NavBody>
 

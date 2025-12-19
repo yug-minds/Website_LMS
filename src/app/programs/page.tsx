@@ -79,7 +79,7 @@ export default function ProgramsPage() {
         <div className="container flex-1 flex flex-col justify-center py-8 md:py-12">
           {/* Header Content */}
           <div className="text-center mb-8 md:mb-12">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl xl:text-8xl font-extrabold mb-4 md:mb-6">Our Programs</h1>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl font-extrabold mb-4 md:mb-6 max-w-6xl mx-auto">Our Programs</h1>
             <p className="text-lg md:text-xl lg:text-2xl text-gray-700 max-w-3xl mx-auto leading-relaxed">
               Discover the perfect STEM learning journey for every student, from coding basics to advanced AI and robotics.
             </p>
@@ -119,13 +119,13 @@ export default function ProgramsPage() {
       {/* Latest Textbooks Section */}
       <section className="min-h-screen flex items-center justify-center bg-blue-600 py-20">
         <div className="container">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6 text-white">Our Latest Textbooks</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-center mb-4 md:mb-6 text-white max-w-5xl mx-auto">Our Latest Textbooks</h2>
           <p className="text-white/90 text-center mb-10 md:mb-12 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">
             Comprehensive learning materials designed by experts.
           </p>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 mb-8 md:mb-12">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-white rounded-xl shadow-md aspect-[3/4] overflow-hidden hover:shadow-xl transition-shadow border-[5px] border-white">
+              <div key={i} className="bg-white rounded-xl shadow-md aspect-[3/4] overflow-hidden hover:shadow-xl transition-shadow border-[5px] border-white max-w-full">
                 {i === 1 ? (
                   <Image
                     src="/kids Level 1 TextBook.png"
@@ -163,7 +163,7 @@ export default function ProgramsPage() {
       {/* Robotics Kit Section */}
       <section className="min-h-screen flex items-center justify-center bg-white py-20">
         <div className="container">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-center mb-10 md:mb-16">Our Robotics Kit</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold text-center mb-10 md:mb-16 max-w-5xl mx-auto">Our Robotics Kit</h2>
           <div className="grid lg:grid-cols-2 gap-10 md:gap-12 items-center">
             <div className="order-2 lg:order-1">
               <p className="text-lg text-gray-700 leading-relaxed mb-8">
@@ -209,7 +209,7 @@ export default function ProgramsPage() {
         {/* What's Included Section */}
         <div className="flex-1 flex items-center justify-center bg-blue-600 min-h-0 py-8 md:py-12 overflow-y-auto">
           <div className="container py-4 md:py-8">
-            <h2 className="text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-extrabold text-center mb-3 md:mb-4 lg:mb-6 text-white">What&apos;s Included</h2>
+            <h2 className="text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-extrabold text-center mb-3 md:mb-4 lg:mb-6 text-white max-w-5xl mx-auto">What&apos;s Included</h2>
             <p className="text-white/90 text-center mb-6 md:mb-8 lg:mb-12 max-w-2xl mx-auto text-sm md:text-base lg:text-lg xl:text-xl px-4">
               Every program comes with comprehensive support.
             </p>
@@ -232,7 +232,7 @@ export default function ProgramsPage() {
         {/* CTA Section */}
         <div className="flex-1 flex items-center justify-center bg-white min-h-0 py-8 md:py-12 overflow-y-auto">
           <div className="container text-center py-4 md:py-8 px-4">
-            <h2 className="text-2xl md:text-3xl lg:text-4xl xl:text-5xl 2xl:text-6xl font-extrabold mb-3 md:mb-4 lg:mb-6 text-gray-900">
+            <h2 className="text-2xl md:text-3xl lg:text-4xl xl:text-5xl 2xl:text-6xl font-extrabold mb-3 md:mb-4 lg:mb-6 text-gray-900 max-w-5xl mx-auto">
               Ready to Start Your STEM Journey?
             </h2>
             <p className="text-gray-600 mb-6 md:mb-8 lg:mb-10 max-w-2xl mx-auto text-sm md:text-base lg:text-lg xl:text-xl">

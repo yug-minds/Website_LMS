@@ -111,7 +111,7 @@ export default function ContactPage() {
         {/* Get in Touch Section */}
         <div className="flex-1 flex items-start justify-center bg-gray-50 flex-shrink-0 py-8 md:py-12 min-h-0">
           <div className="container w-full py-4 md:py-6">
-            <h1 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-3 md:mb-4 text-center">
+            <h1 className="text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-3 md:mb-4 text-center max-w-5xl mx-auto">
               Get in <span className="text-blue-600">Touch</span>
             </h1>
             <p className="text-sm md:text-base lg:text-lg text-gray-700 mb-4 md:mb-6 max-w-2xl mx-auto leading-relaxed text-center">
@@ -155,7 +155,7 @@ export default function ContactPage() {
         {/* Find Us Section */}
         <div className="flex-1 flex items-start justify-center bg-blue-600 flex-shrink-0 py-8 md:py-12 min-h-0">
           <div className="container w-full py-4 md:py-6">
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-6 md:mb-8 text-white">Find Us</h2>
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-6 md:mb-8 text-white max-w-5xl mx-auto">Find Us</h2>
             <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-start justify-start">
               <Card className="bg-white border-0 w-full max-w-sm mx-auto md:mx-auto mt-6 md:mt-8">
                 <CardContent className="p-3 md:p-4 flex flex-col items-center text-center">
@@ -196,7 +196,7 @@ export default function ContactPage() {
       {/* Contact Form Section */}
       <section className="min-h-screen flex items-center justify-center bg-gray-50 py-20">
         <div className="container py-8 px-4 md:px-8 lg:px-12 xl:px-16">
-          <h2 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-extrabold mb-8 md:mb-10 text-center">Contact Us</h2>
+          <h2 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-extrabold mb-8 md:mb-10 text-center max-w-5xl mx-auto">Contact Us</h2>
           <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
           <div className="grid md:grid-cols-2 gap-6 md:gap-8 mb-6 md:mb-8">
             <div>
@@ -335,7 +335,7 @@ export default function ContactPage() {
       {/* Connect With Us Section */}
       <section className="flex items-center justify-center bg-white py-12 md:py-16">
         <div className="container">
-        <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-3 md:mb-4">
+        <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-3 md:mb-4 max-w-5xl mx-auto">
           Connect <span className="text-blue-600">With Us</span>
         </h2>
         <p className="text-gray-700 mb-6 md:mb-8 max-w-2xl mx-auto text-center text-sm md:text-base lg:text-lg">

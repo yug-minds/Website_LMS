@@ -63,7 +63,7 @@ export default function AboutPage() {
         <div className="container flex-1 flex flex-col justify-center py-8 md:py-12">
           {/* Hero Content */}
           <div className="text-center mb-8 md:mb-12">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl xl:text-8xl font-extrabold mb-4 md:mb-6">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl font-extrabold mb-4 md:mb-6 max-w-6xl mx-auto">
               About <span className="text-blue-600">Robo Coders™</span>
             </h1>
             <p className="text-lg md:text-xl lg:text-2xl text-gray-700 max-w-3xl mx-auto leading-relaxed">
@@ -113,7 +113,7 @@ export default function AboutPage() {
       {/* Our Story Section */}
       <section className="min-h-screen flex items-center justify-center bg-blue-600 py-20">
         <div className="container">
-          <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-8 md:mb-12 text-center text-white">Our Story</h2>
+          <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-8 md:mb-12 text-center text-white max-w-5xl mx-auto">Our Story</h2>
           <div className="grid md:grid-cols-2 gap-10 md:gap-12 items-center">
             <div className="space-y-6 md:space-y-8">
               <p className="text-white leading-relaxed text-base md:text-lg lg:text-xl">
@@ -126,12 +126,12 @@ export default function AboutPage() {
                 Our team of expert instructors combines industry experience with a passion for teaching, creating an environment where students don&apos;t just learn—they thrive.
               </p>
             </div>
-            <div className="rounded-2xl overflow-hidden bg-gray-100 aspect-[4/3] relative">
+            <div className="rounded-2xl overflow-hidden bg-gray-100 aspect-[4/3] relative max-h-[600px]">
               <Image
                 src={`/${encodeURI('About Us.jpg')}`}
                 alt="Students learning robotics and coding"
                 fill
-                className="object-cover"
+                className="object-cover max-w-full max-h-full"
                 sizes="(max-width: 768px) 100vw, 50vw"
               />
             </div>
@@ -142,7 +142,7 @@ export default function AboutPage() {
       {/* Why Choose Robo Coders™? Section */}
       <section className="min-h-screen flex items-center justify-center bg-white py-20">
         <div className="container">
-          <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-center mb-4 md:mb-6">
+          <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-center mb-4 md:mb-6 max-w-5xl mx-auto">
             Why Choose <span className="text-blue-600">Robo Coders™</span>?
           </h2>
           <p className="text-gray-600 text-center mb-10 md:mb-12 max-w-2xl mx-auto text-base md:text-lg lg:text-xl">
@@ -171,7 +171,7 @@ export default function AboutPage() {
       {/* Join Our Mission CTA Section */}
       <section className="flex items-center justify-center bg-blue-600 text-white py-16 md:py-20">
         <div className="container text-center">
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-4 md:mb-6">Join Our Mission</h2>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-4 md:mb-6 max-w-5xl mx-auto">Join Our Mission</h2>
           <p className="text-blue-100 mb-8 md:mb-10 max-w-3xl mx-auto text-base md:text-lg lg:text-xl leading-relaxed">
             Be part of the educational revolution that&apos;s preparing students for tomorrow&apos;s world
           </p>

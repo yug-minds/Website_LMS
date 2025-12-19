@@ -17,7 +17,7 @@ export default function WhatChildWillLearn() {
   return (
     <section className="bg-gray-50 py-20 md:py-24">
       <div className="container mx-auto px-4 md:px-6 lg:px-8">
-        <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-center mb-4 md:mb-6">
+        <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-center mb-4 md:mb-6 max-w-5xl mx-auto">
           What Your Child Will Learn
         </h2>
         <div className="grid md:grid-cols-2 gap-8 md:gap-10 lg:gap-12 items-center mt-12">
@@ -31,12 +31,12 @@ export default function WhatChildWillLearn() {
               </div>
             ))}
           </div>
-          <div className="rounded-2xl overflow-hidden bg-white shadow-xl aspect-[4/3] relative">
+          <div className="rounded-2xl overflow-hidden bg-white shadow-xl aspect-[4/3] relative max-h-[600px]">
             <Image
               src="/Kids Dong Robotics.png"
               alt="Kids learning robotics and coding"
               fill
-              className="object-cover"
+              className="object-cover max-w-full max-h-full"
               sizes="(max-width: 768px) 100vw, 50vw"
               loading="lazy"
               quality={75}

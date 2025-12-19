@@ -95,21 +95,49 @@ export const Navbar = ({ children, className }: NavbarProps) => {
 
 export const NavBody = ({ children, className, visible }: NavBodyProps) => {
   const [isDark, setIsDark] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(0);
 
   useEffect(() => {
     const checkDarkMode = () => {
       setIsDark(document.documentElement.classList.contains('dark'));
     };
     
+    const updateWindowWidth = () => {
+      setWindowWidth(window.innerWidth);
+    };
+    
     checkDarkMode();
+    updateWindowWidth();
+    
     const observer = new MutationObserver(checkDarkMode);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class'],
     });
 
-    return () => observer.disconnect();
+    window.addEventListener('resize', updateWindowWidth);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateWindowWidth);
+    };
   }, []);
+
+  // Calculate responsive width based on screen size
+  const getNavbarWidth = () => {
+    if (!visible) return "100%";
+    if (windowWidth === 0) return "95%"; // Initial render
+    if (windowWidth < 1280) return "98%"; // Smaller screens
+    if (windowWidth < 1536) return "95%"; // Medium screens
+    return "90%"; // Large screens
+  };
+
+  const getMinWidth = () => {
+    if (!visible) return "100%";
+    if (windowWidth === 0) return "auto";
+    if (windowWidth < 1280) return "auto"; // No min width on smaller screens
+    return "min(1100px, 95vw)";
+  };
 
   return (
     <motion.div
@@ -118,7 +146,7 @@ export const NavBody = ({ children, className, visible }: NavBodyProps) => {
         boxShadow: visible
           ? "0 0 24px rgba(34, 42, 53, 0.06), 0 1px 1px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(34, 42, 53, 0.04), 0 0 4px rgba(34, 42, 53, 0.08), 0 16px 68px rgba(47, 48, 55, 0.05), 0 1px 0 rgba(255, 255, 255, 0.1) inset"
           : "none",
-        width: visible ? "60%" : "100%",
+        width: getNavbarWidth(),
         y: visible ? 20 : 0,
         backgroundColor: visible 
           ? isDark 
@@ -135,10 +163,10 @@ export const NavBody = ({ children, className, visible }: NavBodyProps) => {
         mass: 0.5,
       }}
       style={{
-        minWidth: visible ? "900px" : "100%",
+        minWidth: getMinWidth(),
       }}
       className={cn(
-        "relative z-[60] mx-auto hidden w-full max-w-7xl flex-row items-center justify-between self-start rounded-full px-6 py-3 lg:flex",
+        "relative z-[60] mx-auto hidden w-full max-w-7xl flex-row items-center justify-between self-start rounded-full px-3 py-3 lg:flex",
         className,
       )}
     >
@@ -154,7 +182,7 @@ export const NavItems = ({ items, className, onItemClick }: NavItemsProps) => {
     <motion.div
       onMouseLeave={() => setHovered(null)}
       className={cn(
-        "absolute inset-0 hidden flex-1 flex-row items-center justify-center space-x-1 text-base font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex",
+        "absolute inset-0 hidden flex-1 flex-row items-center justify-center gap-1 lg:gap-1.5 xl:gap-2 text-xs lg:text-xs xl:text-sm font-medium text-zinc-600 transition duration-200 hover:text-zinc-800 lg:flex overflow-hidden",
         className,
       )}
     >
@@ -162,7 +190,7 @@ export const NavItems = ({ items, className, onItemClick }: NavItemsProps) => {
         <Link
           onMouseEnter={() => setHovered(idx)}
           onClick={onItemClick}
-          className="relative px-3 py-2 text-neutral-600 dark:text-neutral-300 whitespace-nowrap"
+          className="relative px-1 lg:px-1.5 xl:px-2 py-2 text-neutral-600 dark:text-neutral-300 whitespace-nowrap flex-shrink-0 min-w-0"
           key={`link-${idx}`}
           href={item.link}
           prefetch={true}
@@ -173,7 +201,7 @@ export const NavItems = ({ items, className, onItemClick }: NavItemsProps) => {
               className="absolute inset-0 h-full w-full rounded-full bg-gray-100 dark:bg-neutral-800"
             />
           )}
-          <span className="relative z-20">{item.name}</span>
+          <span className="relative z-20 truncate">{item.name}</span>
         </Link>
       ))}
     </motion.div>
@@ -293,7 +321,7 @@ export const NavbarLogo = () => {
   return (
     <Link
       href="/"
-      className="relative z-20 mr-6 flex items-center space-x-2 px-2 py-1 text-base font-normal text-black whitespace-nowrap"
+      className="relative z-20 mr-4 flex items-center space-x-2 px-2 py-1 text-base font-normal text-black whitespace-nowrap flex-shrink-0"
     >
       <Image
         src="/Yugminds_Official_Logo-preview.png"
@@ -302,7 +330,7 @@ export const NavbarLogo = () => {
         height={40}
         className="object-contain"
       />
-      <span className="font-medium text-lg text-black dark:text-white">YugMinds</span>
+      <span className="font-medium text-base text-black dark:text-white">YugMinds</span>
     </Link>
   );
 };
