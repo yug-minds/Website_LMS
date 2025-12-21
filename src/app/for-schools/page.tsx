@@ -101,9 +101,11 @@ export default function ForSchoolsPage() {
                   Partner with Robo Coders™ to bring comprehensive coding and robotics programs to your students. Join 10+ schools already transforming their STEM education.
                 </p>
                 <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-                  <Button size="lg" className="w-full sm:w-auto px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white">
-                    Schedule a Consultation <ArrowRight className="ml-2 h-5 w-5" />
-                  </Button>
+                  <Link href="/contact" className="w-full sm:w-auto">
+                    <Button size="lg" className="w-full sm:w-auto px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white">
+                      Schedule a Consultation <ArrowRight className="ml-2 h-5 w-5" />
+                    </Button>
+                  </Link>
                   <Link href="/programs" className="w-full sm:w-auto">
                     <Button variant="outline" className="w-full sm:w-auto px-8 text-lg border-blue-600 text-blue-600 hover:bg-blue-50" size="lg">
                       View Programs
