@@ -9,7 +9,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -38,7 +37,6 @@ import {
   User,
   GraduationCap,
   Shield,
-  UserCog,
 } from "lucide-react";
 
 interface School {
@@ -99,7 +97,7 @@ export default function CreateAccountDialog({
     specialization: "",
     school_assignments: [] as SchoolAssignment[],
     // School Admin fields
-    permissions: {} as Record<string, any>,
+    permissions: {} as Record<string, unknown>,
     // Admin fields
     is_super_admin: false,
   });
@@ -225,7 +223,7 @@ export default function CreateAccountDialog({
     try {
       // Build request body based on role
        
-      const requestBody: any = {
+      const requestBody: Record<string, unknown> = {
         role,
         full_name: formData.full_name.trim(),
         email: formData.email.trim(),
@@ -326,7 +324,7 @@ export default function CreateAccountDialog({
     }));
   };
 
-  const updateSchoolAssignment = (index: number, field: keyof SchoolAssignment, value: any) => {
+  const updateSchoolAssignment = (index: number, field: keyof SchoolAssignment, value: SchoolAssignment[keyof SchoolAssignment]) => {
     setFormData(prev => ({
       ...prev,
       school_assignments: prev.school_assignments.map((assignment, i) =>
@@ -381,7 +379,7 @@ export default function CreateAccountDialog({
           {/* Role Selection */}
           <div>
             <Label>Account Type *</Label>
-            <Select value={role} onValueChange={(value: any) => {
+            <Select value={role} onValueChange={(value: string) => {
               setRole(value);
               setErrors({});
               // Reset role-specific fields

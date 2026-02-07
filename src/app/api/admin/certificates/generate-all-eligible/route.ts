@@ -9,6 +9,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../../lib/supabase'
 import { verifyAdmin } from '../../../../../lib/auth-utils'
 
+type CourseProgressRow = { student_id: string; course_id: string; completed?: boolean };
+type ChapterRow = { id: string; course_id: string };
+type CertificateRow = { certificate_url?: string | null };
+
 /**
  * POST /api/admin/certificates/generate-all-eligible
  * 
@@ -19,6 +23,15 @@ import { verifyAdmin } from '../../../../../lib/auth-utils'
  * - batch: Batch number (for processing in chunks, default: 0)
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     // Verify admin access
     const auth = await verifyAdmin(request)
@@ -31,13 +44,15 @@ export async function POST(request: NextRequest) {
 
     // Find all students with 80%+ completion who need certificates
     // Query: Get all student-course combinations with 80%+ completion
-    const { data: allProgress, error: progressError } = await supabaseAdmin
+    const { data: rawProgress, error: progressError } = await supabaseAdmin
       .from('course_progress')
       .select(`
         student_id,
         course_id,
         completed
       `)
+
+    const allProgress = (rawProgress ?? []) as CourseProgressRow[];
 
     if (progressError) {
       return NextResponse.json(
@@ -54,7 +69,7 @@ export async function POST(request: NextRequest) {
       total: number
     }>()
 
-    for (const progress of allProgress || []) {
+    for (const progress of allProgress) {
       const key = `${progress.student_id}-${progress.course_id}`
       if (!studentCourseMap.has(key)) {
         studentCourseMap.set(key, {
@@ -73,14 +88,15 @@ export async function POST(request: NextRequest) {
 
     // Get total chapters for each course
     const courseIds = Array.from(new Set(Array.from(studentCourseMap.values()).map(e => e.courseId)))
-    const { data: chapters } = await supabaseAdmin
+    const { data: rawChapters } = await supabaseAdmin
       .from('chapters')
       .select('id, course_id')
       .in('course_id', courseIds)
       .eq('is_published', true)
 
+    const chapters = (rawChapters ?? []) as ChapterRow[];
     const courseChapterCounts = new Map<string, number>()
-    for (const chapter of chapters || []) {
+    for (const chapter of chapters) {
       const count = courseChapterCounts.get(chapter.course_id) || 0
       courseChapterCounts.set(chapter.course_id, count + 1)
     }
@@ -99,7 +115,7 @@ export async function POST(request: NextRequest) {
           .select('certificate_url')
           .eq('student_id', entry.studentId)
           .eq('course_id', entry.courseId)
-          .maybeSingle()
+          .maybeSingle() as { data: CertificateRow | null };
 
         if (!existingCert?.certificate_url) {
           eligible.push({
@@ -168,12 +184,13 @@ export async function POST(request: NextRequest) {
             error: result.error || 'Unknown error',
           })
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
+        const errorMessage = error instanceof Error ? error.message : 'Failed to generate certificate'
         results.push({
           ...item,
           success: false,
-          error: error.message || 'Failed to generate certificate',
+          error: errorMessage,
         })
       }
     }
@@ -187,12 +204,13 @@ export async function POST(request: NextRequest) {
       results,
       message: `Processed ${toProcess.length} of ${eligible.length} eligible certificate(s): ${successCount} success, ${errorCount} errors`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in generate-all-eligible:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
       { 
         error: 'Internal server error',
-        details: error.message 
+        details: errorMessage 
       },
       { status: 500 }
     )

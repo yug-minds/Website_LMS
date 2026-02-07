@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     const operations = getCacheOperations(limit);
 
     // Filter operations for materialized view related keys
-    const mvOperations = operations.filter((op: any) => 
+    const mvOperations = operations.filter((op: { key: string }) => 
       op.key.includes('admin:stats') || 
       op.key.includes('school-admin:stats')
     );

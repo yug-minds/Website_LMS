@@ -2,14 +2,20 @@
 
 import { createContext, useContext } from "react";
 
-// Context for school selection
+export interface TeacherSchool {
+  id?: string;
+  name?: string;
+  school_code?: string;
+  city?: string;
+  state?: string;
+  address?: string;
+  assignment?: { school_id?: string; grades_assigned?: unknown; subjects?: unknown; is_primary?: boolean };
+}
+
 interface TeacherSchoolContextType {
-   
-  selectedSchool: any;
-   
-  schools: any[];
-   
-  onSchoolChange: (school: any) => void;
+  selectedSchool: TeacherSchool | null;
+  schools: TeacherSchool[];
+  onSchoolChange: (school: TeacherSchool | null) => void;
 }
 
 const TeacherSchoolContext = createContext<TeacherSchoolContextType>({

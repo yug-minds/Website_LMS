@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin, createAuthenticatedClient } from '../../../../../lib/supabase';
+import { createAuthenticatedClient } from '../../../../../lib/supabase';
 import { getSchoolAdminSchoolId } from '../../../../../lib/school-admin-auth';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { logger, handleApiError } from '../../../../../lib/logger';
@@ -51,14 +51,14 @@ export async function GET(request: NextRequest) {
     // Fetch all school-specific data using RLS
     // RLS policies will automatically restrict access to the school admin's school
      
-    const schoolResult = await supabase.from('schools').select('*').eq('id', schoolId).single() as any;
+    type SchoolRow = Record<string, unknown>;
+    const schoolResult = await supabase.from('schools').select('*').eq('id', schoolId).single() as { data: SchoolRow | null; error: unknown };
     
-    // Get student IDs for this school (RLS will restrict to school admin's school)
+    // Get student IDs and student_schools data for this school (RLS will restrict to school admin's school)
     const { data: studentSchools } = await supabase
       .from('student_schools')
-      .select('student_id')
-       
-      .eq('school_id', schoolId) as any;
+      .select('*')
+      .eq('school_id', schoolId);
     
     const studentIds = studentSchools?.map((s: { student_id: string }) => s.student_id) || [];
     
@@ -66,8 +66,7 @@ export async function GET(request: NextRequest) {
     const { data: teacherSchools } = await supabase
       .from('teacher_schools')
       .select('teacher_id')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId);
     
     const teacherIds = teacherSchools?.map((t: { teacher_id: string }) => t.teacher_id) || [];
 
@@ -100,6 +99,7 @@ export async function GET(request: NextRequest) {
       export_date: new Date().toISOString(),
       school: school,
       students: students,
+      student_schools: studentSchools || [], // Include student_schools data with section information
       teachers: teachers,
       courses: courses,
       reports: reports,

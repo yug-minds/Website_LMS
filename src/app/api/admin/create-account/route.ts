@@ -96,7 +96,7 @@ try {
     const validation = validateRequestBody(createAccountSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for account creation', {
         endpoint: '/api/admin/create-account',
         errors: errorMessages,
@@ -112,7 +112,7 @@ try {
     }
 
     // 2. Parse request body
-    const { role, email, password, full_name, school_id, grade, phone, address, parent_name, parent_phone } = validation.data;
+    const { role } = validation.data;
 
     // 4. Validate role
     const validRoles = ['admin', 'school_admin', 'teacher', 'student'];

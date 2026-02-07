@@ -1,6 +1,5 @@
 'use client'
 
-import { Progress } from '../ui/progress'
 import { cn } from '../../lib/utils'
 
 interface ProgressBarProps {

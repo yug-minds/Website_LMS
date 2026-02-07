@@ -5,31 +5,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
+type ProfileRow = { id?: string; full_name?: string | null; email?: string | null };
+type CertRow = { id?: string; certificate_name?: string | null; certificate_url?: string | null; issued_at?: string | null; course_id?: string };
+type ProgressRow = { course_id?: string; completed?: boolean; courses?: { id?: string; name?: string | null; title?: string | null } | null };
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const email = searchParams.get('email') || 'sharma@dawnbudsmodelschool.edu'
 
     // Find student
-    const { data: student } = await supabaseAdmin
+    const { data: studentData } = await supabaseAdmin
       .from('profiles')
       .select('id, full_name, email')
       .eq('email', email)
       .eq('role', 'student')
       .single()
 
-    if (!student) {
+    const student = studentData as ProfileRow | null
+    if (!student?.id) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 })
     }
 
     // Check existing certificates
-    const { data: certificates } = await supabaseAdmin
+    const { data: certsData } = await supabaseAdmin
       .from('certificates')
       .select('id, certificate_name, certificate_url, issued_at, course_id')
       .eq('student_id', student.id)
+    const certificates = (certsData || []) as CertRow[]
 
     // Check course progress
-    const { data: progress } = await supabaseAdmin
+    const { data: progressData } = await supabaseAdmin
       .from('course_progress')
       .select(`
         course_id,
@@ -37,22 +43,25 @@ export async function GET(request: NextRequest) {
         courses (id, name, title)
       `)
       .eq('student_id', student.id)
+    const progress = (progressData || []) as ProgressRow[]
 
     // Calculate completion for each course
-    const courseMap = new Map<string, any>()
-    for (const p of progress || []) {
-      const courseId = p.course_id
-      if (!courseMap.has(courseId)) {
+    const courseMap = new Map<string, { course: unknown; completed: number; total: number }>()
+    for (const p of progress) {
+      const courseId = p.course_id ?? ''
+      if (courseId && !courseMap.has(courseId)) {
         courseMap.set(courseId, {
-          course: (p as any).courses,
+          course: p.courses,
           completed: 0,
           total: 0,
         })
       }
-      const entry = courseMap.get(courseId)!
-      entry.total++
-      if (p.completed) {
-        entry.completed++
+      if (courseId) {
+        const entry = courseMap.get(courseId)!
+        entry.total++
+        if (p.completed) {
+          entry.completed++
+        }
       }
     }
 
@@ -68,10 +77,11 @@ export async function GET(request: NextRequest) {
 
     const courseDetails = Array.from(courseMap.entries()).map(([courseId, entry]) => {
       const completion = entry.total > 0 ? (entry.completed / entry.total) * 100 : 0
-      const cert = certificates?.find((c: { id: string; certificate_name: string | null; certificate_url: string | null; issued_at: string | null; course_id: string }) => c.course_id === courseId)
+      const cert = certificates.find((c) => c.course_id === courseId)
+      const course = entry.course as { name?: string | null; title?: string | null } | null
       return {
         courseId,
-        courseName: entry.course?.name || entry.course?.title,
+        courseName: course?.name ?? course?.title ?? '',
         completion: Math.round(completion),
         eligible: completion >= 80,
         hasCertificate: !!cert,
@@ -86,18 +96,18 @@ export async function GET(request: NextRequest) {
         name: student.full_name,
         email: student.email,
       },
-      certificates: certificates || [],
+      certificates,
       courses: courseDetails,
       summary: {
-        totalCertificates: certificates?.length || 0,
-        certificatesWithUrl: certificates?.filter((c: { id: string; certificate_name: string | null; certificate_url: string | null; issued_at: string | null; course_id: string }) => c.certificate_url).length || 0,
+        totalCertificates: certificates.length,
+        certificatesWithUrl: certificates.filter((c) => c.certificate_url).length,
         eligibleCourses: courseDetails.filter(c => c.eligible).length,
         eligibleWithoutCert: courseDetails.filter(c => c.eligible && !c.hasCertificateUrl).length,
       },
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message },
+      { error: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

@@ -21,20 +21,23 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const email = searchParams.get('email') || 'sharma@dawnbudsmodelschool.edu'
 
+    type ProfileRow = { id?: string; full_name?: string | null; email?: string | null };
+    type CertRow = { id?: string; certificate_url?: string | null };
     // Find student
-    const { data: student } = await supabaseAdmin
+    const { data: studentData } = await supabaseAdmin
       .from('profiles')
       .select('id, full_name, email')
       .eq('email', email)
       .eq('role', 'student')
       .single()
 
-    if (!student) {
+    const student = studentData as ProfileRow | null
+    if (!student?.id) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 })
     }
 
     // Get all courses for this student
-    const { data: progress } = await supabaseAdmin
+    const { data: progressData } = await supabaseAdmin
       .from('course_progress')
       .select(`
         course_id,
@@ -44,8 +47,9 @@ export async function GET(request: NextRequest) {
       `)
       .eq('student_id', student.id)
 
+    const progress = (progressData || []) as CourseProgress[]
     // Get all courses
-    const courseIds = Array.from(new Set(progress?.map((p: CourseProgress) => p.course_id) || []))
+    const courseIds = Array.from(new Set(progress.map((p) => p.course_id)))
     
     const courseDetails = await Promise.all(courseIds.map(async (courseId) => {
       // Get total published chapters
@@ -58,25 +62,27 @@ export async function GET(request: NextRequest) {
       const totalChapters = chapters?.length || 0
 
       // Get completed chapters for this student
+      const cid = courseId ?? ''
       const { data: studentProgress } = await supabaseAdmin
         .from('course_progress')
         .select('completed')
-        .eq('student_id', student.id)
-        .eq('course_id', courseId)
+        .eq('student_id', student.id as string)
+        .eq('course_id', cid)
 
       const completedChapters = studentProgress?.filter((p: { completed: boolean }) => p.completed === true).length || 0
       const completion = totalChapters > 0 ? (completedChapters / totalChapters) * 100 : 0
 
       // Check existing certificate
-      const { data: cert } = await supabaseAdmin
+      const { data: certData } = await supabaseAdmin
         .from('certificates')
         .select('id, certificate_url')
-        .eq('student_id', student.id)
-        .eq('course_id', courseId)
+        .eq('student_id', student.id as string)
+        .eq('course_id', cid)
         .maybeSingle()
 
-      const course = progress?.find((p: CourseProgress) => p.course_id === courseId)
-      const courseInfo = (course as any)?.courses
+      const cert = certData as CertRow | null
+      const course = progress.find((p) => p.course_id === courseId)
+      const courseInfo = course?.courses
 
       return {
         courseId,
@@ -107,9 +113,9 @@ export async function GET(request: NextRequest) {
         coursesNeedingCertificates: courseDetails.filter(c => c.eligible && !c.hasCertificateUrl).length,
       },
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message, stack: error.stack },
+      { error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined },
       { status: 500 }
     )
   }

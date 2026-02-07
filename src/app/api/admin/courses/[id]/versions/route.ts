@@ -4,7 +4,6 @@ import { supabaseAdmin } from '../../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../lib/rate-limit';
 import { revertToVersionSchema, validateRequestBody } from '../../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../../lib/csrf-middleware';
 
 // GET: Fetch version history
 export async function GET(
@@ -70,7 +69,18 @@ export async function GET(
     }
 
     // Transform to include published_by_name
-    const versionsWithNames = (versions || []).map((v: any) => ({
+    type VersionData = {
+      id: string;
+      course_id: string;
+      version_number: number;
+      published_at: string | null;
+      published_by: string | null;
+      changes_summary: string | null;
+      course_data: unknown;
+      created_at: string | null;
+      profiles?: { id: string; full_name: string | null } | null;
+    };
+    const versionsWithNames = ((versions || []) as VersionData[]).map((v) => ({
       id: v.id,
       course_id: v.course_id,
       version_number: v.version_number,
@@ -145,8 +155,8 @@ export async function PATCH(
       course_id: courseId,
     });
     if (!validation.success) {
-      const errorMessages = ('details' in validation ? validation.details?.issues?.map((e: any) => 
-        `${e.path.join('.')}: ${e.message}`
+      const errorMessages = ('details' in validation ? validation.details?.issues?.map((e) => 
+        `${(e.path as (string | number)[]).join('.')}: ${e.message}`
       ).join(', ') : null) || ('error' in validation ? validation.error : null) || 'Invalid request data';
       
       return NextResponse.json(
@@ -168,7 +178,9 @@ export async function PATCH(
       .eq('version_number', version_number)
       .single();
 
-    if (versionError || !version) {
+    type VersionRow = { course_data?: unknown; version_number?: number };
+    const versionTyped = version as VersionRow | null;
+    if (versionError || !versionTyped) {
       return NextResponse.json(
         { error: 'Version not found' },
         { status: 404 }
@@ -180,7 +192,7 @@ export async function PATCH(
     const publishedBy = authHeader ? authHeader.replace('Bearer ', '') : null;
 
     // Restore course data from version
-    const courseData = version.course_data;
+    const courseData = versionTyped.course_data;
     if (!courseData) {
       return NextResponse.json(
         { error: 'Version data not available' },
@@ -189,7 +201,9 @@ export async function PATCH(
     }
 
     // Update course with version data (excluding id and timestamps)
-    const { id, created_at, updated_at, ...restoredData } = courseData;
+    const courseDataObj = courseData as Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id, created_at, updated_at, ...restoredData } = courseDataObj;
     
     const updateData = {
       ...restoredData,
@@ -198,6 +212,7 @@ export async function PATCH(
 
     const { data: updatedCourse, error: updateError } = await supabaseAdmin
       .from('courses')
+      // @ts-expect-error - courses table row type not in schema
       .update(updateData)
       .eq('id', courseId)
       .select()
@@ -230,13 +245,15 @@ export async function PATCH(
           .limit(1)
           .single();
 
-        const nextVersion = maxVersion?.version_number 
-          ? maxVersion.version_number + 1 
+        const maxVersionTyped = maxVersion as VersionRow | null;
+        const nextVersion = maxVersionTyped?.version_number != null
+          ? maxVersionTyped.version_number + 1
           : 1;
 
         // Create new version record
         await supabaseAdmin
           .from('course_versions')
+          // @ts-expect-error - course_versions insert type not in schema
           .insert({
             course_id: courseId,
             version_number: nextVersion,

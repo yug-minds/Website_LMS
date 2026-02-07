@@ -9,20 +9,29 @@ import { startActivityTracking, stopActivityTracking } from "../../lib/activity-
 import { waitForSession } from "../../lib/session-utils";
 import { useAppStore, type AppState } from "../../store/app-store";
 import { useBrowserNavigation } from "../../hooks/useBrowserNavigation";
+import { fetchWithCsrf } from "../../lib/csrf-client";
+import type { User } from "@supabase/supabase-js";
+
+type UserProfile = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  [key: string]: unknown;
+};
 
 export default function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   
   // Get sidebar state from store
   const sidebarCollapsed = useAppStore((state: AppState) => state.sidebarCollapsed);
-  const setSidebarCollapsed = useAppStore((state: AppState) => state.setSidebarCollapsed);
 
   // Refs for concurrency protection and preventing loops
   const getUserInProgressRef = useRef(false);
@@ -56,7 +65,7 @@ export default function AdminLayout({
   });
 
   // Use session validation hook for automatic session management
-  const { logout, isValid: sessionValid } = useSessionValidation({
+  const { logout } = useSessionValidation({
     checkInterval: 30000, // Check every 30 seconds
     showAlert: true,
     redirectOnInvalid: true,
@@ -87,14 +96,14 @@ export default function AdminLayout({
       try {
         setLoading(true);
         
-        // Add overall timeout to prevent infinite hanging (10 seconds max - reduced from 15)
+        // Add overall timeout to prevent infinite hanging (15 seconds max)
         overallTimeoutId = setTimeout(() => {
           if (mounted) {
             console.error('❌ Admin layout: Overall timeout - redirecting to login');
             setLoading(false);
             router.push('/login');
           }
-        }, 10000);
+        }, 15000);
         
         // Check if we're coming from a redirect (give time for session to be available)
         const isFromRedirect = typeof window !== 'undefined' && 
@@ -132,11 +141,11 @@ export default function AdminLayout({
         
         const session = sessionResult.session;
         console.log('✅ Admin layout: Session found, user ID:', session.user.id);
-        console.log('✅ Admin layout: Session expires at:', new Date(session.expires_at * 1000).toISOString());
+        console.log('✅ Admin layout: Session expires at:', session.expires_at != null ? new Date(session.expires_at * 1000).toISOString() : 'N/A');
         
         // Verify session is valid and not expired
         const now = Math.floor(Date.now() / 1000);
-        if (session.expires_at && session.expires_at < now) {
+        if (session.expires_at != null && session.expires_at < now) {
           console.error('❌ Admin layout: Session is expired');
           if (mounted) {
             setLoading(false);
@@ -169,36 +178,44 @@ export default function AdminLayout({
         
         // IMMEDIATELY check role from database before allowing access
         try {
-          // Include authorization header with session token
-          const headers: HeadersInit = {
-            'Content-Type': 'application/json',
-          };
-          
-          if (session?.access_token) {
-            headers['Authorization'] = `Bearer ${session.access_token}`;
-          }
-          
           console.log('🔍 Admin layout: Fetching role for user:', user.id);
           
-          // Add timeout to prevent hanging (5 seconds - reduced from 10)
+          // Use fetchWithCsrf which handles auth and CSRF tokens automatically
+          // Add timeout to prevent hanging (8 seconds - reasonable for API call)
           const controller = new AbortController();
-          const roleCheckTimeoutId = setTimeout(() => controller.abort(), 5000);
+          const roleCheckTimeoutId = setTimeout(() => {
+            console.warn('⚠️ Role check taking longer than expected, aborting...');
+            controller.abort();
+          }, 8000);
           
           let roleResp: Response;
           try {
-            roleResp = await fetch(`/api/get-role?userId=${user.id}`, {
+            roleResp = await fetchWithCsrf(`/api/get-role?userId=${user.id}`, {
               cache: 'no-store',
               method: 'GET',
-              headers,
-              signal: controller.signal
+              signal: controller.signal,
+              credentials: 'include'
             });
             clearTimeout(roleCheckTimeoutId);
-          } catch (fetchError: any) {
+          } catch (fetchError: unknown) {
             clearTimeout(roleCheckTimeoutId);
-            if (fetchError.name === 'AbortError') {
-              throw new Error('Request timeout - role check took too long');
+            const error = fetchError as { name?: string; message?: string };
+            if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+              console.error('❌ Role check request timed out or was aborted');
+              // Don't throw - gracefully handle timeout by redirecting
+              if (mounted) {
+                setLoading(false);
+                router.push('/login');
+              }
+              return;
             }
-            throw fetchError;
+            // For other errors, log and redirect
+            console.error('❌ Error fetching role:', error);
+            if (mounted) {
+              setLoading(false);
+              router.push('/login');
+            }
+            return;
           }
           
           if (roleResp.ok) {
@@ -241,19 +258,22 @@ export default function AdminLayout({
             }
             return;
           }
-        } catch (roleError: any) {
-          console.error('❌ Error checking role:', roleError);
+        } catch (roleError: unknown) {
+          const error = roleError as { message?: string; name?: string; stack?: string };
+          console.error('❌ Error checking role:', error);
           console.error('❌ Role error details:', {
-            message: roleError?.message,
-            name: roleError?.name,
-            stack: roleError?.stack
+            message: error?.message,
+            name: error?.name,
+            stack: error?.stack
           });
+          // Clear overall timeout if still set
+          if (overallTimeoutId) {
+            clearTimeout(overallTimeoutId);
+            overallTimeoutId = null;
+          }
           if (mounted) {
             setLoading(false);
-            // If it's a timeout, show a more helpful error
-            if (roleError?.message === 'Request timeout') {
-              console.error('❌ Role check timed out - this might indicate a database connection issue');
-            }
+            // Gracefully redirect on any error
             router.push('/login');
           }
           return;
@@ -263,18 +283,10 @@ export default function AdminLayout({
         // Fetch in background after dashboard is already rendered
         (async () => {
           try {
-            const profileHeaders: HeadersInit = {
-              'Content-Type': 'application/json',
-            };
-            
-            if (session?.access_token) {
-              profileHeaders['Authorization'] = `Bearer ${session.access_token}`;
-            }
-            
-            const profileResponse = await fetch(`/api/profile?userId=${user.id}`, {
+            const profileResponse = await fetchWithCsrf(`/api/profile?userId=${user.id}`, {
               cache: 'no-store',
               method: 'GET',
-              headers: profileHeaders
+              credentials: 'include'
             });
             
             if (profileResponse.ok) {
@@ -290,12 +302,14 @@ export default function AdminLayout({
             // Continue even if profile fetch fails - we already verified role
           }
         })();
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Error loading user data:', error);
+        // Clear overall timeout if still set
         if (overallTimeoutId) {
           clearTimeout(overallTimeoutId);
           overallTimeoutId = null;
         }
+        // Don't throw errors - gracefully handle by redirecting
         if (mounted) {
           setLoading(false);
           router.push('/login');
@@ -304,6 +318,11 @@ export default function AdminLayout({
         // Always clear the in-progress flag
         getUserInProgressRef.current = false;
         isInitialMountRef.current = false;
+        // Clear overall timeout if still set
+        if (overallTimeoutId) {
+          clearTimeout(overallTimeoutId);
+          overallTimeoutId = null;
+        }
         // Note: userLoadedRef is only set to true on success, so we don't clear it here
         // It will be cleared on SIGNED_OUT
       }
@@ -343,7 +362,8 @@ export default function AdminLayout({
       }
       subscription.unsubscribe();
     };
-  }, []); // Empty dependency array - router is stable in Next.js 13+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- router is stable in Next.js App Router
+  }, []);
 
   // Start activity tracking when user is authenticated
   useEffect(() => {

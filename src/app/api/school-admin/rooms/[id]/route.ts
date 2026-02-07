@@ -4,10 +4,9 @@ import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { roomSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 // PUT /api/school-admin/rooms/[id]
@@ -16,6 +15,15 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
   if (!rateLimitResult.success) {
@@ -49,7 +57,7 @@ export async function PUT(
       .select('id, school_id')
       .eq('id', roomId)
        
-      .single() as any;
+      .single();
 
     if (!existingRoom) {
       return NextResponse.json(
@@ -71,7 +79,8 @@ export async function PUT(
     const validation = validateRequestBody(roomSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -92,7 +101,7 @@ export async function PUT(
 
     // Update room
      
-    const updateData: any = {
+    const updateData: { room_number: string; room_name?: string | null; capacity?: number | null; location?: string | null; facilities?: unknown[]; is_active?: boolean } = {
       room_number,
       room_name: room_name || null,
       capacity: capacity || null,
@@ -105,14 +114,12 @@ export async function PUT(
     }
 
      
-    const { data: room, error } = await ((supabaseAdmin as any)
+    const { data: room, error } = await supabaseAdmin
       .from('rooms')
-       
-      .update(updateData as any)
+      .update(updateData as never)
       .eq('id', roomId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (error) {
       return NextResponse.json(
@@ -184,7 +191,7 @@ export async function DELETE(
       .select('id, school_id')
       .eq('id', roomId)
        
-      .single() as any;
+      .single();
 
     if (!existingRoom) {
       return NextResponse.json(
@@ -207,7 +214,7 @@ export async function DELETE(
       .eq('room_id', roomId)
       .eq('is_active', true)
        
-      .limit(1) as any;
+      .limit(1);
 
     if (schedules && schedules.length > 0) {
       return NextResponse.json(

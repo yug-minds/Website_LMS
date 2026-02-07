@@ -57,7 +57,8 @@ type PageProps = {
 export default function AssignmentDetailPage(props: PageProps) {
   const router = useRouter();
   const params = React.use(props.params);
-  const searchParams = React.use(props.searchParams);
+  const resolvedSearchParams = React.use(props.searchParams);
+  const searchParams = useMemo(() => resolvedSearchParams ?? {}, [resolvedSearchParams]);
   const assignmentId = params.assignmentId;
 
   const { data, isLoading } = useStudentAssignment(assignmentId);
@@ -87,8 +88,8 @@ export default function AssignmentDetailPage(props: PageProps) {
 
   const assignment = data?.assignment;
   const submission = data?.submission;
-  const questions = assignment?.questions || [];
-  
+  const questions = useMemo(() => assignment?.questions ?? [], [assignment?.questions]);
+
   // Infer assignment type from questions if assignment_type is not set or doesn't match
   const effectiveAssignmentType = useMemo(() => {
     if (assignment?.assignment_type) {
@@ -110,6 +111,7 @@ export default function AssignmentDetailPage(props: PageProps) {
     }
     // Default fallback
     return assignment?.assignment_type?.toLowerCase() || 'essay';
+   
   }, [assignment?.assignment_type, questions]);
   
   // Debug logging for assignment type detection
@@ -124,6 +126,7 @@ export default function AssignmentDetailPage(props: PageProps) {
         first_question_options: questions[0]?.options
       });
     }
+   
   }, [assignment, questions, effectiveAssignmentType]);
   
   // Calculate progress - count questions with answers
@@ -143,6 +146,7 @@ export default function AssignmentDetailPage(props: PageProps) {
           return false;
       }
     }).length;
+   
   }, [answers, questions]);
   
   const progressPercentage = questions.length > 0 
@@ -150,7 +154,7 @@ export default function AssignmentDetailPage(props: PageProps) {
     : 0;
 
   // Auto-save assignment submission
-  const { isDirty: isSubmissionDirty, clearSavedData } = useAutoSaveForm({
+  const { isDirty: _isSubmissionDirty, clearSavedData } = useAutoSaveForm({
     formId: `student-assignment-${assignmentId}`,
     formData: {
       answers,
@@ -227,6 +231,7 @@ export default function AssignmentDetailPage(props: PageProps) {
       clearFormData(`student-assignment-${assignmentId}`);
       clearSavedData();
     }
+   
   }, [submission, questions, assignmentId, clearSavedData]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -272,7 +277,7 @@ export default function AssignmentDetailPage(props: PageProps) {
   // This must run before the query param check and whenever submission data changes
   // IMPORTANT: This hook must be called BEFORE any early returns to avoid hooks order violation
   useEffect(() => {
-    const action = searchParams.action;
+    const action = searchParams?.action as string | undefined;
     if (isSubmittedOrGraded) {
       // Force view mode if already submitted/graded
       setSubmissionMode(false);
@@ -280,6 +285,7 @@ export default function AssignmentDetailPage(props: PageProps) {
       // Only allow submission mode if not already submitted and query param says so
       setSubmissionMode(true);
     }
+   
   }, [isSubmittedOrGraded, canSubmit, searchParams, submissionMode]);
 
   const handleSubmit = async () => {

@@ -38,7 +38,7 @@ try {
     const validation = validateRequestBody(notificationReplySchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for notification reply', {
         endpoint: '/api/notifications/reply',
         errors: errorMessages,
@@ -61,8 +61,7 @@ try {
       .select('user_id, title, message')
       .eq('id', notification_id)
       .eq('user_id', user_id)
-       
-      .single() as any;
+      .single();
 
     if (fetchError || !notification) {
       return NextResponse.json(
@@ -77,25 +76,24 @@ try {
       .select('id')
       .eq('notification_id', notification_id)
       .eq('user_id', user_id)
-       
-      .single() as any;
+      .maybeSingle();
 
     let replyData;
 
-    if (existingReply) {
+    type ReplyRow = { id: string };
+    const existing = existingReply as ReplyRow | null;
+    if (existing?.id) {
       // Update existing reply
-       
-      const { data: updatedReply, error: updateError } = await ((supabaseAdmin as any)
+      const { data: updatedReply, error: updateError } = await supabaseAdmin
         .from('notification_replies')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .update({
           reply_text: reply_text.trim(),
           updated_at: new Date().toISOString()
-         
-        } as any)
-        .eq('id', existingReply.id)
+        })
+        .eq('id', existing.id)
         .select()
-         
-        .single() as any) as any;
+        .single();
 
       if (updateError) {
         console.error('❌ Error updating reply:', updateError);
@@ -105,7 +103,7 @@ try {
         );
       }
 
-      replyData = updatedReply;
+      replyData = updatedReply as { id: string; [key: string]: unknown } | null;
     } else {
       // Create new reply
       const { data: newReply, error: insertError } = await (supabaseAdmin
@@ -114,11 +112,9 @@ try {
           notification_id,
           user_id,
           reply_text: reply_text.trim()
-         
-        } as any)
+        } as never)
         .select()
-         
-        .single() as any);
+        .single());
 
       if (insertError) {
         console.error('❌ Error creating reply:', insertError);
@@ -198,8 +194,7 @@ try {
         )
       `)
       .eq('notification_id', notificationId)
-       
-      .order('created_at', { ascending: false }) as any;
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('❌ Error fetching replies:', error);
@@ -228,7 +223,14 @@ try {
 
 // DELETE: Delete a reply
 export async function DELETE(request: NextRequest) {
-  const { ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -252,7 +254,8 @@ try {
     const validation = validateRequestBody(notificationDeleteReplySchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for notification reply deletion', {
         endpoint: '/api/notifications/reply',
         method: 'DELETE',
@@ -271,13 +274,13 @@ try {
     const { reply_id, user_id } = validation.data;
 
     // Verify reply belongs to user
+    type ReplyRow = { user_id?: string };
     const { data: reply, error: fetchError } = await supabaseAdmin
       .from('notification_replies')
       .select('user_id')
       .eq('id', reply_id)
       .eq('user_id', user_id)
-       
-      .single() as any;
+      .single() as { data: ReplyRow | null; error: unknown };
 
     if (fetchError || !reply) {
       return NextResponse.json(

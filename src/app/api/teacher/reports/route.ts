@@ -124,7 +124,8 @@ try {
 
     // Transform data to match expected format
      
-    const transformedReports = (reports || []).map((report: any) => {
+    type ReportRow = { classes?: unknown; schools?: unknown; [key: string]: unknown };
+    const transformedReports = (reports ?? []).map((report: ReportRow) => {
       const classData = Array.isArray(report.classes) ? report.classes[0] : report.classes;
       const schoolData = Array.isArray(report.schools) ? report.schools[0] : report.schools;
       return {
@@ -151,7 +152,14 @@ try {
 }
 
 export async function POST(request: NextRequest) {
-  const { ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -185,7 +193,7 @@ try {
     const validation = validateRequestBody(createTeacherReportSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: { path: (string | number)[]; message: string }) => `${e.path.join('.')}: ${e.message}`).join(', ') ?? validation.error ?? 'Invalid request data';
       logger.warn('Validation failed for teacher report creation', {
         endpoint: '/api/teacher/reports',
         errors: errorMessages,
@@ -240,8 +248,8 @@ try {
         .eq('grade', grade)
         .eq('is_active', true)
          
-        .limit(1) as any;
-      
+        .limit(1) as { data: { id: string }[] | null; error: unknown };
+
       if (!gradeError && classesByGrade && classesByGrade.length > 0) {
         finalClassId = classesByGrade[0].id;
         console.log(`✅ Found class_id from grade: ${finalClassId}`);
@@ -249,7 +257,7 @@ try {
         // If not found, create a new class using grade
         console.log(`🔍 Creating new class for grade: ${grade}`);
          
-        const { data: newClass, error: createError } = await ((supabaseAdmin as any)
+        const { data: newClass, error: createError } = await supabaseAdmin
           .from('classes')
           .insert({
             school_id: school_id,
@@ -257,12 +265,10 @@ try {
             grade: grade,
             subject: null,
             academic_year: '2024-25',
-            is_active: true
-           
-          } as any)
+            is_active: true,
+          } as never)
           .select('id')
-           
-          .single() as any) as any;
+          .single() as { data: { id: string } | null; error: unknown };
         
         if (!createError && newClass && newClass.id) {
           finalClassId = newClass.id;
@@ -276,8 +282,8 @@ try {
             .eq('grade', grade)
             .eq('is_active', true)
              
-            .limit(1) as any;
-          
+            .limit(1) as { data: { id: string }[] | null; error: unknown };
+
           if (existingClass && existingClass.length > 0) {
             finalClassId = existingClass[0].id;
             console.log(`✅ Found existing class after duplicate error: ${finalClassId}`);
@@ -312,7 +318,7 @@ try {
     // Prepare insert data
     // Note: updated_at will be set automatically by the database trigger or default value
      
-    const insertData: any = {
+    const insertData: Record<string, unknown> = {
       teacher_id: teacherId, // Use authenticated teacher_id
       school_id,
       date: formattedDate,
@@ -386,15 +392,15 @@ try {
     // The UI sends "HH:MM:SS", so we:
     // - Try inserting the time-only values first (works if columns are TIME)
     // - If DB complains about timestamptz, retry with full ISO timestamps (date + time).
-    let report: any = null;
-    let error: any = null;
+    let report: unknown = null;
+    let error: unknown = null;
 
-    const tryInsert = async (payload: any) => {
+    const tryInsert = async (payload: Record<string, unknown>) => {
       const res = await supabaseAdmin
         .from('teacher_reports')
-        .insert(payload)
+        .insert(payload as never)
         .select()
-        .single() as any;
+        .single() as { data: unknown; error: unknown };
       return res;
     };
 
@@ -446,15 +452,16 @@ try {
 
     console.log(`📅 Checking attendance for ${date} (${dayOfWeek})`);
 
-    // Get all scheduled periods for this teacher on this day (with grade for matching)
+    // Get all scheduled periods for this teacher on this day using historical schedule lookup
+    // Use effective dates to find schedules that were active on the report date
     const { data: schedules, error: schedulesError } = await supabaseAdmin
       .from('class_schedules')
       .select('period_id, class_id, grade')
       .eq('teacher_id', teacherId)
       .eq('school_id', school_id)
       .eq('day_of_week', dayOfWeek)
-       
-      .eq('is_active', true) as any;
+      .lte('effective_from', date) // Schedule was active from this date or before
+      .or(`effective_to.is.null,effective_to.gte.${date}`) as { data: { period_id?: string; class_id?: string; grade?: string }[] | null; error: unknown };
 
     if (schedulesError) {
       console.error('Error fetching schedules:', schedulesError);
@@ -465,7 +472,7 @@ try {
     const scheduledPeriodIds = new Set<string>();
     if (schedules && schedules.length > 0) {
        
-      schedules.forEach((s: any) => {
+      schedules.forEach((s: { period_id?: string }) => {
         if (s.period_id) {
           scheduledPeriodIds.add(s.period_id);
         }
@@ -482,7 +489,7 @@ try {
       .eq('teacher_id', teacherId)
       .eq('school_id', school_id)
        
-      .eq('date', date) as any;
+      .eq('date', date) as { data: { id: string; class_id?: string; grade?: string }[] | null; error: unknown };
 
     if (reportsError) {
       console.error('Error fetching day reports:', reportsError);
@@ -497,10 +504,10 @@ try {
     if (schedules && dayReports && scheduledPeriodIds.size > 0) {
       // For each report, find which period it belongs to by matching grade or class_id
        
-      dayReports.forEach((report: any) => {
-        // Find schedules that match this report's grade (primary) or class_id (fallback)
-         
-        const matchingSchedules = schedules.filter((s: any) => {
+      type ScheduleRow = { period_id?: string; class_id?: string; grade?: string };
+      type DayReportRow = { id: string; class_id?: string; grade?: string };
+      dayReports.forEach((report: DayReportRow) => {
+        const matchingSchedules = schedules.filter((s: ScheduleRow) => {
           if (!s.period_id || !scheduledPeriodIds.has(s.period_id)) return false;
           
           // Match by grade (primary method - since reports use grade as primary identifier)
@@ -518,7 +525,7 @@ try {
         
         // If we found a matching schedule, add its period_id
          
-        matchingSchedules.forEach((s: any) => {
+        matchingSchedules.forEach((s: ScheduleRow) => {
           if (s.period_id) {
             periodsWithReports.add(s.period_id);
           }
@@ -556,7 +563,7 @@ try {
     let attendanceStatus: 'marked' | 'pending' | 'skipped' = 'pending';
     if (shouldMarkPresent) {
       try {
-        const isMissingAttendanceTable = (err: any) => {
+        const isMissingAttendanceTable = (err: { message?: string; code?: string }) => {
           const msg = String(err?.message || '');
           return err?.code === '42P01' || msg.includes('relation "attendance" does not exist') || msg.includes('does not exist');
         };
@@ -569,7 +576,7 @@ try {
           .eq('user_id', teacherId)
           .eq('school_id', school_id)
           .eq('date', date)
-          .maybeSingle() as any;
+          .maybeSingle() as { data: { status?: string } | null; error: unknown };
 
         if (attendanceFetchError && isMissingAttendanceTable(attendanceFetchError)) {
           console.error('❌ Attendance table not found. Skipping attendance marking.', attendanceFetchError);
@@ -585,20 +592,21 @@ try {
             console.log(`⚠️ Attendance status is ${currentStatus}, not overriding (leave was approved)`);
             attendanceStatus = 'skipped';
           } else {
+            const upsertPayload = {
+              user_id: teacherId,
+              school_id,
+              class_id: class_id || null,
+              date,
+              status: 'Present',
+              recorded_by: teacherId,
+              recorded_at: new Date().toISOString()
+            };
             const { error: attendanceError } = await supabaseAdmin
               .from('attendance')
-              .upsert({
-                user_id: teacherId,
-                school_id,
-                class_id: class_id || null,
-                date,
-                status: 'Present',
-                recorded_by: teacherId,
-                recorded_at: new Date().toISOString()
-              }, {
+              .upsert(upsertPayload as unknown as never, {
                 onConflict: 'user_id,school_id,date',
                 ignoreDuplicates: false
-              }) as any;
+              });
 
             if (attendanceError) {
               if (isMissingAttendanceTable(attendanceError)) {
@@ -703,7 +711,7 @@ try {
       const validation = validateRequestBody(updateSchema, body);
       if (!validation.success) {
          
-        const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+        const errorMessages = validation.details?.issues?.map((e: { path: (string | number)[]; message: string }) => `${e.path.join('.')}: ${e.message}`).join(', ') ?? validation.error ?? 'Invalid request data';
         logger.warn('Validation failed for teacher report update', {
           endpoint: '/api/teacher/reports',
           method: 'PUT',
@@ -726,7 +734,7 @@ try {
       .select('teacher_id, school_id')
       .eq('id', id)
        
-      .single() as any;
+      .single() as { data: { teacher_id?: string; school_id?: string } | null; error: unknown };
 
     if (fetchError || !existingReport) {
       return NextResponse.json(
@@ -755,18 +763,16 @@ try {
 
     // Update the report (using admin client to bypass RLS)
      
-    const { data: report, error } = await ((supabaseAdmin as any)
+    const { data: report, error } = await supabaseAdmin
       .from('teacher_reports')
       .update({
         ...updateData,
-        updated_at: new Date().toISOString()
-       
-      } as any)
+        updated_at: new Date().toISOString(),
+      } as never)
       .eq('id', id)
-      .eq('teacher_id', teacherId) // Double-check it's the teacher's report
+      .eq('teacher_id', teacherId)
       .select()
-       
-      .single() as any) as any;
+      .single() as { data: unknown; error: unknown };
 
     if (error) {
       logger.error('Failed to update teacher report', {

@@ -114,23 +114,38 @@ try {
 
     // Process monthly attendance data (return raw data for hooks)
     // The view returns data in format: { teacher_id, school_id, month, present_count, absent_count, leave_count, unreported_count, total_days }
+    type MonthlyAttendanceItem = {
+      id?: string;
+      teacher_id?: string | null;
+      school_id?: string | null;
+      month?: string | null;
+      days_present?: number | null;
+      days_absent?: number | null;
+      days_leave?: number | null;
+      present_count?: number | null;
+      absent_count?: number | null;
+      leave_count?: number | null;
+      unreported_count?: number | null;
+      total_days?: number | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+    };
+    const attendanceDataTyped = (attendanceData || []) as MonthlyAttendanceItem[];
      
-    const attendanceDataTyped = attendanceData as any[] | null;
-     
-    const monthlyAttendanceRaw = attendanceDataTyped?.map((item: any) => ({
+    const monthlyAttendanceRaw = attendanceDataTyped.map((item) => ({
       teacher_id: item.teacher_id,
       school_id: item.school_id,
       month: item.month,
-      present_count: item.present_count || 0,
-      absent_count: item.absent_count || 0,
-      leave_count: item.leave_count || 0,
+      present_count: item.present_count || item.days_present || 0,
+      absent_count: item.absent_count || item.days_absent || 0,
+      leave_count: item.leave_count || item.days_leave || 0,
       unreported_count: item.unreported_count || 0,
       total_days: item.total_days || 0
-    })) || [];
+    }));
     
      
-    const monthlyAttendance = attendanceDataTyped?.map((item: any) => ({
-      month: new Date(item.month).toLocaleDateString('en-US', { month: 'short' }),
+    const monthlyAttendance = attendanceDataTyped.map((item) => ({
+      month: new Date(item.month ?? 0).toLocaleDateString('en-US', { month: 'short' }),
       present: item.present_count || 0,
       absent: item.absent_count || 0,
       leave: item.leave_count || 0,
@@ -140,18 +155,32 @@ try {
 
     // Process class performance data
      
-    const classPerformance = (classData as any)?.map((tc: any) => {
-       
-      const classReports = (reportsData as any)?.filter((r: any) => r.class_id === (tc.classes as any)?.[0]?.id) || [];
+    interface TeacherClass {
+      classes?: Array<{
+        id?: string;
+        grade?: string;
+        class_name?: string;
+        subject?: string;
+      }>;
+    }
+    
+    interface TeacherReport {
+      class_id?: string;
+      date?: string;
+      start_time?: string;
+      end_time?: string;
+    }
+    
+    const classPerformance = (classData as TeacherClass[])?.map((tc: TeacherClass) => {
+      const classId = tc.classes?.[0]?.id;
+      const classReports = (reportsData as TeacherReport[])?.filter((r: TeacherReport) => r.class_id === classId) || [];
       // Calculate attendance percentage from actual attendance data
       // For now, set to 0 if no attendance data is available
       const attendance_percentage = 0; // Calculate from database - no mock data
       return {
-         
-        grade: (tc.classes as any)?.[0]?.grade || 'Unknown',
+        grade: tc.classes?.[0]?.grade || 'Unknown',
         // Keep class_name for backward compatibility
-         
-        class_name: (tc.classes as any)?.[0]?.class_name || (tc.classes as any)?.[0]?.grade || 'Unknown',
+        class_name: tc.classes?.[0]?.class_name || tc.classes?.[0]?.grade || 'Unknown',
         reports_submitted: classReports.length,
         attendance_percentage
       };
@@ -168,19 +197,19 @@ try {
       .eq('teacher_id', teacherId)
       .gte('date', sevenDaysAgo.toISOString().split('T')[0])
        
-      .order('date', { ascending: true }) as any;
+      .order('date', { ascending: true });
     
     // Calculate activity by day of week
     const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const weeklyActivity = daysOfWeek.map((day: any) => {
+    const weeklyActivity = daysOfWeek.map((day: string) => {
       if (!weeklyReports || weeklyReportsError) {
         return { day, reports: 0, hours_taught: 0 };
       }
       
       // Filter reports for this day of week
        
-      const dayReports = weeklyReports.filter((report: any) => {
-        const reportDate = new Date(report.date);
+      const dayReports = weeklyReports.filter((report: TeacherReport) => {
+        const reportDate = new Date(report.date ?? 0);
         const dayIndex = reportDate.getDay();
         return daysOfWeek[dayIndex] === day;
       });
@@ -188,7 +217,7 @@ try {
       // Calculate hours taught from start_time and end_time
       let hoursTaught = 0;
        
-      dayReports.forEach((report: any) => {
+      dayReports.forEach((report: TeacherReport) => {
         if (report.start_time && report.end_time) {
           const start = new Date(`2000-01-01T${report.start_time}`);
           const end = new Date(`2000-01-01T${report.end_time}`);
@@ -208,12 +237,16 @@ try {
     // Get subject distribution with actual student counts from database
     const subjectDistribution = await Promise.all(
        
-      ((classData as any) || []).reduce((acc: any[], tc: any) => {
-         
-        const subject = (tc.classes as any)?.[0]?.subject || 'Unknown';
-         
-        const classId = (tc.classes as any)?.[0]?.id;
-        const existing = acc.find((s: any) => s.subject === subject);
+      ((classData as TeacherClass[]) || []).reduce((acc: Array<{ subject: string; classes: number; classIds: string[] }>, tc: TeacherClass) => {
+        const subject = tc.classes?.[0]?.subject || 'Unknown';
+        const classId = tc.classes?.[0]?.id;
+        interface SubjectItem {
+          subject: string;
+          classes: number;
+          classIds: string[];
+        }
+        
+        const existing = acc.find((s: SubjectItem) => s.subject === subject);
         if (existing) {
           existing.classes += 1;
           if (classId) existing.classIds.push(classId);
@@ -223,7 +256,7 @@ try {
         return acc;
       }, [] as Array<{ subject: string; classes: number; classIds: string[] }>)
          
-        .map(async (item: any) => {
+        .map(async (item: { subject: string; classes: number; classIds: string[] }) => {
           // Get actual student count from student_classes table
           let students = 0;
           if (item.classIds.length > 0) {
@@ -232,7 +265,7 @@ try {
               .select('student_id', { count: 'exact' })
               .in('class_id', item.classIds)
                
-              .eq('is_active', true) as any;
+              .eq('is_active', true);
             
             if (!studentClassesError && studentClasses) {
               students = studentClasses.length || 0;
@@ -250,10 +283,10 @@ try {
     // Calculate overall stats
     const totalReports = reportsData?.length || 0;
     const avgAttendance = monthlyAttendance.length > 0 
-      ? Math.round(monthlyAttendance.reduce((sum: number, m: any) => sum + (m.present / (m.present + m.absent + m.leave + m.unreported)) * 100, 0) / monthlyAttendance.length)
+      ? Math.round(monthlyAttendance.reduce((sum: number, m: { present?: number; absent?: number; leave?: number; unreported?: number }) => sum + ((m.present || 0) / ((m.present || 0) + (m.absent || 0) + (m.leave || 0) + (m.unreported || 0))) * 100, 0) / monthlyAttendance.length)
       : 0;
-    const totalStudents = subjectDistribution.reduce((sum: number, s: any) => sum + s.students, 0);
-    const totalClasses = subjectDistribution.reduce((sum: number, s: any) => sum + s.classes, 0);
+    const totalStudents = subjectDistribution.reduce((sum: number, s: { students?: number }) => sum + (s.students || 0), 0);
+    const totalClasses = subjectDistribution.reduce((sum: number, s: { classes?: number }) => sum + (s.classes || 0), 0);
 
     const analytics = {
       monthlyAttendance,

@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
-import { Progress } from '../ui/progress'
 
 import { 
   Play, 
@@ -12,7 +11,6 @@ import {
   Volume2, 
   VolumeX, 
   Maximize, 
-  Settings,
   SkipBack,
   SkipForward
 } from 'lucide-react'

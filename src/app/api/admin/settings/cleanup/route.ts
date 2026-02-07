@@ -4,7 +4,6 @@ import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../..
 import { emptyBodySchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { verifyAdmin } from '../../../../../lib/auth-utils';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
 // POST: Clean up inactive users
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
       const validation = validateRequestBody(emptyBodySchema, body);
       if (!validation.success) {
          
-        const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+        const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
         return NextResponse.json(
           { 
             error: 'Validation failed',
@@ -69,8 +68,7 @@ export async function POST(request: NextRequest) {
       .from('profiles')
       .select('id, email, role, created_at')
       .lt('created_at', ninetyDaysAgo.toISOString())
-       
-      .eq('role', 'student') as any; // Only cleanup students for safety
+      .eq('role', 'student'); // Only cleanup students for safety
 
     if (fetchError) {
       console.error('Error fetching inactive users:', fetchError);

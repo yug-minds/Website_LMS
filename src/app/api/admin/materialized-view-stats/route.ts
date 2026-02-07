@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     
     const { data: historyData, error: historyError } = await supabaseAdmin
-      .rpc('get_refresh_history', { p_limit: limit });
+      .rpc('get_refresh_history', { p_limit: limit } as never);
 
     if (historyError) {
       logger.warn('Failed to get refresh history', {
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
     const alerts = {
       hasErrors: (errorSchools?.length || 0) > 0,
       errorCount: errorSchools?.length || 0,
-      errors: errorQueryError ? [] : (errorSchools || []).map((e: any) => ({
+      errors: errorQueryError ? [] : (errorSchools || []).map((e: { school_id: string; queued_at: string | null; last_error: string | null; refresh_count: number | null }) => ({
         schoolId: e.school_id,
         queuedAt: e.queued_at,
         error: e.last_error,

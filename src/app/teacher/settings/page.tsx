@@ -31,8 +31,8 @@ export default function SettingsPage() {
   
   // User state (needed for password change)
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+  const [_message, _setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // Password change state
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -119,9 +119,9 @@ export default function SettingsPage() {
       try {
         await supabase
           .from('profiles')
-          .update({ force_password_change: false })
+          .update({ force_password_change: false } as never)
           .eq('id', user.id);
-      } catch (e) {
+      } catch {
         // Ignore if column doesn't exist
         console.log('Could not update force_password_change flag');
       }
@@ -136,9 +136,9 @@ export default function SettingsPage() {
         setPasswordMessage(null);
       }, 2000);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing password:', error);
-      setPasswordMessage({ type: 'error', text: error.message || 'Failed to change password. Please try again.' });
+      setPasswordMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to change password. Please try again.' });
     } finally {
       setPasswordSaving(false);
     }

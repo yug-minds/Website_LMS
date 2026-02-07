@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
 import { Badge } from '../../ui/badge'
@@ -33,7 +33,7 @@ interface VideoContentViewerProps {
 }
 
 // Debounce utility
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
+function debounce<T extends (...args: unknown[]) => unknown>(fn: T, delay: number): (...args: Parameters<T>) => void {
   let timeoutId: NodeJS.Timeout
   return (...args: Parameters<T>) => {
     clearTimeout(timeoutId)
@@ -68,13 +68,13 @@ export default function VideoContentViewer({
     isContentCompleted, 
     setVideoPosition,
     getVideoPosition,
-    setSavingProgress,
+    setSavingProgress: _setSavingProgress,
     isSaving 
   } = useCourseProgressStore()
 
-  // Toast notifications
-  const toast = useToast()
-  const queryClient = useQueryClient()
+  // Toast notifications (available for future use)
+  const _toast = useToast()
+  const _queryClient = useQueryClient()
 
   // Check if already completed from store
   const isCompleted = isContentCompleted(content.id)
@@ -121,13 +121,15 @@ export default function VideoContentViewer({
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        const { data: progress } = await supabase
+        type ProgressRow = { last_position?: number; is_completed?: boolean };
+        const { data: progressData } = await supabase
           .from('student_progress')
           .select('last_position, is_completed')
           .eq('student_id', user.id)
           .eq('content_id', content.id)
           .maybeSingle()
 
+        const progress = progressData as ProgressRow | null;
         if (progress?.last_position && progress.last_position > 5) {
           setResumePosition(progress.last_position)
         }
@@ -143,63 +145,64 @@ export default function VideoContentViewer({
   }, [content.id, isYouTube, getVideoPosition, setContentCompleted, resolvedChapterId, resolvedCourseId])
 
   // Save position periodically (debounced)
-  const savePosition = useCallback(
-    debounce(async (position: number) => {
-      if (isYouTube || position < 5) return
-      if (Math.abs(position - lastSavedPositionRef.current) < 10) return // Only save if changed by 10+ seconds
+  const savePositionHandler = useCallback(async (position: number): Promise<void> => {
+    if (isYouTube || position < 5) return
+    if (Math.abs(position - lastSavedPositionRef.current) < 10) return // Only save if changed by 10+ seconds
 
-      lastSavedPositionRef.current = position
-      setVideoPosition(content.id, position)
+    lastSavedPositionRef.current = position
+    setVideoPosition(content.id, position)
 
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-        const { error: rpcError } = await supabase.rpc('upsert_video_position', {
-          p_student_id: user.id,
-          p_course_id: resolvedCourseId,
-          p_chapter_id: resolvedChapterId,
-          p_content_id: content.id,
-          p_position: position,
-          p_time_spent: 10
-        });
-        
-        if (rpcError) {
-          // Fallback to direct upsert if function doesn't exist
-          await supabase.from('student_progress').upsert({
-            student_id: user.id,
-            course_id: resolvedCourseId,
-            chapter_id: resolvedChapterId,
-            content_id: content.id,
-            last_position: position,
-          }, { onConflict: 'student_id,content_id' });
-        }
-      } catch (error) {
-        console.warn('Failed to save video position:', error)
+      const { error: rpcError } = await supabase.rpc('upsert_video_position', {
+        p_student_id: user.id,
+        p_course_id: resolvedCourseId,
+        p_chapter_id: resolvedChapterId,
+        p_content_id: content.id,
+        p_position: position,
+        p_time_spent: 10
+      } as never);
+      
+      if (rpcError) {
+        // Fallback to direct upsert if function doesn't exist
+        await supabase.from('student_progress').upsert({
+          student_id: user.id,
+          course_id: resolvedCourseId,
+          chapter_id: resolvedChapterId,
+          content_id: content.id,
+          last_position: position,
+        } as never, { onConflict: 'student_id,content_id' });
       }
-    }, 5000),
-    [content.id, resolvedCourseId, resolvedChapterId, isYouTube, setVideoPosition]
-  )
+    } catch (error) {
+      console.warn('Failed to save video position:', error)
+    }
+  }, [content.id, resolvedCourseId, resolvedChapterId, isYouTube, setVideoPosition]);
 
-  // Mark as complete - delegate to parent for database saving
-  const handleMarkComplete = useCallback(
-    debounce(async () => {
-      if (hasCompletedRef.current) return
-      hasCompletedRef.current = true
+  const savePosition = useCallback(
+    (position: number) => {
+      savePositionHandler(position).catch(console.error);
+    },
+    [savePositionHandler]
+  );
 
-      console.log('🎬 [VideoPlayer] Marking as complete, calling parent onComplete...')
-      
-      // Call parent's onComplete which handles database saving
-      // The parent (CoursePlayer) will save to both student_progress and course_progress
-      onComplete?.()
-      
-      // Update local UI state
-      setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
-      
-      console.log('✅ [VideoPlayer] Marked as complete')
-    }, 500),
+  // Mark as complete - delegate to parent for database saving (debounced handler)
+  // Ref is read only when the debounced fn is invoked (in event handler), not during render
+  const debouncedMarkComplete = useMemo(
+    () =>
+      // eslint-disable-next-line react-hooks/refs -- hasCompletedRef read only in callback when invoked
+      debounce(() => {
+        if (hasCompletedRef.current) return
+        hasCompletedRef.current = true
+        onComplete?.()
+        setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
+      }, 500),
     [content.id, resolvedCourseId, resolvedChapterId, onComplete, setContentCompleted]
   )
+  const handleMarkComplete = useCallback(() => {
+    debouncedMarkComplete()
+  }, [debouncedMarkComplete])
 
   // Video event handlers
   useEffect(() => {

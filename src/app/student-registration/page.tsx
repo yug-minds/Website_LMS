@@ -47,7 +47,7 @@ export default function StudentRegistration() {
     password: "", // Never save password
     confirmPassword: "" // Never save password
   });
-  const [registrationResult, setRegistrationResult] = useState<any>(null);
+  const [registrationResult, setRegistrationResult] = useState<{ success?: boolean; error?: string; message?: string } | null>(null);
 
   // Load joining code if saved
   useEffect(() => {
@@ -150,7 +150,7 @@ export default function StudentRegistration() {
       if (result.success) {
         setRegistrationResult({
           success: true,
-          message: `Welcome to ${result.school_name}! You have been enrolled in ${result.grade}.`,
+          message: `Welcome to ${result.school_name}! You have been enrolled in ${result.grade}${result.section ? ` - Section ${result.section}` : ''}.`,
           student_id: result.student_id
         });
         

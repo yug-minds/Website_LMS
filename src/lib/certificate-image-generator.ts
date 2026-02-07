@@ -179,7 +179,7 @@ function createTextSVG({
 /**
  * Create SVG underline element
  */
-function createUnderlineSVG({
+function _createUnderlineSVG({
   x,
   y,
   width,
@@ -207,7 +207,7 @@ function createUnderlineSVG({
  * Estimate text width based on font size
  * Rough approximation: average character width is ~0.6 * font size
  */
-function estimateTextWidth(text: string, fontSize: number): number {
+function _estimateTextWidth(text: string, fontSize: number): number {
   return Math.round(text.length * fontSize * 0.6)
 }
 

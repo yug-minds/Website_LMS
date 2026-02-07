@@ -14,7 +14,7 @@ interface LogContext {
   endpoint?: string;
   method?: string;
    
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 class Logger {
@@ -129,15 +129,19 @@ export const logger = new Logger();
 export function createErrorResponse(
   message: string,
   status: number = 500,
-  details?: any,
+  details?: unknown,
   context?: LogContext
 ) {
-  const errorResponse = {
+  const errorResponse: Record<string, unknown> = {
     error: message,
     status,
-    ...(details && { details }),
-    ...(process.env.NODE_ENV === 'development' && context && { context }),
   };
+  if (details) {
+    errorResponse.details = details;
+  }
+  if (process.env.NODE_ENV === 'development' && context) {
+    errorResponse.context = context;
+  }
 
   if (status >= 500) {
     logger.error(message, context);
@@ -173,7 +177,7 @@ export async function handleApiError(
   error: unknown,
   context: LogContext,
   defaultMessage: string = 'An unexpected error occurred'
-): Promise<{ message: string; status: number; details?: any }> {
+): Promise<{ message: string; status: number; details?: unknown }> {
   if (error instanceof Error) {
     logger.error(defaultMessage, context, error);
     

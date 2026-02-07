@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     const { studentId, courseId, chapterId, contentId, isCompleted } = await request.json();
 
@@ -24,25 +33,28 @@ export async function POST(request: NextRequest) {
     console.log('📝 [progress API] Saving to course_progress...');
     
     // First check if record already exists to avoid certificate generation issues
-    const { data: existingProgress } = await supabaseAdmin
+    type ProgressRow = { id?: string };
+    const { data: existingProgressData } = await supabaseAdmin
       .from('course_progress')
       .select('*')
       .eq('student_id', studentId)
       .eq('chapter_id', chapterId)
       .maybeSingle();
+    const existingProgress = existingProgressData as ProgressRow | null;
     
     let progressData, progressError;
     
     if (existingProgress) {
       // Update existing record
       console.log('📝 [progress API] Updating existing progress record...');
+      const updatePayload = {
+        completed: isCompleted,
+        progress_percent: isCompleted ? 100 : 0,
+        completed_at: isCompleted ? new Date().toISOString() : null,
+      };
       const result = await supabaseAdmin
         .from('course_progress')
-        .update({
-          completed: isCompleted,
-          progress_percent: isCompleted ? 100 : 0,
-          completed_at: isCompleted ? new Date().toISOString() : null,
-        })
+        .update(updatePayload as unknown as never)
         .eq('student_id', studentId)
         .eq('chapter_id', chapterId)
         .select();
@@ -52,16 +64,17 @@ export async function POST(request: NextRequest) {
     } else {
       // Insert new record
       console.log('📝 [progress API] Creating new progress record...');
+      const insertPayload = {
+        student_id: studentId,
+        course_id: courseId,
+        chapter_id: chapterId,
+        completed: isCompleted,
+        progress_percent: isCompleted ? 100 : 0,
+        completed_at: isCompleted ? new Date().toISOString() : null,
+      };
       const result = await supabaseAdmin
         .from('course_progress')
-        .insert({
-          student_id: studentId,
-          course_id: courseId,
-          chapter_id: chapterId,
-          completed: isCompleted,
-          progress_percent: isCompleted ? 100 : 0,
-          completed_at: isCompleted ? new Date().toISOString() : null,
-        })
+        .insert(insertPayload as unknown as never)
         .select();
       
       progressData = result.data;

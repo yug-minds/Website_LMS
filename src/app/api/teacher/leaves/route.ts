@@ -151,7 +151,8 @@ try {
     const validation = validateRequestBody(createTeacherLeaveSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher leave creation', {
         endpoint: '/api/teacher/leaves',
         errors: errorMessages,
@@ -198,13 +199,11 @@ try {
 
     // Insert the leave request (using admin client to bypass RLS)
      
-    const { data, error } = await ((supabaseAdmin as any)
+    const { data, error } = await supabaseAdmin
       .from('teacher_leaves')
       .insert({
-        teacher_id: teacherId, // Use authenticated teacher_id
+        teacher_id: teacherId,
         school_id,
-        // Backward compatibility: legacy schema had a required single-day `leave_date`.
-        // Keep it populated to satisfy NOT NULL constraint while also storing the range.
         leave_date: start_date,
         start_date,
         end_date,
@@ -213,11 +212,9 @@ try {
         substitute_required: substitute_required || false,
         total_days: totalDays,
         status: 'Pending'
-       
-      } as any)
+      } as never)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (error) {
       logger.error('Failed to create teacher leave', {

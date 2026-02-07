@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
+import { rateLimit, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { fileUploadSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { verifyAdmin } from '../../../../lib/auth-utils';
 import { logger, handleApiError } from '../../../../lib/logger';
@@ -64,7 +64,8 @@ export async function POST(request: NextRequest) {
     });
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate file path
-    const fileExt = file.name.split('.').pop();
+    const _fileExt = file.name.split('.').pop();
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const timestamp = Date.now();
     const fileName = `${timestamp}_${sanitizedName}`;
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
       console.error('Error listing buckets:', bucketError);
     } else {
        
-      const courseFilesBucket = buckets?.find((b: any) => b.id === 'course-files');
+      const courseFilesBucket = buckets?.find((b: { id?: string }) => b.id === 'course-files');
       if (!courseFilesBucket) {
         return NextResponse.json({ 
           error: 'Storage bucket "course-files" not found. Please create it in Supabase Dashboard > Storage.',
@@ -218,19 +219,20 @@ export async function POST(request: NextRequest) {
     if (validatedChapterId && validatedType !== 'thumbnail') {
       try {
         // Get the next order_index for this chapter
+        type OrderRow = { order_index?: number };
         const { data: existingContent } = await supabaseAdmin
           .from('chapter_contents')
           .select('order_index')
           .eq('chapter_id', validatedChapterId)
           .order('order_index', { ascending: false })
           .limit(1)
-           
-          .single() as any;
+          .single() as { data: OrderRow | null; error: unknown };
 
         const nextOrderIndex = existingContent?.order_index ? existingContent.order_index + 1 : 0;
 
         // Insert into chapter_contents
-        const { data: insertedContent, error: contentError } = await (supabaseAdmin
+        type InsertedRow = { id?: string };
+        const { data: insertedContent, error: contentError } = await supabaseAdmin
           .from('chapter_contents')
           .insert({
             chapter_id: validatedChapterId,
@@ -246,12 +248,9 @@ export async function POST(request: NextRequest) {
             },
             order_index: nextOrderIndex,
             is_published: true
-           
-          } as any)
-           
-          .select('id') as any)
-           
-          .single() as any;
+          } as never)
+          .select('id')
+          .single() as { data: InsertedRow | null; error: unknown };
 
         if (contentError) {
           console.error('Warning: Failed to save to chapter_contents:', contentError);

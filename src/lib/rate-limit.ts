@@ -129,12 +129,13 @@ export async function rateLimit(
   
   // Fallback to Supabase database
   try {
-    const { data, error } = await (supabaseAdmin as any).rpc('check_rate_limit', {
+    type RateLimitResult = { reset_time?: string; allowed?: boolean; remaining?: number };
+    const { data, error } = await supabaseAdmin.rpc('check_rate_limit', {
       p_identifier: identifier,
       p_max_requests: config.maxRequests,
       p_window_seconds: config.windowSeconds,
       p_endpoint: endpoint || '',
-    });
+    } as never);
 
     if (error) {
       console.error('[RateLimit] Supabase error:', error);
@@ -147,7 +148,8 @@ export async function rateLimit(
       };
     }
 
-    if (!data || data.length === 0) {
+    const dataTyped = data as RateLimitResult[] | null;
+    if (!dataTyped || dataTyped.length === 0) {
       console.warn('[RateLimit] Supabase returned no data');
       return {
         success: true,
@@ -157,14 +159,14 @@ export async function rateLimit(
       };
     }
 
-    const result = data[0];
-    const resetTimestamp = Math.floor(new Date(result.reset_time).getTime() / 1000);
+    const result = dataTyped[0];
+    const resetTimestamp = result.reset_time ? Math.floor(new Date(result.reset_time).getTime() / 1000) : nowSeconds + config.windowSeconds;
     const retryAfter = result.allowed ? undefined : Math.ceil(resetTimestamp - nowSeconds);
 
     return {
-      success: result.allowed,
+      success: result.allowed ?? false,
       limit: config.maxRequests,
-      remaining: result.remaining,
+      remaining: result.remaining ?? 0,
       reset: resetTimestamp,
       retryAfter,
     };

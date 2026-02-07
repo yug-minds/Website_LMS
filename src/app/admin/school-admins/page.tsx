@@ -51,10 +51,9 @@ import {
   Briefcase
 } from "lucide-react";
 import { fetchWithCsrf } from '../../../lib/csrf-client';
-import { supabase } from '../../../lib/supabase';
 import { useSmartRefresh } from '../../../hooks/useSmartRefresh';
 import { useAutoSaveForm } from '../../../hooks/useAutoSaveForm';
-import { loadFormData, clearFormData } from '../../../lib/form-persistence';
+import { loadFormData } from '../../../lib/form-persistence';
 
 interface SchoolAdmin {
   id: string;
@@ -66,7 +65,7 @@ interface SchoolAdmin {
   temp_password: string;
   is_active: boolean;
    
-  permissions: any;
+  permissions?: Record<string, unknown>;
   last_login: string | null;
   created_at: string;
   updated_at: string;
@@ -106,7 +105,7 @@ export default function SchoolAdminManagement() {
         phone: string;
         school_id: string;
         temp_password: string;
-        permissions: any;
+        permissions?: Record<string, unknown>;
       }>('admin-school-admins-form')
     : null;
 
@@ -122,7 +121,7 @@ export default function SchoolAdminManagement() {
   const [showNewPassword, setShowNewPassword] = useState(false);
 
   // Auto-save form
-  const { isDirty: isFormDirty, clearSavedData } = useAutoSaveForm({
+  const { isDirty: isFormDirty, clearSavedData: _clearSavedData } = useAutoSaveForm({
     formId: 'admin-school-admins-form',
     formData,
     autoSave: true,
@@ -196,14 +195,13 @@ export default function SchoolAdminManagement() {
       if (response.ok) {
         // Ensure we only set data that exists - filter out any invalid entries
          
-        const admins = (data.schoolAdmins || []).filter((admin: any) => 
+        const admins = (data.schoolAdmins || []).filter((admin: SchoolAdmin) => 
           admin && admin.id && admin.email
         );
         
         console.log('✅ School admins fetched:', admins.length, 'admin(s)');
         if (admins.length > 0) {
-           
-          console.log('📋 School admins data:', admins.map((a: any) => ({
+          console.log('📋 School admins data:', admins.map((a: SchoolAdmin) => ({
             id: a.id,
             name: a.full_name,
             email: a.email,
@@ -429,7 +427,7 @@ export default function SchoolAdminManagement() {
       // Don't include temp_password in regular update (only use it for password change)
       const { temp_password: _tempPassword, ...updateData } = formData;
       void _tempPassword;
-      const response = await fetch(`/api/admin/school-admins`, {
+      const response = await fetchWithCsrf(`/api/admin/school-admins`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -450,13 +448,22 @@ export default function SchoolAdminManagement() {
         setShowNewPassword(false);
         fetchSchoolAdmins();
       } else {
-        const errorMessage = data.details ? `${data.error}: ${data.details}` : data.error || 'Failed to update school admin';
+        const errorMessage = data.details 
+          ? `${data.error || 'Error'}: ${data.details}` 
+          : data.error || data.message || 'Failed to update school admin';
         alert(`Failed to update school admin: ${errorMessage}`);
-        console.error('Update error:', data);
+        console.error('Update error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: data.error,
+          details: data.details,
+          message: data.message,
+          fullResponse: data
+        });
       }
     } catch (error) {
       console.error('Error updating school admin:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       alert(`Error updating school admin: ${errorMessage}`);
     } finally {
       setActionLoading(null);
@@ -505,7 +512,7 @@ export default function SchoolAdminManagement() {
     });
     
     // Optimistically update the UI
-    setSchoolAdmins(prev => prev.map((a: any) => 
+    setSchoolAdmins(prev => prev.map((a: SchoolAdmin) => 
       a.id === admin.id ? { ...a, is_active: statusToSet } : a
     ));
     
@@ -535,10 +542,10 @@ export default function SchoolAdminManagement() {
         if (data.schoolAdmin) {
           console.log('📝 Updating state with response data:', data.schoolAdmin.is_active);
           setSchoolAdmins(prev => {
-            const updated = prev.map((a: any) => 
+            const updated = prev.map((a: SchoolAdmin) => 
               a.id === admin.id ? { ...a, is_active: data.schoolAdmin.is_active } : a
             );
-            console.log('✅ State updated:', updated.find((a: any) => a.id === admin.id)?.is_active);
+            console.log('✅ State updated:', updated.find((a: SchoolAdmin) => a.id === admin.id)?.is_active);
             return updated;
           });
         } else {
@@ -554,7 +561,7 @@ export default function SchoolAdminManagement() {
         // }, 1000);
       } else {
         // Revert optimistic update on error
-        setSchoolAdmins(prev => prev.map((a: any) => 
+        setSchoolAdmins(prev => prev.map((a: SchoolAdmin) => 
           a.id === admin.id ? { ...a, is_active: admin.is_active } : a
         ));
         console.error('❌ Failed to update school admin status:', data.error);
@@ -562,7 +569,7 @@ export default function SchoolAdminManagement() {
       }
     } catch (error) {
       // Revert optimistic update on error
-      setSchoolAdmins(prev => prev.map((a: any) => 
+      setSchoolAdmins(prev => prev.map((a: SchoolAdmin) => 
         a.id === admin.id ? { ...a, is_active: admin.is_active } : a
       ));
       console.error('❌ Error updating school admin status:', error);

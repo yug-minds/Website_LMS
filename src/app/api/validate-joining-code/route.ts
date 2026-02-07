@@ -2,13 +2,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../lib/rate-limit';
 import { logger, handleApiError } from '../../../lib/logger';
-import { ensureCsrfToken } from '../../../lib/csrf-middleware';
 import { validatePasswordClient } from '../../../lib/password-validation';
+
+type JoinCodeRow = {
+  id?: string;
+  expires_at?: string | null;
+  max_uses?: number | null;
+  times_used?: number | null;
+  school_id?: string | null;
+  grade?: string | null;
+  section?: string | null;
+  [key: string]: unknown;
+};
+type JoinCodeWithSchool = JoinCodeRow & { schools?: { name?: string | null } | null };
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
 
   // Apply rate limiting
@@ -50,7 +68,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleCodeValidation(body: any) {
+async function handleCodeValidation(body: { code?: string }) {
   const { code } = body;
   
   if (!code || typeof code !== 'string') {
@@ -61,8 +79,7 @@ async function handleCodeValidation(body: any) {
   }
 
   try {
-    // Look up the joining code
-    const { data: joinCode, error } = await supabaseAdmin
+    const { data: joinCodeData, error } = await supabaseAdmin
       .from('join_codes')
       .select(`
         *,
@@ -77,6 +94,7 @@ async function handleCodeValidation(body: any) {
       .eq('is_active', true)
       .single();
 
+    const joinCode = joinCodeData as JoinCodeWithSchool | null;
     if (error || !joinCode) {
       logger.warn('Invalid joining code attempted', {
         endpoint: '/api/validate-joining-code',
@@ -98,7 +116,7 @@ async function handleCodeValidation(body: any) {
     }
 
     // Check if code has reached max uses
-    if (joinCode.max_uses && joinCode.times_used >= joinCode.max_uses) {
+    if (joinCode.max_uses != null && (joinCode.times_used ?? 0) >= joinCode.max_uses) {
       return NextResponse.json({
         is_valid: false,
         message: 'This joining code has reached its maximum number of uses'
@@ -107,15 +125,17 @@ async function handleCodeValidation(body: any) {
 
     logger.info('Joining code validated successfully', {
       endpoint: '/api/validate-joining-code',
-      schoolId: joinCode.school_id,
-      grade: joinCode.grade,
+      schoolId: joinCode.school_id ?? undefined,
+      grade: joinCode.grade ?? undefined,
+      section: joinCode.section ?? undefined,
     });
 
     return NextResponse.json({
       is_valid: true,
-      school_id: joinCode.school_id,
-      school_name: joinCode.schools?.name,
+      school_id: joinCode.school_id ?? undefined,
+      school_name: (joinCode.schools as { name?: string | null } | undefined)?.name ?? undefined,
       grade: joinCode.grade,
+      section: joinCode.section || null,
       expires_at: joinCode.expires_at,
       message: 'Valid joining code'
     });
@@ -132,7 +152,7 @@ async function handleCodeValidation(body: any) {
   }
 }
 
-async function handleStudentRegistration(body: any) {
+async function handleStudentRegistration(body: { code?: string; studentData?: { full_name?: string; email?: string; password?: string } }) {
   try {
     logger.info('Starting student registration', {
       endpoint: '/api/validate-joining-code',
@@ -197,8 +217,10 @@ async function handleStudentRegistration(body: any) {
       }, { status: 400 });
     }
 
+    const joinCodeRow = joinCode as JoinCodeWithSchool;
+
     // Check if code has expired
-    if (joinCode.expires_at && new Date(joinCode.expires_at) < new Date()) {
+    if (joinCodeRow.expires_at && new Date(joinCodeRow.expires_at) < new Date()) {
       return NextResponse.json({
         success: false,
         error: 'This joining code has expired'
@@ -206,7 +228,7 @@ async function handleStudentRegistration(body: any) {
     }
 
     // Check if code has reached max uses
-    if (joinCode.max_uses && joinCode.times_used >= joinCode.max_uses) {
+    if (joinCodeRow.max_uses != null && (joinCodeRow.times_used ?? 0) >= joinCodeRow.max_uses) {
       return NextResponse.json({
         success: false,
         error: 'This joining code has reached its maximum number of uses'
@@ -215,7 +237,7 @@ async function handleStudentRegistration(body: any) {
 
     // Check if email already exists
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
-    const existingUser = existingUsers?.users?.find((user: any) => user.email === email);
+    const existingUser = existingUsers?.users?.find((user: { email?: string }) => user.email === email);
     if (existingUser) {
       return NextResponse.json({
         success: false,
@@ -249,9 +271,7 @@ async function handleStudentRegistration(body: any) {
     // Update the student profile (created automatically by trigger)
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
-      .update({
-        school_id: joinCode.school_id
-      })
+      .update({ school_id: joinCodeRow.school_id ?? undefined } as never)
       .eq('id', authUser.user.id);
 
     if (profileError) {
@@ -275,12 +295,13 @@ async function handleStudentRegistration(body: any) {
       .from('student_schools')
       .insert({
         student_id: authUser.user.id,
-        school_id: joinCode.school_id,
-        grade: joinCode.grade,
+        school_id: joinCodeRow.school_id ?? '',
+        grade: joinCodeRow.grade ?? '',
+        section: joinCodeRow.section ?? null,
         joining_code: code.trim().toUpperCase(),
         is_active: true,
         enrolled_at: new Date().toISOString()
-      });
+      } as never);
 
     if (studentSchoolError) {
       // If student-school creation fails, clean up the auth user and profile
@@ -302,16 +323,16 @@ async function handleStudentRegistration(body: any) {
     const { error: updateError } = await supabaseAdmin
       .from('join_codes')
       .update({ 
-        times_used: joinCode.times_used + 1,
+        times_used: (joinCodeRow.times_used ?? 0) + 1,
         last_used_at: new Date().toISOString()
-      })
-      .eq('id', joinCode.id);
+      } as never)
+      .eq('id', joinCodeRow.id ?? '');
 
     if (updateError) {
       logger.warn('Failed to update joining code usage count', {
         endpoint: '/api/validate-joining-code',
         error: updateError.message,
-        codeId: joinCode.id,
+        codeId: joinCodeRow.id,
       });
       // Don't fail the registration for this
     }
@@ -319,15 +340,19 @@ async function handleStudentRegistration(body: any) {
     logger.info('Student registered successfully', {
       endpoint: '/api/validate-joining-code',
       userId: authUser.user.id,
-      schoolId: joinCode.school_id,
-      grade: joinCode.grade,
+      schoolId: joinCodeRow.school_id ?? undefined,
+      grade: joinCodeRow.grade ?? undefined,
+      section: joinCodeRow.section ?? undefined,
     });
 
     return NextResponse.json({
       success: true,
       message: 'Student account created successfully',
       user_id: authUser.user.id,
-      school_name: joinCode.schools?.name
+      student_id: authUser.user.id,
+      school_name: (joinCodeRow.schools as { name?: string | null } | undefined)?.name ?? undefined,
+      grade: joinCodeRow.grade ?? undefined,
+      section: joinCodeRow.section ?? undefined
     });
 
   } catch (error) {

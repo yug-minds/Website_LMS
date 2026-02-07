@@ -36,7 +36,7 @@ export default function HomeFeatures() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-          {features.map((feature, index) => {
+          {features.map((feature, _index) => {
             const IconComponent = feature.icon;
             return (
               <div 

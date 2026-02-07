@@ -71,13 +71,13 @@ interface SmartRefreshOptions {
  */
 export function useSmartRefresh(options: SmartRefreshOptions = {}) {
   const {
-    minRefreshInterval = 30000, // 30 seconds default
+    minRefreshInterval: _minRefreshInterval = 30000, // 30 seconds default
     refreshOnVisibility = true,
     refreshOnFocus = true,
-    hasUnsavedData,
-    onRefresh,
-    queryKeys = [],
-    customRefresh,
+    hasUnsavedData: _hasUnsavedData,
+    onRefresh: _onRefresh,
+    queryKeys: _queryKeys = [],
+    customRefresh: _customRefresh,
   } = options;
 
   const queryClient = useQueryClient();

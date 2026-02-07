@@ -1,12 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { getTeacherUserId } from '../../../../lib/teacher-auth';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { logger, handleApiError } from '../../../../lib/logger';
 
 import { getOrSetCache, CacheTTL } from '../../../../lib/cache';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
-import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
+
+interface TeacherClass {
+  class_id?: string;
+}
+
+interface ClassData {
+  id: string;
+  class_name?: string;
+  grade?: string;
+  subject?: string;
+  max_students?: number;
+  student_count?: number;
+}
+
+interface Report {
+  id?: string;
+  date?: string;
+  class_name?: string;
+  grade?: string;
+  topics_taught?: string;
+  report_status?: string;
+  created_at?: string;
+}
+
+interface AttendanceData {
+  total_days?: number;
+  present_count?: number;
+}
+
+interface Leave {
+  total_days?: number;
+  [key: string]: unknown;
+}
 
 export async function GET(request: NextRequest) {
   // Skip CSRF token for read-only GET endpoints (minimal overhead, but every ms counts)
@@ -54,10 +85,11 @@ try {
         const functionStartTime = Date.now();
         
         // Wrap RPC call with timeout using Promise.race
-        const optimizedFunctionCall = supabaseAdmin
-          .rpc('get_teacher_dashboard_stats_from_mv', { p_teacher_id: teacherId })
-          .then((result: any) => ({ ...result, _isTimeout: false }))
-          .catch((error: any) => ({ data: null, error, _isTimeout: false }));
+        const optimizedFunctionCall = Promise.resolve(
+          supabaseAdmin.rpc('get_teacher_dashboard_stats_from_mv', { p_teacher_id: teacherId } as never)
+        )
+          .then((result: { data: unknown; error: unknown }) => ({ ...result, _isTimeout: false }))
+          .catch((error: unknown) => ({ data: null, error, _isTimeout: false }));
         
         const timeoutPromise = new Promise<{ data: null; error: { message: string }; _isTimeout: boolean }>((resolve) => {
           setTimeout(() => {
@@ -65,8 +97,8 @@ try {
           }, FUNCTION_TIMEOUT_MS);
         });
         
-        let statsData: any = null;
-        let functionError: any = null;
+        let statsData: unknown = null;
+        let functionError: unknown = null;
         let timedOut = false;
         
         try {
@@ -78,7 +110,7 @@ try {
             statsData = result.data;
             functionError = result.error;
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           functionError = error;
         }
         
@@ -95,8 +127,8 @@ try {
               leaveBalance: number;
               pendingLeaves: number;
             };
-            todaysClasses: any[];
-            recentReports: any[];
+            todaysClasses: Array<Record<string, unknown>>;
+            recentReports: Array<Record<string, unknown>>;
           };
 
           logger.debug('Teacher dashboard stats fetched using optimized function', {
@@ -130,10 +162,11 @@ try {
         // Fallback to original function if new one doesn't exist or timed out
         const originalFunctionStartTime = Date.now();
         
-        const originalFunctionCall = supabaseAdmin
-          .rpc('get_teacher_dashboard_stats', { p_teacher_id: teacherId })
-          .then((result: any) => ({ ...result, _isTimeout: false }))
-          .catch((error: any) => ({ data: null, error, _isTimeout: false }));
+        const originalFunctionCall = Promise.resolve(
+          supabaseAdmin.rpc('get_teacher_dashboard_stats', { p_teacher_id: teacherId } as never)
+        )
+          .then((result: { data: unknown; error: unknown }) => ({ ...result, _isTimeout: false }))
+          .catch((error: unknown) => ({ data: null, error, _isTimeout: false }));
         
         const originalTimeoutPromise = new Promise<{ data: null; error: { message: string }; _isTimeout: boolean }>((resolve) => {
           setTimeout(() => {
@@ -141,8 +174,8 @@ try {
           }, FUNCTION_TIMEOUT_MS);
         });
         
-        let originalStatsData: any = null;
-        let originalFunctionError: any = null;
+        let originalStatsData: unknown = null;
+        let originalFunctionError: unknown = null;
         let originalTimedOut = false;
         
         try {
@@ -154,7 +187,7 @@ try {
             originalStatsData = result.data;
             originalFunctionError = result.error;
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           originalFunctionError = error;
         }
         
@@ -190,8 +223,8 @@ try {
           ]);
 
           // Fetch class details if needed
-          const classIds = classesData?.map((tc: any) => tc.class_id).filter(Boolean) || [];
-          let classes: any[] = [];
+          const classIds = classesData?.map((tc: TeacherClass) => tc.class_id).filter(Boolean) || [];
+          let classes: ClassData[] = [];
           
           if (classIds.length > 0) {
             const { data: classDetails } = await supabaseAdmin
@@ -200,7 +233,7 @@ try {
               .in('id', classIds)
               .limit(50);
             
-            classes = (classDetails || []).map((classData: any) => ({
+            classes = (classDetails || []).map((classData: ClassData) => ({
               id: classData.id || '',
               grade: classData.grade || '',
               subject: classData.subject || '',
@@ -219,7 +252,7 @@ try {
           return {
             stats,
             todaysClasses: classes,
-            recentReports: (reportsData as any) || []
+            recentReports: (reportsData as Report[]) || []
           };
         }
 
@@ -232,7 +265,7 @@ try {
         }
 
         // Get today's date and current month/year for queries
-        const today = new Date().toISOString().split('T')[0];
+        const _today = new Date().toISOString().split('T')[0];
         const currentMonth = new Date().toISOString().substring(0, 7);
         const currentYear = new Date().getFullYear();
         const yearStart = `${currentYear}-01-01`;
@@ -240,10 +273,10 @@ try {
         
         // Parallelize all independent queries
         const [
-          { data: classesData, error: classesError },
-          { data: reportsData, error: reportsError },
+          { data: classesData, error: _classesError },
+          { data: reportsData, error: _reportsError },
           { data: attendanceData, error: attendanceError },
-          { data: leavesData, error: leavesError },
+          { data: leavesData, error: _leavesError },
           { data: approvedLeaves, error: approvedLeavesError }
         ] = await Promise.all([
           supabaseAdmin
@@ -278,8 +311,8 @@ try {
         ]);
 
         // Process data - fetch class details separately if needed (optimized)
-        const classIds = classesData?.map((tc: any) => tc.class_id).filter(Boolean) || [];
-        let classes: any[] = [];
+        const classIds = classesData?.map((tc: TeacherClass) => tc.class_id).filter(Boolean) || [];
+        let classes: ClassData[] = [];
         
         if (classIds.length > 0) {
           const { data: classDetails } = await supabaseAdmin
@@ -288,7 +321,7 @@ try {
             .in('id', classIds)
             .limit(50);
           
-          classes = (classDetails || []).map((classData: any) => ({
+          classes = (classDetails || []).map((classData: ClassData) => ({
             id: classData.id || '',
             grade: classData.grade || '',
             subject: classData.subject || '',
@@ -298,22 +331,22 @@ try {
           }));
         }
 
-        const reports = (reportsData as any) || [];
-        const pendingReports = reports.filter((r: any) => r.report_status === 'Submitted').length;
+        const reports = (reportsData as Report[]) || [];
+        const pendingReports = reports.filter((r: Report) => r.report_status === 'Submitted').length;
 
         let monthlyAttendance = 0;
         if (!attendanceError && attendanceData && attendanceData.length > 0) {
-          const attendance = (attendanceData as any)[0];
-          monthlyAttendance = attendance.total_days > 0 
-            ? Math.round((attendance.present_count / attendance.total_days) * 100)
-            : 0;
+          const attendance = (attendanceData as AttendanceData[])[0];
+          const total = attendance.total_days ?? 0;
+          const present = attendance.present_count ?? 0;
+          monthlyAttendance = total > 0 ? Math.round((present / total) * 100) : 0;
         }
 
         const pendingLeaves = leavesData?.length || 0;
 
         let leaveBalance = 0;
         if (!approvedLeavesError && approvedLeaves) {
-          const totalDaysUsed = approvedLeaves.reduce((sum: number, leave: any) => sum + (leave.total_days || 0), 0);
+          const totalDaysUsed = approvedLeaves.reduce((sum: number, leave: Leave) => sum + (leave.total_days || 0), 0);
           const standardLeaveBalance = 12;
           leaveBalance = Math.max(0, standardLeaveBalance - totalDaysUsed);
         }
@@ -322,7 +355,7 @@ try {
           stats: {
             todaysClasses: classes.length,
             pendingReports,
-            totalStudents: classes.reduce((sum: number, c: any) => sum + c.student_count, 0),
+            totalStudents: classes.reduce((sum: number, c: ClassData) => sum + (c.student_count || 0), 0),
             monthlyAttendance,
             leaveBalance,
             pendingLeaves

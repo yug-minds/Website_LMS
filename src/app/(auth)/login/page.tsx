@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { SignInPage, Testimonial } from "../../../components/ui/sign-in";
@@ -37,14 +37,6 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const router = useRouter();
 
-  const ROLE_HOME: Record<string, string> = {
-    admin: '/admin',
-    super_admin: '/admin',
-    school_admin: '/school-admin',
-    teacher: '/teacher',
-    student: '/student',
-  };
-
   // This will never let the page go blank on error
   function ErrorMessage() {
     if (!error) return null;
@@ -71,12 +63,13 @@ export default function LoginPage() {
   const checkSupabaseConnection = async (): Promise<{ connected: boolean; error?: string }> => {
     try {
       // Try a simple health check - get the current session (which will fail gracefully if not connected)
-      const { error } = await Promise.race([
+      const sessionResult = await Promise.race([
         supabase.auth.getSession(),
         new Promise<{ error: { message: string } }>((_, reject) =>
           setTimeout(() => reject({ error: { message: 'Connection timeout' } }), 5000)
         )
-      ]) as any;
+      ]) as { error?: { message?: string } };
+      const { error } = sessionResult;
       
       // If we get a network error, connection is down
       if (error && (
@@ -90,11 +83,12 @@ export default function LoginPage() {
       
       // Connection seems OK (even if no session, that's fine)
       return { connected: true };
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Network error or timeout
-      if (err?.error?.message?.includes('timeout') || 
-          err?.message?.includes('Failed to fetch') ||
-          err?.message?.includes('CORS')) {
+      const error = err as { error?: { message?: string }; message?: string };
+      if (error?.error?.message?.includes('timeout') || 
+          error?.message?.includes('Failed to fetch') ||
+          error?.message?.includes('CORS')) {
         return { connected: false, error: 'Unable to reach authentication server' };
       }
       // Other errors might be OK (like no session), so assume connected
@@ -140,8 +134,8 @@ export default function LoginPage() {
         setError("Login is taking too long. The authentication server may be experiencing issues. Please try again in a few moments.");
       }, 60000); // 60 seconds to allow for retries in supabase client
 
-      let loginResult: any = null;
-      let loginError: any = null;
+      let loginResult: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>> | null = null;
+      let loginError: { message?: string } | null = null;
       
       try {
         // The supabase client now has built-in retry logic, so we don't need Promise.race
@@ -152,34 +146,37 @@ export default function LoginPage() {
           password: password,
         });
         
-        loginError = loginResult?.error;
+        loginError = loginResult?.error ?? null;
         if (loginTimeout) clearTimeout(loginTimeout);
-      } catch (networkError: any) {
+      } catch (networkError: unknown) {
         if (loginTimeout) clearTimeout(loginTimeout);
         console.error('Network error during login:', networkError);
         setLoading(false);
+        const error = networkError as { message?: string };
         
         // Handle timeout errors
-        if (networkError.message?.includes('timeout') || 
-            networkError.message?.includes('Timeout') ||
-            networkError.message?.includes('took too long')) {
+        if (error.message?.includes('timeout') || 
+            error.message?.includes('Timeout') ||
+            error.message?.includes('took too long')) {
           setError("The authentication server is taking too long to respond. This could indicate:\n• Server is temporarily unavailable\n• Network connectivity issues\n• High server load\n\nPlease try again in a few moments.");
           return;
         }
         
         // Handle network/CORS errors with more specific messages
-        if (networkError.message?.includes('CORS') || 
-            networkError.message?.includes('Failed to fetch') ||
-            networkError.message?.includes('522') ||
-            networkError.message?.includes('ERR_FAILED') ||
-            networkError.message?.includes('Network error') ||
-            networkError.name === 'AuthRetryableFetchError') {
+        const errorObj = error as { message?: string; name?: string };
+        if (errorObj.message?.includes('CORS') || 
+            errorObj.message?.includes('Failed to fetch') ||
+            errorObj.message?.includes('522') ||
+            errorObj.message?.includes('ERR_FAILED') ||
+            errorObj.message?.includes('Network error') ||
+            errorObj.name === 'AuthRetryableFetchError') {
           setError("Unable to connect to authentication server. This could be due to:\n• Server is temporarily unavailable\n• Network connectivity issues\n• CORS configuration problems\n\nPlease check your internet connection and try again in a few moments.");
           return;
         }
         
         // For other errors, show the actual error message
-        setError(networkError.message || "An error occurred during login. Please try again.");
+        const msg = networkError instanceof Error ? networkError.message : String(networkError);
+        setError(msg || "An error occurred during login. Please try again.");
         return;
       }
       
@@ -313,8 +310,9 @@ export default function LoginPage() {
           };
           
           // Include authorization header with the access token from the session
-          if (sessionToUse?.access_token) {
-            headers['Authorization'] = `Bearer ${sessionToUse.access_token}`;
+          const token = (sessionToUse as { access_token?: string })?.access_token;
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
             console.log('✅ Including authorization header with session token');
           } else {
             console.warn('⚠️ No access token available in session, API will use admin fallback');
@@ -348,7 +346,7 @@ export default function LoginPage() {
             try {
               const errorJson = await resp.json();
               errorText = errorJson.error || errorJson.message || '';
-            } catch (e) {
+            } catch {
               errorText = await resp.text().catch(() => 'Unknown error');
             }
             console.error('Role API error:', resp.status, errorText);
@@ -414,9 +412,10 @@ export default function LoginPage() {
             return; // Exit early to prevent further execution
           }
          
-        } catch (e: any) {
+        } catch (e: unknown) {
+          const error = e as { message?: string };
           console.error('Error fetching role:', e);
-          setError(`Could not fetch your user profile: ${e?.message || 'unknown error'}`);
+          setError(`Could not fetch your user profile: ${error?.message || 'unknown error'}`);
           setLoading(false);
           return;
         }
@@ -431,27 +430,12 @@ export default function LoginPage() {
       // Normalize role for comparison
       userRole = userRole.trim().toLowerCase();
       
-      // Determine redirect path based on role
-      let redirectPath = '/';
-      switch (userRole) {
-        case "super_admin":
-        case "admin":
-          redirectPath = "/admin";
-          break;
-        case "school_admin":
-          redirectPath = "/school-admin";
-          break;
-        case "teacher":
-          redirectPath = "/teacher";
-          break;
-        case "student":
-          redirectPath = "/student";
-          break;
-        default:
-          console.error('Unknown user role:', userRole);
-          setError("Unknown user role. Please contact support.");
-          setLoading(false);
-          return;
+      // Validate user role
+      if (!userRole || !['super_admin', 'admin', 'school_admin', 'teacher', 'student'].includes(userRole)) {
+        console.error('Unknown user role:', userRole);
+        setError("Unknown user role. Please contact support.");
+        setLoading(false);
+        return;
       }
       
       // Use server-side redirect API to set cookie properly
@@ -467,7 +451,7 @@ export default function LoginPage() {
       window.location.href = `/api/auth/redirect?userId=${data.user.id}&role=${encodeURIComponent(userRole)}`;
       
      
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Ensure loading is always cleared on any error
       setLoading(false);
       
@@ -477,20 +461,22 @@ export default function LoginPage() {
       }
       
       console.error('Unexpected error during login:', err);
+      const error = err as { message?: string };
       
       // Handle network errors that weren't caught earlier
-      if (err.message?.includes('CORS') || 
-          err.message?.includes('Failed to fetch') ||
-          err.message?.includes('525') ||
-          err.message?.includes('ERR_FAILED') ||
-          err.name === 'AuthRetryableFetchError') {
+      const errorObj = error as { message?: string; name?: string };
+      if (errorObj.message?.includes('CORS') || 
+          errorObj.message?.includes('Failed to fetch') ||
+          errorObj.message?.includes('525') ||
+          errorObj.message?.includes('ERR_FAILED') ||
+          errorObj.name === 'AuthRetryableFetchError') {
         setError("Unable to connect to authentication server. Please check your internet connection or try again later.");
         return;
       }
       
-      setError(err.message || "An unexpected error occurred. Please try again.");
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg || "An unexpected error occurred. Please try again.");
       console.error('Unexpected login error:', err);
-      setError(err?.message || "Unexpected error during login");
       setLoading(false);
     }
   };

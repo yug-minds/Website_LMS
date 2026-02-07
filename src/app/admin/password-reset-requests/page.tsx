@@ -94,9 +94,9 @@ export default function PasswordResetRequestsPage() {
         alert(`Failed to load password reset requests: ${data.error || 'Unknown error'}`);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading password reset requests:', error);
-      alert(`Error loading password reset requests: ${error.message}`);
+      alert(`Error loading password reset requests: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -170,10 +170,15 @@ export default function PasswordResetRequestsPage() {
         }
         
         // Build request body - ensure all fields are properly formatted
-        const requestBody: any = {
-          // Ensure id is a string and valid UUID format
+        type RequestBody = {
+          id: string;
+          status: 'pending' | 'approved' | 'rejected' | 'completed';
+          approved_by?: string;
+          notes?: string;
+          [key: string]: string | undefined;
+        };
+        const requestBody: RequestBody = {
           id: String(selectedRequest.id).trim(),
-          // Ensure status is exactly one of the valid enum values
           status: newStatus as 'pending' | 'approved' | 'rejected' | 'completed',
         };
         
@@ -268,9 +273,15 @@ export default function PasswordResetRequestsPage() {
           headers: Object.fromEntries(response.headers.entries())
         });
 
-        let data: any;
+        type ApiResponse = {
+          error?: string;
+          details?: string;
+          validationIssues?: unknown;
+          success?: boolean;
+        };
+        let data: ApiResponse;
         try {
-          data = await response.json();
+          data = await response.json() as ApiResponse;
         } catch (parseError) {
           console.error('❌ Failed to parse response:', parseError);
           const text = await response.text();
@@ -302,8 +313,8 @@ export default function PasswordResetRequestsPage() {
             errorMsg += `\n\nDetails: ${data.details}`;
           }
           if (data.validationIssues && Array.isArray(data.validationIssues) && data.validationIssues.length > 0) {
-            const issues = data.validationIssues.map((issue: any) => 
-              `  • ${issue.path || 'unknown field'}: ${issue.message}`
+            const issues = data.validationIssues.map((issue: { path?: string; message?: string }) => 
+              `  • ${issue.path || 'unknown field'}: ${issue.message || ''}`
             ).join('\n');
             errorMsg += `\n\nValidation Issues:\n${issues}`;
           }
@@ -318,9 +329,10 @@ export default function PasswordResetRequestsPage() {
         }
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error performing action:', error);
-      alert(`Error: ${error.message || 'Please try again'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Please try again';
+      alert(`Error: ${errorMessage}`);
     } finally {
       setActionLoading(false);
     }
@@ -352,7 +364,7 @@ export default function PasswordResetRequestsPage() {
     });
   };
 
-  const filteredRequests = requests.filter((req: any) => {
+  const filteredRequests = requests.filter((req: PasswordResetRequest) => {
     const matchesSearch = !searchQuery || 
       req.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       req.profiles?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -398,7 +410,7 @@ export default function PasswordResetRequestsPage() {
               </div>
             </div>
             { }
-            <Select value={statusFilter} onValueChange={(value: any) => setStatusFilter(value)}>
+            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as typeof statusFilter)}>
               <SelectTrigger className="w-48">
                 <SelectValue />
               </SelectTrigger>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Card, CardContent } from '../../../../components/ui/card'
+import { Card } from '../../../../components/ui/card'
 import { Button } from '../../../../components/ui/button'
 import { supabase } from '../../../../lib/supabase'
 
@@ -49,10 +49,10 @@ export default function DebugPage() {
               ? `✅ API OK: ${data.courses?.length || 0} courses` 
               : `❌ API Error: ${data.error || response.statusText}`,
           }))
-        } catch (apiError: any) {
+        } catch (apiError: unknown) {
           setStatus(prev => ({
             ...prev,
-            api: `❌ API Error: ${apiError.message}`,
+            api: `❌ API Error: ${apiError instanceof Error ? apiError.message : String(apiError)}`,
           }))
         }
 
@@ -68,10 +68,10 @@ export default function DebugPage() {
             ? `❌ DB Error: ${coursesError.message}` 
             : `✅ DB OK: ${courses?.length || 0} courses found`,
         }))
-      } catch (error: any) {
+      } catch (error: unknown) {
         setStatus(prev => ({
           ...prev,
-          error: error.message || 'Unknown error',
+          error: error instanceof Error ? error.message : 'Unknown error',
         }))
       }
     }

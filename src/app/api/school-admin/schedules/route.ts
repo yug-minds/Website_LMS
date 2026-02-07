@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSchoolAdminSchoolId } from '../../../../lib/school-admin-auth';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { scheduleSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../lib/logger';
 
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+type ScheduleConflictRow = { start_time: string; end_time: string };
+type PostgrestError = { message?: string; code?: string; details?: string; hint?: string };
 
 
 // GET /api/school-admin/schedules
@@ -73,6 +74,7 @@ try {
       `)
       .eq('school_id', schoolId)
       .eq('is_active', true)
+      .is('effective_to', null) // Only current active schedules (no end date)
       .order('day_of_week', { ascending: true })
       .order('start_time', { ascending: true });
 
@@ -161,7 +163,7 @@ try {
     const validation = validateRequestBody(scheduleSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -203,8 +205,7 @@ try {
         .select('start_time, end_time')
         .eq('id', period_id)
         .eq('school_id', schoolId)
-         
-        .single() as any;
+        .single();
 
       if (periodError || !period) {
         return NextResponse.json(
@@ -238,15 +239,15 @@ try {
     // Two time ranges overlap if: existing_start < new_end AND existing_end > new_start
     // We use strict inequality to allow schedules that touch at boundaries (e.g., 9:00-10:00 and 10:00-11:00 don't conflict)
     if (teacher_id) {
-      // First, get all existing schedules for this teacher on this day
+      // First, get all existing schedules for this teacher on this day (only current active schedules)
       const { data: existingSchedules, error: conflictError } = await supabaseAdmin
         .from('class_schedules')
         .select('id, start_time, end_time')
         .eq('school_id', schoolId)
         .eq('teacher_id', teacher_id)
         .eq('day_of_week', day_of_week)
-         
-        .eq('is_active', true) as any;
+        .eq('is_active', true)
+        .is('effective_to', null); // Only check currently active schedules
 
       if (conflictError) {
         logger.error('Error checking conflicts', {
@@ -264,7 +265,7 @@ try {
       // Check for actual time overlap (not just touching at boundaries)
       if (existingSchedules && existingSchedules.length > 0) {
          
-        const hasConflict = existingSchedules.some((existing: any) => {
+        const hasConflict = existingSchedules.some((existing: ScheduleConflictRow) => {
           // Times are stored as 'HH:MM:SS' format (time without time zone)
           // Convert to comparable format - ensure they're strings in HH:MM:SS format
           const existingStart = String(existing.start_time || '').trim();
@@ -284,7 +285,7 @@ try {
             day_of_week,
             new_time: `${finalStartTime} - ${finalEndTime}`,
              
-            existing_schedules: existingSchedules.map((s: any) => `${s.start_time} - ${s.end_time}`)
+            existing_schedules: existingSchedules.map((s: ScheduleConflictRow) => `${s.start_time} - ${s.end_time}`)
           });
           return NextResponse.json(
             { error: 'Schedule conflict', details: 'Teacher already has a class scheduled at this time' },
@@ -298,15 +299,15 @@ try {
     // Two time ranges overlap if: existing_start < new_end AND existing_end > new_start
     // We use strict inequality to allow schedules that touch at boundaries
     if (room_id) {
-      // First, get all existing schedules for this room on this day
+      // First, get all existing schedules for this room on this day (only current active schedules)
       const { data: existingRoomSchedules, error: roomConflictError } = await supabaseAdmin
         .from('class_schedules')
         .select('id, start_time, end_time')
         .eq('school_id', schoolId)
         .eq('room_id', room_id)
         .eq('day_of_week', day_of_week)
-         
-        .eq('is_active', true) as any;
+        .eq('is_active', true)
+        .is('effective_to', null); // Only check currently active schedules
 
       if (roomConflictError) {
         logger.error('Error checking room conflicts', {
@@ -324,7 +325,7 @@ try {
       // Check for actual time overlap (not just touching at boundaries)
       if (existingRoomSchedules && existingRoomSchedules.length > 0) {
          
-        const hasRoomConflict = existingRoomSchedules.some((existing: any) => {
+        const hasRoomConflict = existingRoomSchedules.some((existing: ScheduleConflictRow) => {
           // Times are stored as 'HH:MM:SS' format (time without time zone)
           // Convert to comparable format - ensure they're strings in HH:MM:SS format
           const existingStart = String(existing.start_time || '').trim();
@@ -343,7 +344,7 @@ try {
             day_of_week,
             new_time: `${finalStartTime} - ${finalEndTime}`,
              
-            existing_schedules: existingRoomSchedules.map((s: any) => `${s.start_time} - ${s.end_time}`)
+            existing_schedules: existingRoomSchedules.map((s: ScheduleConflictRow) => `${s.start_time} - ${s.end_time}`)
           });
           return NextResponse.json(
             { error: 'Room conflict', details: 'Room is already booked at this time' },
@@ -371,26 +372,39 @@ try {
       }
     }
 
-    // Create schedule
-    const { data: schedule, error } = await (supabaseAdmin
+    // Create schedule with effective dates
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // Generate UUID client-side as fallback if database default doesn't work
+    const { generateUUID } = await import('../../../../lib/uuid-utils');
+    const scheduleId = generateUUID();
+    
+    // Build insert object, explicitly setting id to avoid null constraint violation
+    const insertData: Record<string, unknown> = {
+      id: scheduleId, // Explicitly set ID to avoid null constraint violation
+      school_id: schoolId,
+      subject,
+      grade,
+      day_of_week,
+      start_time: finalStartTime,
+      end_time: finalEndTime,
+      academic_year: academic_year || '2024-25',
+      is_active: true,
+      effective_from: today,
+      effective_to: null
+    };
+    
+    // Only include optional fields if they have values
+    if (class_id && class_id !== '') insertData.class_id = class_id;
+    if (teacher_id && teacher_id !== '') insertData.teacher_id = teacher_id;
+    if (period_id && period_id !== '') insertData.period_id = period_id;
+    if (room_id && room_id !== '') insertData.room_id = room_id;
+    if (notes && notes !== '') insertData.notes = notes;
+    if (createdBy) insertData.created_by = createdBy;
+    
+    const { data: schedule, error } = await supabaseAdmin
       .from('class_schedules')
-      .insert({
-        school_id: schoolId,
-        class_id: class_id && class_id !== '' ? class_id : null,
-        teacher_id: teacher_id && teacher_id !== '' ? teacher_id : null,
-        subject,
-        grade,
-        day_of_week,
-        period_id: period_id && period_id !== '' ? period_id : null,
-        room_id: room_id && room_id !== '' ? room_id : null,
-        start_time: finalStartTime,
-        end_time: finalEndTime,
-        academic_year: academic_year || '2024-25',
-        notes: notes && notes !== '' ? notes : null,
-        created_by: createdBy,
-        is_active: true
-       
-      } as any)
+      .insert(insertData as never)
       .select(`
         *,
         class:classes!class_id (
@@ -417,20 +431,39 @@ try {
           capacity
         )
       `)
-       
-      .single() as any);
+      .single();
 
     if (error) {
+      const err = error as PostgrestError;
+      const errorMessage = err.message || 'Failed to create schedule';
+      const errorCode = err.code;
+      const errorDetails = err.details;
+      const errorHint = err.hint;
+      
       logger.error('Error creating schedule', {
         endpoint: '/api/school-admin/schedules',
-      }, error);
+        error: errorMessage,
+        errorCode,
+        errorDetails,
+        errorHint,
+        schoolId,
+        teacherId: teacher_id,
+        subject,
+        grade,
+        dayOfWeek: day_of_week,
+        fullError: JSON.stringify(error),
+      }, error instanceof Error ? error : new Error(errorMessage));
       
-      const errorInfo = await handleApiError(
-        error,
-        { endpoint: '/api/school-admin/schedules' },
-        'Failed to create schedule'
+      // Return detailed error message to help debug
+      return NextResponse.json(
+        { 
+          error: 'Failed to create schedule',
+          details: errorMessage,
+          hint: errorHint || errorDetails || '',
+          code: errorCode
+        },
+        { status: 500 }
       );
-      return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
     const successResponse = NextResponse.json({ schedule }, { status: 201 });

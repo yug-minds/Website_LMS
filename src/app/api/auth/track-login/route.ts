@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { trackLoginSchema, validateRequestBody } from '../../../../lib/validation-schemas';
-import { logger, handleApiError } from '../../../../lib/logger';
+import { logger } from '../../../../lib/logger';
 import { ensureCsrfToken, validateCsrf } from '../../../../lib/csrf-middleware';
 
 // POST: Track login attempt (success or failure)
@@ -43,7 +43,8 @@ export async function POST(request: NextRequest) {
     const validation = validateRequestBody(trackLoginSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
 
     // Record login attempt - wrap in try-catch to handle table not existing
     try {
-      const { error: insertError } = await (supabaseAdmin
+      const { error: insertError } = await supabaseAdmin
         .from('login_attempts')
         .insert({
           user_id: user_id || null,
@@ -74,8 +75,7 @@ export async function POST(request: NextRequest) {
           ip_address: ip_address || null,
           user_agent: user_agent || null,
           attempted_at: new Date().toISOString()
-         
-        } as any) as any);
+        } as never);
 
       if (insertError) {
         console.error('Error recording login attempt:', insertError);
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
         }
       }
      
-    } catch (insertErr: any) {
+    } catch (insertErr: unknown) {
       logger.warn('Exception recording login attempt (non-critical)', {
         endpoint: '/api/auth/track-login',
       }, insertErr instanceof Error ? insertErr : new Error(String(insertErr)));
@@ -96,12 +96,10 @@ export async function POST(request: NextRequest) {
     if (success && user_id) {
       try {
          
-        const { error: updateError } = await ((supabaseAdmin as any)
+        const { error: updateError } = await supabaseAdmin
           .from('profiles')
-           
-          .update({ last_login: new Date().toISOString() } as any)
-           
-          .eq('id', user_id)) as any;
+          .update({ last_login: new Date().toISOString() } as never)
+          .eq('id', user_id);
 
         if (updateError) {
           logger.warn('Error updating last_login (non-critical)', {
@@ -110,7 +108,7 @@ export async function POST(request: NextRequest) {
           // Don't fail the request if update fails
         }
        
-      } catch (updateErr: any) {
+      } catch (updateErr: unknown) {
         logger.warn('Exception updating last_login (non-critical)', {
           endpoint: '/api/auth/track-login',
         }, updateErr instanceof Error ? updateErr : new Error(String(updateErr)));

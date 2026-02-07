@@ -46,10 +46,16 @@ export async function GET(request: NextRequest) {
     const cacheOperations = getCacheOperations(100); // Last 100 operations
 
     // Calculate hit/miss rates from operations (more accurate than logs)
-    const operations = cacheOperations.filter((op: any) => op.result === 'HIT' || op.result === 'MISS');
-    const hits = operations.filter((op: any) => op.result === 'HIT').length;
-    const misses = operations.filter((op: any) => op.result === 'MISS').length;
-    const errors = operations.filter((op: any) => op.result === 'ERROR').length;
+    type CacheOperation = {
+      result?: string;
+      key?: string;
+      duration?: number;
+      source?: string;
+    };
+    const operations = cacheOperations.filter((op: CacheOperation) => op.result === 'HIT' || op.result === 'MISS');
+    const hits = operations.filter((op) => op.result === 'HIT').length;
+    const misses = operations.filter((op) => op.result === 'MISS').length;
+    const errors = cacheOperations.filter((op: CacheOperation) => op.result === 'ERROR').length;
     const total = hits + misses;
     const hitRate = total > 0 ? (hits / total) * 100 : 0;
 
@@ -78,10 +84,10 @@ export async function GET(request: NextRequest) {
     });
 
     // Calculate Redis latency from operations
-    const redisOps = cacheOperations.filter((op: any) => op.source === 'Redis' && op.duration);
-    const redisLatencies = redisOps.map((op: any) => op.duration!);
+    const redisOps = cacheOperations.filter((op: CacheOperation) => op.source === 'Redis' && op.duration);
+    const redisLatencies = redisOps.map((op: CacheOperation) => op.duration!);
     const avgRedisLatency = redisLatencies.length > 0
-      ? Math.round(redisLatencies.reduce((a: number, b: any) => a + b, 0) / redisLatencies.length)
+      ? Math.round(redisLatencies.reduce((a: number, b: number) => a + b, 0) / redisLatencies.length)
       : null;
 
     return NextResponse.json({

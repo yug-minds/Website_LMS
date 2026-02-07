@@ -206,8 +206,7 @@ export async function getTeacherAssignedSchools(request: NextRequest): Promise<s
     const { data: teacherSchools, error } = await supabaseAdmin
       .from('teacher_schools')
       .select('school_id')
-       
-      .eq('teacher_id', teacherId) as any;
+      .eq('teacher_id', teacherId);
 
     if (error || !teacherSchools) {
       console.warn('Failed to get teacher assigned schools:', error?.message);

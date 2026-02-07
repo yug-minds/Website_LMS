@@ -12,7 +12,7 @@ import { addCacheHeaders, checkETag, CachePresets } from './http-cache';
  */
 export async function createCachedResponse(
   request: NextRequest,
-  data: any,
+  data: unknown,
   endpoint: string,
   startTime: number,
   options: {

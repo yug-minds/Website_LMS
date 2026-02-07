@@ -5,22 +5,24 @@
 
 import { supabaseAdmin } from '../src/lib/supabase'
 
+type StudentRow = { id: string; full_name: string | null; email: string | null }
+
 async function generateCertificateForStudent(email: string) {
   console.log(`\n🔍 Looking for student with email: ${email}\n`)
 
-  // Find student by email
-  const { data: student, error: studentError } = await supabaseAdmin
+  const { data: rawStudent, error: studentError } = await supabaseAdmin
     .from('profiles')
     .select('id, full_name, email')
     .eq('email', email)
     .eq('role', 'student')
     .single()
 
-  if (studentError || !student) {
+  if (studentError || !rawStudent) {
     console.error('❌ Student not found:', studentError?.message || 'No student found')
     return
   }
 
+  const student = rawStudent as StudentRow
   console.log(`✅ Found student: ${student.full_name} (ID: ${student.id})\n`)
 
   // Find completed courses for this student
@@ -43,7 +45,8 @@ async function generateCertificateForStudent(email: string) {
   }
 
   // Group by course and calculate completion
-  const courseMap = new Map<string, { course: any; completed: number; total: number }>()
+  type CourseInfo = { id: string; name?: string | null; title?: string | null }
+  const courseMap = new Map<string, { course: CourseInfo | null; completed: number; total: number }>()
 
   for (const p of progress || []) {
     const courseId = p.course_id
@@ -142,8 +145,9 @@ async function generateCertificateForStudent(email: string) {
           console.error(`   Details: ${result.details}\n`)
         }
       }
-    } catch (error: any) {
-      console.error(`❌ Error generating certificate:`, error.message)
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.error(`❌ Error generating certificate:`, errorMessage)
       console.error(`   Make sure the server is running at ${baseUrl}\n`)
     }
   }

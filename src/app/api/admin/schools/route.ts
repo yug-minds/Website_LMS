@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { createSchoolSchema, validateRequestBody } from '../../../../lib/validation-schemas';
+import { getAuthenticatedUserId } from '../../../../lib/auth-utils';
 
 
 export async function GET(request: NextRequest) {
-  
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.READ);
   if (!rateLimitResult.success) {
@@ -23,39 +22,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-try {
+  try {
     logger.info('Fetching schools', {
       endpoint: '/api/admin/schools',
     });
 
+    // Select essential columns including grades_offered and number_of_sections for teacher assignment
     const { data: schools, error } = await supabaseAdmin
       .from('schools')
-      // Include all fields needed by the Schools Management table UI
-      .select(`
-        id,
-        name,
-        school_code,
-        is_active,
-        grades_offered,
-        contact_email,
-        contact_phone,
-        address,
-        city,
-        state,
-        country,
-        pincode,
-        established_year,
-        affiliation_type,
-        school_type,
-        logo_url,
-        total_students_estimate,
-        total_teachers_estimate,
-        principal_name,
-        created_at,
-        created_by
-      `)
-       
-      .order('name', { ascending: true }) as any;
+      .select('id, name, school_code, is_active, contact_email, contact_phone, address, principal_name, grades_offered, number_of_sections, created_at')
+      .order('name', { ascending: true });
 
     if (error) {
       logger.error('Failed to fetch schools', {
@@ -140,7 +116,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-try {
+  try {
     logger.info('School creation API called', {
       endpoint: '/api/admin/schools',
       method: 'POST',
@@ -152,7 +128,7 @@ try {
     const validation = validateRequestBody(createSchoolSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school creation', {
         endpoint: '/api/admin/schools',
         errors: errorMessages,
@@ -188,58 +164,86 @@ try {
       grades_offered,
       total_students_estimate,
       total_teachers_estimate,
+      number_of_sections,
       generate_joining_codes,
       usage_type,
       max_uses,
-      manual_codes
     } = { ...validation.data, ...body }; // Merge validated data with additional fields
 
+    // Get the current admin user ID (who is creating the school)
+    const createdByUserId = await getAuthenticatedUserId(request, true);
+    
     // Create school
+    // Generate UUID client-side as fallback if database default doesn't work
+    // This ensures we always have an ID even if the migration hasn't been run
+    const { generateUUID } = await import('../../../../lib/uuid-utils');
+    const schoolId = generateUUID();
+    
+    const schoolData = {
+      id: schoolId, // Explicitly set ID to avoid null constraint violation
+      name,
+      contact_email,
+      contact_phone,
+      principal_name: principal_name || null, // Principal name should be separate from school admin name
+      principal_phone: principal_phone || null, // Principal phone should be separate from school admin phone
+      established_year: established_year || new Date().getFullYear(),
+      address,
+      city: city || '',
+      state: state || '',
+      pincode: pincode || '',
+      affiliation_type: affiliation_type || '',
+      school_type: school_type || '',
+      logo_url: school_logo || '',
+      total_students_estimate: total_students_estimate || 0,
+      total_teachers_estimate: total_teachers_estimate || 0,
+      grades_offered: grades_offered || [],
+      number_of_sections: (number_of_sections && number_of_sections > 0) ? number_of_sections : null,
+      // Add school admin information (separate from principal)
+      school_admin_name: school_admin_name || null,
+      school_admin_email: school_admin_email || null,
+      school_email: school_admin_email || contact_email || null,
+      // Add created_by if we have the admin user ID
+      created_by: createdByUserId || null
+    };
+    
     const { data: school, error: schoolError } = await (supabaseAdmin
       .from('schools')
-      .insert({
-        name,
-        contact_email,
-        contact_phone,
-        principal_name: principal_name || school_admin_name || 'Principal',
-        principal_phone: principal_phone || school_admin_phone || '',
-        established_year: established_year || new Date().getFullYear(),
-        address,
-        city: city || '',
-        state: state || '',
-        pincode: pincode || '',
-        affiliation_type: affiliation_type || '',
-        school_type: school_type || '',
-        logo_url: school_logo || '',
-        total_students_estimate: total_students_estimate || 0,
-        total_teachers_estimate: total_teachers_estimate || 0,
-        grades_offered: grades_offered || []
-       
-      } as any)
+      // @ts-expect-error - schools table insert type not in schema
+      .insert(schoolData)
       .select()
-       
-      .single() as any);
+      .single() as { data: unknown; error: unknown });
 
     if (schoolError) {
       logger.error('Failed to create school', {
         endpoint: '/api/admin/schools',
         method: 'POST',
+        error: schoolError.message,
+        code: schoolError.code,
+        details: schoolError.details,
       }, schoolError);
       
+      // Return more detailed error information
       const errorInfo = await handleApiError(
         schoolError,
         { endpoint: '/api/admin/schools', method: 'POST' },
         'Failed to create school'
       );
-      return NextResponse.json(errorInfo, { status: errorInfo.status });
+      
+      return NextResponse.json({
+        error: errorInfo.message,
+        details: schoolError.message || errorInfo.details,
+        code: schoolError.code,
+      }, { status: errorInfo.status });
     }
 
     // Create school admin record with auth user and profile
-    if (school_admin_name && school_admin_email && school_admin_phone) {
+    // Only require name and email - phone is optional
+    if (school_admin_name && school_admin_email) {
       logger.debug('Creating school admin with auth user', {
         endpoint: '/api/admin/schools',
         method: 'POST',
         schoolId: school.id,
+        hasPhone: !!school_admin_phone,
       });
       const finalPassword = school_admin_temp_password || 'TempPass123';
 
@@ -258,7 +262,7 @@ try {
           // Continue - we'll try to create the user anyway
         } else {
            
-          const existingAuthUser = authUsers?.users?.find((user: any) => user.email === school_admin_email);
+          const existingAuthUser = authUsers?.users?.find((user: { email?: string }) => user.email === school_admin_email);
           if (existingAuthUser) {
             logger.debug('Found existing user in Auth', {
               endpoint: '/api/admin/schools',
@@ -358,18 +362,17 @@ try {
         });
         const { error: profileError } = await (supabaseAdmin
           .from('profiles')
+          // @ts-expect-error - profiles table upsert type not in schema
           .upsert({
             id: userId,
             full_name: school_admin_name,
             email: school_admin_email,
             role: 'school_admin',
             school_id: school.id,
-            phone: school_admin_phone || null
-           
-          } as any, {
+            phone: school_admin_phone || null,
+          }, {
             onConflict: 'id'
-           
-          }) as any);
+          }));
 
         if (profileError) {
           logger.error('Failed to create/update profile', {
@@ -384,16 +387,38 @@ try {
             userId,
           });
         }
+      } else {
+        // If userId is null, try to find existing profile by email
+        // This handles cases where auth user creation failed but profile might exist
+        logger.debug('No userId, checking for existing profile by email', {
+          endpoint: '/api/admin/schools',
+          method: 'POST',
+          email: school_admin_email,
+        });
+        const { data: existingProfile, error: profileCheckError } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('email', school_admin_email)
+          .eq('role', 'school_admin')
+          .maybeSingle() as { data: { id: string } | null; error: unknown };
+        
+        if (!profileCheckError && existingProfile) {
+          userId = existingProfile.id;
+          logger.info('Found existing profile, using its ID', {
+            endpoint: '/api/admin/schools',
+            method: 'POST',
+            userId: userId ?? undefined,
+          });
+        }
       }
 
       // Step 4: Create school admin record
       // First check if a school admin with this email already exists
       const { data: existingAdmin, error: checkError } = await supabaseAdmin
         .from('school_admins')
-        .select('id, email, school_id')
+        .select('id, email, school_id, profile_id')
         .eq('email', school_admin_email)
-         
-        .maybeSingle() as any;
+        .maybeSingle() as { data: { id: string; school_id: string } | null; error: unknown };
 
       if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "not found" which is fine
         logger.warn('Error checking for existing school admin (non-critical)', {
@@ -402,9 +427,29 @@ try {
           email: school_admin_email,
         }, checkError);
       }
+      
+      // If we still don't have userId but profile exists, try to get it from the profile
+      if (!userId) {
+        const { data: profileByEmail, error: profileEmailError } = await supabaseAdmin
+          .from('profiles')
+          .select('id')
+          .eq('email', school_admin_email)
+          .eq('role', 'school_admin')
+          .maybeSingle() as { data: { id: string } | null; error: unknown };
+        
+        if (!profileEmailError && profileByEmail) {
+          userId = profileByEmail.id;
+          logger.info('Retrieved userId from existing profile', {
+            endpoint: '/api/admin/schools',
+            method: 'POST',
+            userId: userId ?? undefined,
+            email: school_admin_email,
+          });
+        }
+      }
 
-      let schoolAdminData;
-      let schoolAdminError;
+      let schoolAdminData: { id: string; profile_id: string; school_id: string; full_name: string; email?: string } | null = null;
+      let schoolAdminError: Error | null = null;
 
       if (existingAdmin) {
         // Update existing school admin
@@ -423,8 +468,9 @@ try {
           adminId: existingAdmin.id,
         });
          
-        const { data: updatedAdmin, error: updateError } = await ((supabaseAdmin as any)
+        const { data: updatedAdmin, error: updateError } = await supabaseAdmin
           .from('school_admins')
+          // @ts-expect-error - school_admins table update type not in schema
           .update({
             profile_id: userId,
             school_id: school.id,
@@ -432,17 +478,14 @@ try {
             phone: school_admin_phone,
             temp_password: finalPassword,
             is_active: true,
-            updated_at: new Date().toISOString()
-           
-          } as any)
-           
-          .eq('id', existingAdmin.id as any)
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingAdmin.id as string)
           .select()
-           
-          .single() as any) as any;
+          .single() as { data: unknown; error: unknown };
 
-        schoolAdminData = updatedAdmin ? (Array.isArray(updatedAdmin) ? updatedAdmin[0] : updatedAdmin) : null;
-        schoolAdminError = updateError;
+        schoolAdminData = updatedAdmin ? (Array.isArray(updatedAdmin) ? updatedAdmin[0] : updatedAdmin) as { id: string; profile_id: string; school_id: string; full_name: string; email?: string } : null;
+        schoolAdminError = updateError as Error | null;
       } else {
         // Create new school admin
         logger.debug('Creating new school admin record', {
@@ -451,26 +494,85 @@ try {
           userId: userId ?? undefined,
           schoolId: school.id,
         });
+        
+        // Generate UUID client-side as fallback
+        const { generateUUID } = await import('../../../../lib/uuid-utils');
+        const schoolAdminId = generateUUID();
+        
+        const schoolAdminInsertData: Record<string, unknown> = {
+          id: schoolAdminId, // Explicitly set ID to avoid null constraint violation
+          profile_id: userId || null, // Link to profile (which links to auth user) - can be null if auth user creation failed
+          school_id: school.id,
+          full_name: school_admin_name,
+          email: school_admin_email,
+          phone: school_admin_phone || null, // Phone is optional
+          temp_password: finalPassword,
+          is_active: true,
+          permissions: {},
+          created_at: new Date().toISOString()
+        };
+        
         const { data: newAdmin, error: insertError } = await (supabaseAdmin
           .from('school_admins')
-          .insert({
-            profile_id: userId, // Link to profile (which links to auth user)
-            school_id: school.id,
-            full_name: school_admin_name,
-            email: school_admin_email,
-            phone: school_admin_phone,
-            temp_password: finalPassword,
-            is_active: true,
-            permissions: {},
-            created_at: new Date().toISOString()
-           
-          } as any)
+          .insert(schoolAdminInsertData as never)
           .select()
-           
-          .single() as any);
+          .single() as { data: unknown; error: unknown });
 
-        schoolAdminData = newAdmin ? (Array.isArray(newAdmin) ? newAdmin[0] : newAdmin) : null;
-        schoolAdminError = insertError;
+        schoolAdminData = newAdmin ? (Array.isArray(newAdmin) ? newAdmin[0] : newAdmin) as { id: string; profile_id: string; school_id: string; full_name: string; email?: string } : null;
+        schoolAdminError = insertError as Error | null;
+        
+        // If insert failed and we have a profile but no userId, try to find the profile and retry
+        if (insertError && !userId) {
+          logger.warn('School admin insert failed, attempting to find profile and retry', {
+            endpoint: '/api/admin/schools',
+            method: 'POST',
+            error: insertError.message,
+            email: school_admin_email,
+          });
+          
+          const { data: profileData, error: profileFindError } = await supabaseAdmin
+            .from('profiles')
+            .select('id')
+            .eq('email', school_admin_email)
+            .maybeSingle() as { data: { id: string } | null; error: unknown };
+          
+          if (!profileFindError && profileData) {
+            logger.info('Found profile, retrying school admin insert with profile_id', {
+              endpoint: '/api/admin/schools',
+              method: 'POST',
+              profileId: profileData.id,
+            });
+            
+            const retryInsertData = {
+              ...schoolAdminInsertData,
+              profile_id: profileData.id,
+            };
+            
+            const { data: retryAdmin, error: retryError } = await (supabaseAdmin
+              .from('school_admins')
+              .insert(retryInsertData as never)
+              .select()
+              .single() as { data: unknown; error: unknown });
+            
+            if (!retryError && retryAdmin) {
+              const retryRow = (Array.isArray(retryAdmin) ? retryAdmin[0] : retryAdmin) as { id: string; profile_id: string; school_id: string; full_name: string };
+              schoolAdminData = retryRow;
+              schoolAdminError = null;
+              userId = profileData.id; // Update userId for later use
+              logger.info('Successfully created school admin on retry', {
+                endpoint: '/api/admin/schools',
+                method: 'POST',
+                adminId: retryRow.id,
+              });
+            } else {
+              logger.error('Retry also failed', {
+                endpoint: '/api/admin/schools',
+                method: 'POST',
+                error: retryError,
+              });
+            }
+          }
+        }
       }
 
       if (schoolAdminError) {
@@ -489,6 +591,35 @@ try {
           email: schoolAdminData.email,
           schoolId: schoolAdminData.school_id,
         });
+        
+        // Update the school record with the school_admin_id
+        if (userId) {
+          const { error: updateSchoolError } = await supabaseAdmin
+            .from('schools')
+            // @ts-expect-error - schools table update type not in schema
+            .update({
+              school_admin_id: userId
+            })
+            .eq('id', school.id);
+          
+          if (updateSchoolError) {
+            logger.warn('Failed to update school with school_admin_id', {
+              endpoint: '/api/admin/schools',
+              method: 'POST',
+              schoolId: school.id,
+              adminId: userId,
+            }, updateSchoolError);
+          } else {
+            logger.debug('Updated school with school_admin_id', {
+              endpoint: '/api/admin/schools',
+              method: 'POST',
+              schoolId: school.id,
+              adminId: userId,
+            });
+            // Update the school object in memory for the response
+            school.school_admin_id = userId;
+          }
+        }
       } else {
         logger.warn('School admin creation returned no data', {
           endpoint: '/api/admin/schools',
@@ -515,47 +646,135 @@ try {
         const schoolNameShort = name.split(' ').map((word: string) => word[0]).join('').toUpperCase().substring(0, 3);
         const generatedCodes: Record<string, string> = {};
         
-        for (const grade of grades_offered) {
-          let code: string;
-          let attempts = 0;
+        // Import UUID generator for join codes
+        const { generateUUID } = await import('../../../../lib/uuid-utils');
+        
+        // Check if number_of_sections is set - if yes, generate grade + section specific codes
+        if (number_of_sections && number_of_sections > 0) {
+          // Generate sections array (A, B, C, etc.)
+          const sections = Array.from({ length: Math.min(number_of_sections, 26) }, (_, i) => 
+            String.fromCharCode(65 + i) // 65 is 'A' in ASCII
+          );
           
-          do {
+          for (const grade of grades_offered) {
             const gradeAbbr = grade.replace('Grade ', 'G').replace('Pre-K', 'PK').replace('Kindergarten', 'K');
-            const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-            code = `${schoolNameShort}-${gradeAbbr}-${randomNum}`;
-            attempts++;
-          } while (attempts < 10); // Prevent infinite loop
-          
-          // Insert the code into the database
-          const { error: insertError } = await (supabaseAdmin
-            .from('join_codes')
-            .insert({
+            
+            for (const section of sections) {
+              let code: string;
+              let attempts = 0;
+              
+              do {
+                const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+                code = `${schoolNameShort}-${gradeAbbr}-${section}-${randomNum}`;
+                attempts++;
+                
+                // Check if code already exists
+                const { data: existing } = await supabaseAdmin
+                  .from('join_codes')
+                  .select('code')
+                  .eq('code', code)
+                  .single() as { data: { code: string } | null; error: unknown };
+                
+                if (!existing) break; // Code is unique
+              } while (attempts < 10); // Prevent infinite loop
+              
+              // Insert the code into the database
+              // Generate UUID client-side as fallback
+              const joinCodeId = generateUUID();
+              const joinCodeData: Record<string, unknown> = {
+                id: joinCodeId,
+                code,
+                school_id: school.id,
+                grade,
+                section,
+                is_active: true,
+                usage_type: usage_type || 'multiple',
+                times_used: 0,
+                max_uses: max_uses || null,
+                expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+              };
+              
+              const { error: insertError } = await supabaseAdmin
+                .from('join_codes')
+                .insert(joinCodeData as never);
+              
+              if (insertError) {
+                logger.warn('Failed to insert joining code for grade and section', {
+                  endpoint: '/api/admin/schools',
+                  method: 'POST',
+                  grade,
+                  section,
+                  schoolId: school.id,
+                }, insertError);
+              } else {
+                const key = `${grade} - Section ${section}`;
+                generatedCodes[key] = code;
+                logger.debug('Generated joining code for grade and section', {
+                  endpoint: '/api/admin/schools',
+                  method: 'POST',
+                  grade,
+                  section,
+                  code,
+                });
+              }
+            }
+          }
+        } else {
+          // Original behavior: Generate grade-only codes
+          for (const grade of grades_offered) {
+            let code: string;
+            let attempts = 0;
+            
+            do {
+              const gradeAbbr = grade.replace('Grade ', 'G').replace('Pre-K', 'PK').replace('Kindergarten', 'K');
+              const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+              code = `${schoolNameShort}-${gradeAbbr}-${randomNum}`;
+              attempts++;
+              
+              // Check if code already exists
+              const { data: existing } = await supabaseAdmin
+                .from('join_codes')
+                .select('code')
+                .eq('code', code)
+                .single() as { data: { code: string } | null; error: unknown };
+              
+              if (!existing) break; // Code is unique
+            } while (attempts < 10); // Prevent infinite loop
+            
+            const joinCodeId = generateUUID();
+            const joinCodeData: Record<string, unknown> = {
+              id: joinCodeId,
               code,
               school_id: school.id,
               grade,
+              section: null,
               is_active: true,
               usage_type: usage_type || 'multiple',
               times_used: 0,
               max_uses: max_uses || null,
-              expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString() // 1 year from now
-             
-            } as any) as any);
-          
-          if (insertError) {
-            logger.warn('Failed to insert joining code for grade', {
-              endpoint: '/api/admin/schools',
-              method: 'POST',
-              grade,
-              schoolId: school.id,
-            }, insertError);
-          } else {
-            generatedCodes[grade] = code;
-            logger.debug('Generated joining code for grade', {
-              endpoint: '/api/admin/schools',
-              method: 'POST',
-              grade,
-              code,
-            });
+              expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+            };
+            
+            const { error: insertError } = await supabaseAdmin
+              .from('join_codes')
+              .insert(joinCodeData as never);
+            
+            if (insertError) {
+              logger.warn('Failed to insert joining code for grade', {
+                endpoint: '/api/admin/schools',
+                method: 'POST',
+                grade,
+                schoolId: school.id,
+              }, insertError);
+            } else {
+              generatedCodes[grade] = code;
+              logger.debug('Generated joining code for grade', {
+                endpoint: '/api/admin/schools',
+                method: 'POST',
+                grade,
+                code,
+              });
+            }
           }
         }
         
@@ -612,6 +831,14 @@ try {
 
 // Update school
 export async function PUT(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -628,7 +855,7 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-try {
+  try {
     const body = await request.json();
     const { schoolId, ...updateData } = body;
 
@@ -640,17 +867,15 @@ try {
     }
 
      
-    const { data: school, error } = await ((supabaseAdmin as any)
+    const { data: school, error } = await (supabaseAdmin
       .from('schools')
       .update({
         ...updateData,
-        updated_at: new Date().toISOString()
-       
-      } as any)
+        updated_at: new Date().toISOString(),
+      } as never)
       .eq('id', schoolId)
       .select()
-       
-      .single() as any) as any;
+      .single() as { data: unknown; error: unknown });
 
     if (error) {
       logger.error('School update error', {
@@ -712,7 +937,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-try {
+  try {
     const body = await request.json();
     const { schoolId, is_active } = body;
 
@@ -724,18 +949,15 @@ try {
     }
 
      
-    const { data: school, error } = await ((supabaseAdmin as any)
+    const { data: school, error } = await supabaseAdmin
       .from('schools')
       .update({
         is_active,
-        updated_at: new Date().toISOString()
-       
-      } as any)
-       
-      .eq('id', schoolId as any)
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq('id', schoolId)
       .select()
-       
-      .single() as any) as any;
+      .single() as { data: unknown; error: unknown };
 
     if (error) {
       logger.error('School status update error', {
@@ -796,7 +1018,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-try {
+  try {
     const { schoolId } = await request.json();
 
     if (!schoolId) {
@@ -857,8 +1079,7 @@ try {
     const { data: teacherAssignments, error: teacherAssignmentsError } = await supabaseAdmin
       .from('teacher_schools')
       .select('teacher_id')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId) as { data: { teacher_id: string }[] | null; error: unknown };
 
     if (!teacherAssignmentsError && teacherAssignments && teacherAssignments.length > 0) {
       const teacherProfileIds = [...new Set(teacherAssignments.map((ta: { teacher_id: string }) => ta.teacher_id))];
@@ -875,12 +1096,11 @@ try {
 
       for (const teacherProfileId of teacherProfileIds) {
          
-        const { data: otherAssignments, error: otherAssignmentsError } = await ((supabaseAdmin as any)
+        const { data: otherAssignments, error: otherAssignmentsError } = await supabaseAdmin
           .from('teacher_schools')
           .select('school_id')
-          .eq('teacher_id', teacherProfileId as string)
-           
-          .neq('school_id', schoolId as string)) as any;
+          .eq('teacher_id', teacherProfileId)
+          .neq('school_id', schoolId) as { data: { school_id: string }[] | null; error: unknown };
 
         if (!otherAssignmentsError && otherAssignments && otherAssignments.length > 0) {
           // Teacher belongs to other schools, just remove the association
@@ -912,8 +1132,7 @@ try {
         const { data: teacherProfiles, error: profilesFetchError } = await supabaseAdmin
           .from('profiles')
           .select('id, email')
-           
-          .in('id', teachersToDelete) as any;
+          .in('id', teachersToDelete) as { data: { id: string; email?: string }[] | null; error: unknown };
 
         if (!profilesFetchError && teacherProfiles && teacherProfiles.length > 0) {
           const teacherEmails = teacherProfiles.map((p: { email?: string }) => p.email).filter(Boolean);
@@ -971,8 +1190,7 @@ try {
     const { data: studentAssignments, error: studentAssignmentsError } = await supabaseAdmin
       .from('student_schools')
       .select('student_id')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId) as { data: { student_id: string }[] | null; error: unknown };
 
     if (!studentAssignmentsError && studentAssignments && studentAssignments.length > 0) {
       const studentProfileIds = [...new Set(studentAssignments.map((sa: { student_id: string }) => sa.student_id))];
@@ -989,12 +1207,11 @@ try {
 
       for (const studentProfileId of studentProfileIds) {
          
-        const { data: otherStudentAssignments, error: otherStudentAssignmentsError } = await ((supabaseAdmin as any)
+        const { data: otherStudentAssignments, error: otherStudentAssignmentsError } = await supabaseAdmin
           .from('student_schools')
           .select('school_id')
-          .eq('student_id', studentProfileId as string)
-           
-          .neq('school_id', schoolId as string)) as any;
+          .eq('student_id', studentProfileId)
+          .neq('school_id', schoolId) as { data: { school_id: string }[] | null; error: unknown };
 
         if (!otherStudentAssignmentsError && otherStudentAssignments && otherStudentAssignments.length > 0) {
           // Student belongs to other schools, just remove the association
@@ -1147,12 +1364,10 @@ try {
       schoolId,
     });
      
-    const { error: coursesUpdateError } = await ((supabaseAdmin as any)
+    const { error: coursesUpdateError } = await supabaseAdmin
       .from('courses')
-       
-      .update({ school_id: null } as any)
-       
-      .eq('school_id', schoolId)) as any;
+      .update({ school_id: null } as never)
+      .eq('school_id', schoolId);
 
     if (coursesUpdateError) {
       logger.warn('Failed to remove school_id from courses (non-critical)', {
@@ -1378,14 +1593,12 @@ try {
     const { data: teacherProfiles } = await supabaseAdmin
       .from('profiles')
       .select('id')
-       
-      .eq('role', 'teacher') as any;
-    
-    const teacherIds = teacherProfiles?.map((p: { id: string }) => p.id) || [];
-    
+      .eq('role', 'teacher') as { data: { id: string }[] | null; error: unknown };
+
+    const teacherIds = teacherProfiles?.map((p: { id: string }) => p.id) ?? [];
+
     // Delete attendance records for teachers in this school
-     
-    let teacherAttendanceError: any = null;
+    let teacherAttendanceError: unknown = null;
     if (teacherIds.length > 0) {
       const { error } = await supabaseAdmin
         .from('attendance')
@@ -1442,8 +1655,7 @@ try {
     const { data: profilesForNotifications, error: profilesForNotificationsError } = await supabaseAdmin
       .from('profiles')
       .select('id')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId) as { data: { id: string }[] | null; error: unknown };
 
     if (!profilesForNotificationsError && profilesForNotifications && profilesForNotifications.length > 0) {
       const profileIds = profilesForNotifications.map((p: { id: string }) => p.id);
@@ -1479,8 +1691,7 @@ try {
     const { data: profilesToUpdate, error: profilesFetchError } = await supabaseAdmin
       .from('profiles')
       .select('id, email, role')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId) as { data: { id: string; email?: string; role?: string }[] | null; error: unknown };
 
     if (profilesFetchError) {
       logger.warn('Failed to fetch profiles (non-critical)', {
@@ -1498,12 +1709,10 @@ try {
       
       // Update profiles to remove school_id reference
        
-      const { error: profilesUpdateError } = await ((supabaseAdmin as any)
+      const { error: profilesUpdateError } = await supabaseAdmin
         .from('profiles')
-         
-        .update({ school_id: null } as any)
-         
-        .eq('school_id', schoolId as any)) as any;
+        .update({ school_id: null } as never)
+        .eq('school_id', schoolId);
 
       if (profilesUpdateError) {
         logger.error('Failed to update profiles (CRITICAL)', {
@@ -1542,12 +1751,10 @@ try {
       schoolId,
     });
      
-    const { error: schoolUpdateError } = await ((supabaseAdmin as any)
+    const { error: schoolUpdateError } = await supabaseAdmin
       .from('schools')
-       
-      .update({ created_by: null } as any)
-       
-      .eq('id', schoolId as any)) as any;
+      .update({ created_by: null } as never)
+      .eq('id', schoolId);
 
     if (schoolUpdateError) {
       logger.warn('Failed to clear created_by (non-critical)', {

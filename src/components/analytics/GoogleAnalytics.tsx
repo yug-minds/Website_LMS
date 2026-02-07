@@ -8,8 +8,8 @@ import { trackPageView } from '@/lib/analytics';
 // Extend Window interface to include gtag
 declare global {
   interface Window {
-    gtag?: (...args: any[]) => void;
-    dataLayer?: any[];
+    gtag?: (...args: unknown[]) => void;
+    dataLayer?: unknown[];
   }
 }
 
@@ -37,7 +37,7 @@ function GoogleAnalyticsContent({ measurementId }: GoogleAnalyticsProps) {
 
   useEffect(() => {
     // Track page views on route change
-    if (pathname && typeof window !== 'undefined' && (window as any).gtag) {
+    if (pathname && typeof window !== 'undefined' && window.gtag) {
       const fullPath = searchParams?.toString()
         ? `${pathname}?${searchParams.toString()}`
         : pathname;

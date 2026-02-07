@@ -42,7 +42,7 @@ export function CoursePublishDialog({
   const [confirmText, setConfirmText] = useState("");
 
   const isPublished = course.status === 'Published' || course.is_published === true;
-  const action = isPublished ? "unpublish" : "publish";
+  const _action = isPublished ? "unpublish" : "publish";
   const requiresConfirmation = isPublished; // Unpublishing requires confirmation
 
   const handlePublish = async () => {
@@ -182,7 +182,7 @@ export function CoursePublishDialog({
                 </AlertDescription>
               </Alert>
               <div className="mt-4">
-                <Label htmlFor="confirm-text">Type 'unpublish' to confirm</Label>
+                <Label htmlFor="confirm-text">Type &apos;unpublish&apos; to confirm</Label>
                 <input
                   id="confirm-text"
                   type="text"

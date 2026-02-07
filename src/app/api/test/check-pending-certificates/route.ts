@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Find certificates with NULL certificate_url
     const { data: pendingCerts, error } = await supabaseAdmin
@@ -65,9 +65,9 @@ export async function GET(request: NextRequest) {
       pendingCertificates: enrichedCerts,
       message: `Found ${enrichedCerts.length} certificate(s) pending image generation`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message },
+      { error: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

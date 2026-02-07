@@ -61,9 +61,17 @@ interface TeacherReport {
   notes: string;
   created_at: string;
    
-  profiles?: any;
+  profiles?: {
+    id: string;
+    full_name?: string | null;
+    email?: string | null;
+  } | null;
    
-  schools?: any;
+  schools?: {
+    id: string;
+    name?: string | null;
+    school_code?: string | null;
+  } | null;
   teacher_name?: string;
   teacher_email?: string;
   school_name?: string;
@@ -82,6 +90,12 @@ interface TeacherPerformance {
   last_report_date: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- type reserved for future use
+interface School {
+  id: string;
+  name: string;
+}
+
 export default function TeacherReports() {
   const [reports, setReports] = useState<TeacherReport[]>([]);
   const [performance, setPerformance] = useState<TeacherPerformance[]>([]);
@@ -95,19 +109,41 @@ export default function TeacherReports() {
   const [teacherFilter, setTeacherFilter] = useState("");
   { }
    
+  type School = {
+    id: string;
+    name?: string | null;
+    school_code?: string | null;
+  };
+  
+  type Teacher = {
+    id: string;
+    full_name?: string | null;
+    email?: string | null;
+  };
+  
+  const [schools, setSchools] = useState<School[]>([]);
   { }
-  const [schools, setSchools] = useState<any[]>([]);
   { }
-  { }
-  const [teachers, setTeachers] = useState<any[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   { }
   const [grades, setGrades] = useState<string[]>([]);
   { }
   const [loading, setLoading] = useState(false);
   { }
-  const [reportTrendsData, setReportTrendsData] = useState<any[]>([]);
+  type ReportTrend = {
+    name: string;
+    reports: number;
+    hours: number;
+  };
+  const [reportTrendsData, setReportTrendsData] = useState<ReportTrend[]>([]);
   { }
-  const [subjectDistributionData, setSubjectDistributionData] = useState<any[]>([]);
+  type SubjectDistribution = {
+    name: string;
+    value: number;
+    count: number;
+    color: string;
+  };
+  const [subjectDistributionData, setSubjectDistributionData] = useState<SubjectDistribution[]>([]);
 
   // Move helper calculations above loadData to avoid temporal dead zone issues
 
@@ -140,7 +176,17 @@ export default function TeacherReports() {
       }
     });
 
-  return Array.from(teacherMap.values()).map((teacher: any) => ({
+  type TeacherPerformanceData = {
+    teacher_id: string;
+    teacher_name: string;
+    school_name: string;
+    total_reports: number;
+    total_hours: number;
+    total_students: number;
+    attendance_rate: number;
+    last_report_date: string;
+  };
+  return Array.from(teacherMap.values() as unknown as TeacherPerformanceData[]).map((teacher) => ({
     ...teacher,
     avg_students: Math.round(teacher.total_students / teacher.total_reports) || 0
   }));
@@ -148,18 +194,18 @@ export default function TeacherReports() {
 
   const calculateWeeklyTrends = useCallback((reports: TeacherReport[]) => {
     const now = new Date();
-    const weeks: any[] = [];
+    const weeks: ReportTrend[] = [];
     for (let i = 3; i >= 0; i--) {
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - (i * 7) - (now.getDay() || 7) + 1);
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 6);
-      const weekReports = reports.filter((report: any) => {
+      const weekReports = reports.filter((report) => {
         const reportDate = new Date(report.date);
         return reportDate >= weekStart && reportDate <= weekEnd;
       });
       const totalReports = weekReports.length;
-      const totalHours = weekReports.reduce((sum: number, r: any) => sum + (r.duration_hours || 0), 0);
+      const totalHours = weekReports.reduce((sum: number, r) => sum + (r.duration_hours || 0), 0);
       weeks.push({
         name: `Week ${4 - i}`,
         reports: totalReports,
@@ -196,14 +242,14 @@ export default function TeacherReports() {
       subjectMap.set(subject, (subjectMap.get(subject) || 0) + 1);
     });
     const total = reports.length || 1;
-    const distribution = Array.from(subjectMap.entries())
+    const distribution: SubjectDistribution[] = Array.from(subjectMap.entries())
       .map(([name, count], index) => ({
         name,
         value: Math.round((count / total) * 100),
         count,
         color: SUBJECT_COLORS[index % SUBJECT_COLORS.length]
       }))
-      .sort((a: any, b: any) => b.value - a.value)
+      .sort((a, b) => b.value - a.value)
       .slice(0, 10);
     return distribution;
   }, []);
@@ -308,8 +354,13 @@ export default function TeacherReports() {
 
       // Transform teachers data to match expected format
       // The API returns teachers from the teachers table, we need to map them
-       
-      const teachersData = (result.teachers || []).map((teacher: any) => ({
+      type ApiTeacher = {
+        id: string;
+        profile_id?: string | null;
+        full_name?: string | null;
+        email?: string | null;
+      };
+      const teachersData: Teacher[] = ((result.teachers || []) as ApiTeacher[]).map((teacher) => ({
         id: teacher.profile_id || teacher.id, // Use profile_id for teacher_reports filtering
         full_name: teacher.full_name || 'Unknown',
         email: teacher.email || ''
@@ -361,7 +412,7 @@ export default function TeacherReports() {
     const headers = ['Teacher Name', 'Teacher Email', 'School', 'Date', 'Grade', 'Topics Taught', 'Students', 'Duration (Hours)', 'Notes'];
     
     // CSV rows
-    const rows = filteredReports.map((report: any) => [
+    const rows = filteredReports.map((report: TeacherReport) => [
       report.profiles?.full_name || report.teacher_name || 'Unknown',
       report.profiles?.email || report.teacher_email || '',
       report.schools?.name || report.school_name || 'Unknown',
@@ -376,7 +427,7 @@ export default function TeacherReports() {
     // Combine headers and rows
     const csvContent = [
       headers.join(','),
-      ...rows.map((row: any) => row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ...rows.map((row: (string | number)[]) => row.map((cell: string | number) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     // Create blob and download
@@ -389,7 +440,7 @@ export default function TeacherReports() {
     let filename = 'teacher_reports';
     if (dateFilter) filename += `_${dateFilter}`;
     if (schoolFilter) {
-      const schoolName = schools.find((s: any) => s.id === schoolFilter)?.name || 'school';
+      const schoolName = schools.find((s: School) => s.id === schoolFilter)?.name || 'school';
       filename += `_${schoolName.replace(/\s+/g, '_')}`;
     }
     if (gradeFilter) filename += `_${gradeFilter}`;
@@ -442,7 +493,7 @@ export default function TeacherReports() {
               <CardContent>
                 <div className="text-2xl font-bold">
                   {performance.length > 0 ? 
-                    Math.round(performance.reduce((sum: number, p: any) => sum + p.attendance_rate, 0) / performance.length) : 0}%
+                    Math.round(performance.reduce((sum: number, p: TeacherPerformance) => sum + p.attendance_rate, 0) / performance.length) : 0}%
                 </div>
                 <p className="text-xs text-muted-foreground">Teacher attendance</p>
               </CardContent>
@@ -455,7 +506,7 @@ export default function TeacherReports() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {reports.reduce((total: number, report: any) => total + (report.duration_hours || 0), 0)}
+                  {reports.reduce((total: number, report: TeacherReport) => total + (report.duration_hours || 0), 0)}
                 </div>
                 <p className="text-xs text-muted-foreground">Teaching hours</p>
               </CardContent>
@@ -782,12 +833,11 @@ export default function TeacherReports() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="name" />
                         <YAxis />
-                          <Tooltip 
-                             
-                            formatter={(value: any, name: string) => {
+                          <Tooltip
+                            formatter={(value: unknown, name: string): [React.ReactNode, string] => {
                               if (name === 'reports') return [`${value} reports`, 'Reports'];
                               if (name === 'hours') return [`${value} hours`, 'Teaching Hours'];
-                              return [value, name];
+                              return [String(value), name];
                             }}
                           />
                           <Line 
@@ -836,10 +886,10 @@ export default function TeacherReports() {
                           cx="50%"
                           cy="50%"
                           labelLine={false}
-                            label={(props: any) => {
+                            label={(props: { name?: string; value?: number; count?: number }) => {
                               const name = props.name || '';
                               const value = props.value || 0;
-                              const count = (props as any).count || 0;
+                              const count = props.count || 0;
                               return `${name}: ${value}% (${count})`;
                             }}
                           outerRadius={80}
@@ -852,13 +902,15 @@ export default function TeacherReports() {
                         </Pie>
                           <Tooltip 
                              
-                            formatter={(value: any, name: string, props: any) => {
-                              return [`${value}% (${props.payload.count} reports)`, props.payload.name];
+                            formatter={(value: unknown, name: string, props: { payload?: { count?: number; name?: string } }) => {
+                              return [`${value}% (${props.payload?.count ?? 0} reports)`, props.payload?.name ?? ''];
                             }}
                           />
                           <Legend 
-                             
-                            formatter={(value: string, entry: any) => `${value} (${entry.payload.count})`}
+                            formatter={(value: string, entry: unknown) => {
+                              const e = entry as { payload?: { count?: number } };
+                              return `${value} (${e?.payload?.count ?? 0})`;
+                            }}
                           />
                       </PieChart>
                     </ResponsiveContainer>
@@ -884,19 +936,19 @@ export default function TeacherReports() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="text-center">
                       <div className="text-3xl font-bold text-green-600">
-                        {performance.filter((p: any) => p.attendance_rate >= 90).length}
+                        {performance.filter((p: TeacherPerformance) => p.attendance_rate >= 90).length}
                       </div>
                       <div className="text-sm text-gray-600">Excellent Teachers</div>
                     </div>
                     <div className="text-center">
                       <div className="text-3xl font-bold text-yellow-600">
-                        {performance.filter((p: any) => p.attendance_rate >= 70 && p.attendance_rate < 90).length}
+                        {performance.filter((p: TeacherPerformance) => p.attendance_rate >= 70 && p.attendance_rate < 90).length}
                       </div>
                       <div className="text-sm text-gray-600">Good Teachers</div>
                     </div>
                     <div className="text-center">
                       <div className="text-3xl font-bold text-red-600">
-                        {performance.filter((p: any) => p.attendance_rate < 70).length}
+                        {performance.filter((p: TeacherPerformance) => p.attendance_rate < 70).length}
                       </div>
                       <div className="text-sm text-gray-600">Need Attention</div>
                     </div>

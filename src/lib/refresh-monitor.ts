@@ -151,7 +151,7 @@ export function useRefreshMonitoring(componentName: string) {
 
 // Expose to window for debugging in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-  (window as any).refreshMonitor = refreshMonitor;
+  (window as Window & { refreshMonitor?: typeof refreshMonitor }).refreshMonitor = refreshMonitor;
 }
 
 

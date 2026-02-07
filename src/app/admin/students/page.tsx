@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase } from "../../../lib/supabase";
+import { useState, useEffect, useMemo } from "react";
 import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
 import { useAutoSaveForm } from "../../../hooks/useAutoSaveForm";
 import { loadFormData, clearFormData } from "../../../lib/form-persistence";
@@ -54,7 +53,6 @@ import {
   Download,
   Users,
   Search,
-  Filter,
   School,
   BookOpen,
   GraduationCap,
@@ -62,11 +60,35 @@ import {
   X,
   Loader2,
   CheckCircle,
-  Circle,
   RefreshCw,
   Copy,
   Shield
 } from "lucide-react";
+
+interface StudentSchool {
+  id?: string;
+  student_id?: string;
+  school_id?: string;
+  grade?: string;
+  section?: string;
+  is_active?: boolean;
+  schools?: {
+    name?: string;
+  };
+}
+
+interface Course {
+  id: string;
+  name: string;
+}
+
+interface StudentCourse {
+  id: string;
+  student_id: string;
+  course_id: string;
+  progress_percentage?: number;
+  courses?: { course_name?: string };
+}
 
 interface Student {
   id: string;
@@ -74,13 +96,22 @@ interface Student {
   email: string;
   role: string;
   created_at: string;
-   
-  student_schools?: any[];
-   
-  courses?: any[];
-   
-  student_courses?: any[];
+  parent_name?: string;
+  parent_phone?: string;
+  student_schools?: Array<StudentSchool & {
+    schools?: {
+      name?: string;
+    };
+  }>;
+  courses?: Course[];
+  student_courses?: StudentCourse[];
   progress?: number;
+}
+
+interface School {
+  id: string;
+  name: string;
+  number_of_sections?: number;
 }
 
 interface BulkImportData {
@@ -89,6 +120,7 @@ interface BulkImportData {
   father_name?: string;
   phone_number?: string;
   grade: string;
+  section: string; // Required field
   school_id?: string; // Will be populated after school selection
   school_name?: string; // For display
   email?: string; // To be assigned
@@ -100,7 +132,7 @@ interface BulkImportData {
 export default function StudentsManagement() {
   const [students, setStudents] = useState<Student[]>([]);
    
-  const [schools, setSchools] = useState<any[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [studentProgressSummary, setStudentProgressSummary] = useState<{
     average_system_progress: number;
     students_completed: number;
@@ -108,6 +140,7 @@ export default function StudentsManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [schoolFilter, setSchoolFilter] = useState<string>("all");
   const [gradeFilter, setGradeFilter] = useState<string>("all");
+  const [sectionFilter, setSectionFilter] = useState<string>("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isBulkImportDialogOpen, setIsBulkImportDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -142,6 +175,7 @@ export default function StudentsManagement() {
     password: "", // Never save password
     school_id: savedFormData?.school_id || "",
     grade: savedFormData?.grade || "",
+    section: "",
     parent_name: savedFormData?.parent_name || "",
     parent_phone: savedFormData?.parent_phone || ""
   });
@@ -191,6 +225,8 @@ export default function StudentsManagement() {
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [sectionInputMode, setSectionInputMode] = useState<'predefined' | 'custom'>('predefined');
+  const [customSection, setCustomSection] = useState("");
 
   // Standard available grades from Pre-K to Grade 12
   const availableGrades = [
@@ -198,22 +234,47 @@ export default function StudentsManagement() {
     'Grade 6', 'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'
   ];
 
+  // State to track selected school's section configuration
+  const [selectedSchoolSections, setSelectedSchoolSections] = useState<number | null>(null);
+
+  // Generate section options based on school's number_of_sections
+  const predefinedSections = useMemo(() => {
+    if (selectedSchoolSections && selectedSchoolSections > 0) {
+      // Generate sections A, B, C, ... up to the number specified
+      return Array.from({ length: Math.min(selectedSchoolSections, 26) }, (_, i) => 
+        String.fromCharCode(65 + i) // 65 is 'A' in ASCII
+      );
+    }
+    // Default fallback if no school selected or no sections configured
+    return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+  }, [selectedSchoolSections]);
+
   useEffect(() => {
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
 
   // When a school is selected for bulk import, reflect it in preview rows
   useEffect(() => {
     if (!selectedSchoolForImport) return;
     if (!bulkData || bulkData.length === 0) return;
-    const schoolName = schools.find((s: any) => s.id === selectedSchoolForImport)?.name || '';
+    const selectedSchool = schools.find((s: School) => s.id === selectedSchoolForImport);
+    const schoolName = selectedSchool?.name || '';
+    
+    // Update school_id and school_name in bulk data
     setBulkData((prev) =>
-      prev.map((item: any) => ({
+      prev.map((item: BulkImportData) => ({
         ...item,
         school_id: selectedSchoolForImport,
         school_name: item.school_name && String(item.school_name).trim() !== '' ? item.school_name : schoolName,
       }))
     );
+    
+    // Also update selected school's section configuration for section dropdown
+    if (selectedSchool?.number_of_sections) {
+      setSelectedSchoolSections(selectedSchool.number_of_sections);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- bulkData excluded to avoid update loops
   }, [selectedSchoolForImport, schools]);
 
   // Removed automatic test student creation to prevent continuous loading
@@ -235,7 +296,7 @@ export default function StudentsManagement() {
           
           // Transform to match expected format
            
-          const transformedStudents = loadedStudents.map((student: any) => ({
+          const transformedStudents = loadedStudents.map((student: Student) => ({
             ...student,
             student_schools: student.student_schools || [],
             student_courses: [],
@@ -287,6 +348,19 @@ export default function StudentsManagement() {
           console.log('✅ Schools loaded via API:', loadedSchools.length);
           setSchools(loadedSchools);
           
+          // Update selected school's section configuration if a school is selected
+          if (formData.school_id) {
+            interface School {
+              id?: string;
+              number_of_sections?: number | null;
+            }
+            
+            const selectedSchool = loadedSchools.find((s: School) => s.id === formData.school_id);
+            if (selectedSchool) {
+              setSelectedSchoolSections(selectedSchool.number_of_sections || null);
+            }
+          }
+          
           // If no schools found, create test schools
           if (loadedSchools.length === 0) {
             console.log('⚠️ No schools found, will create test schools');
@@ -329,6 +403,11 @@ export default function StudentsManagement() {
       return;
     }
 
+    if (!formData.section) {
+      setAddStudentError('Please select or enter a section');
+      return;
+    }
+
     setIsAddingStudent(true);
     setAddStudentError(null);
 
@@ -345,15 +424,109 @@ export default function StudentsManagement() {
           password: formData.password,
           school_id: formData.school_id,
           grade: formData.grade || 'Not Specified',
+          section: formData.section,
           parent_name: formData.parent_name || null,
           parent_phone: formData.parent_phone || null,
         }),
       });
 
-      const data = await response.json();
+      type ApiResponse = {
+        student?: Student;
+        error?: string;
+        details?: unknown;
+        message?: string;
+        validation_errors?: unknown;
+      };
+      let data: ApiResponse = {};
+      const contentType = response.headers.get('content-type') || '';
+      
+      // Read response as text first (can only read body once)
+      const responseText = await response.text();
+      
+      if (!responseText || responseText.trim() === '') {
+        // Empty response body
+        console.error('API Error Response (empty body):', {
+          status: response.status,
+          statusText: response.statusText,
+          contentType: contentType
+        });
+        throw new Error(`Failed to create student: ${response.statusText} (${response.status}). Server returned empty response.`);
+      }
+      
+      // Try to parse as JSON
+      if (contentType.includes('application/json') || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
+        try {
+          data = JSON.parse(responseText) as ApiResponse;
+          // Check if parsed data is empty object (but response wasn't just "{}")
+          if (Object.keys(data).length === 0 && responseText.trim() !== '{}' && responseText.trim() !== '[]') {
+            // Empty object but response text had content
+            console.warn('API returned empty object but response had content:', responseText);
+            data = { error: 'Unknown error', details: responseText.substring(0, 200) };
+          }
+        } catch (jsonError: unknown) {
+          // JSON parse failed, use text as error
+          const parseErrMsg = jsonError instanceof Error ? jsonError.message : String(jsonError);
+          console.error('API Error Response (JSON parse failed):', {
+            status: response.status,
+            statusText: response.statusText,
+            body: responseText.substring(0, 500),
+            parseError: parseErrMsg
+          });
+          throw new Error(`Failed to create student: ${response.statusText} (${response.status}). ${responseText.substring(0, 200)}`);
+        }
+      } else {
+        // Not JSON, use text as error message
+        console.error('API Error Response (non-JSON):', {
+          status: response.status,
+          statusText: response.statusText,
+          body: responseText.substring(0, 500)
+        });
+        throw new Error(`Failed to create student: ${response.statusText} (${response.status}). ${responseText.substring(0, 200)}`);
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create student');
+        // Provide more detailed error message
+        console.error('API Error Response:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: data,
+          dataKeys: Object.keys(data),
+          fullResponse: JSON.stringify(data, null, 2)
+        });
+        
+        // Handle different error response formats
+        let errorMessage = data.error || data.message || 'Failed to create student';
+        
+        // Add details if available
+        if (data.details) {
+          if (typeof data.details === 'string') {
+            errorMessage += `: ${data.details}`;
+          } else if (Array.isArray(data.details)) {
+            interface Detail {
+              path?: (string | number)[];
+              message?: string;
+            }
+            
+            const detailsStr = data.details.map((d: Detail | string) => 
+              typeof d === 'string' ? d : `${d.path?.join('.') || 'field'}: ${d.message}`
+            ).join('; ');
+            errorMessage += `: ${detailsStr}`;
+          } else {
+            errorMessage += `: ${JSON.stringify(data.details)}`;
+          }
+        }
+        
+        // Add validation errors if available
+        if (data.validation_errors) {
+          errorMessage += ` (Validation: ${JSON.stringify(data.validation_errors)})`;
+        }
+        
+        // If we still have a generic message and there's raw data, include it
+        if (errorMessage === 'Failed to create student' && Object.keys(data).length > 0) {
+          errorMessage += ` (Response: ${JSON.stringify(data)})`;
+        }
+        
+        throw new Error(errorMessage);
       }
 
       // Clear saved form data after successful submission
@@ -362,7 +535,9 @@ export default function StudentsManagement() {
 
       // Success - reset form and close dialog
       setIsDialogOpen(false);
-      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
+      setSectionInputMode('predefined');
+      setCustomSection("");
       setAddStudentError(null);
       
       // Reload students list
@@ -370,9 +545,13 @@ export default function StudentsManagement() {
       
       console.log('✅ Student created successfully:', data.student);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error adding student:', error);
-      setAddStudentError(error.message || 'Failed to create student. Please try again.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create student. Please try again.';
+      setAddStudentError(errorMessage);
+      if (errorMessage.toLowerCase().includes('email already exists')) {
+        console.warn('Email conflict detected. User should check if student already exists.');
+      }
     } finally {
       setIsAddingStudent(false);
     }
@@ -387,17 +566,20 @@ export default function StudentsManagement() {
     setEditingStudent(student);
     // Set form data for editing
     const schoolAssignment = student.student_schools?.[0];
+    const sectionValue = schoolAssignment?.section || "";
+    const isPredefined = predefinedSections.includes(sectionValue);
     setFormData({
       full_name: student.full_name || "",
       email: student.email || "",
       password: "", // Don't pre-fill password
       school_id: schoolAssignment?.school_id || "",
       grade: schoolAssignment?.grade || "",
-       
-      parent_name: (student as any).parent_name || "",
-       
-      parent_phone: (student as any).parent_phone || ""
+      section: sectionValue,
+      parent_name: student.parent_name || "",
+      parent_phone: student.parent_phone || ""
     });
+    setSectionInputMode(isPredefined ? 'predefined' : 'custom');
+    setCustomSection(isPredefined ? "" : sectionValue);
     setNewPassword(""); // Reset new password
     setShowNewPassword(false); // Reset new password visibility
     setIsEditDialogOpen(true);
@@ -425,7 +607,7 @@ export default function StudentsManagement() {
       }
 
       // Remove from local state
-      setStudents(prev => prev.filter((s: any) => s.id !== student.id));
+      setStudents(prev => prev.filter((s: Student) => s.id !== student.id));
       alert(`Student "${student.full_name}" deleted successfully!`);
     } catch (error) {
       console.error('Error deleting student:', error);
@@ -478,9 +660,9 @@ export default function StudentsManagement() {
       // Refresh the student list to get updated data
       await loadData();
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing password:', error);
-      setUpdateStudentError(error.message || 'Failed to change password. Please try again.');
+      setUpdateStudentError(error instanceof Error ? error.message : 'Failed to change password. Please try again.');
     } finally {
       setActionLoading(null);
     }
@@ -524,8 +706,8 @@ export default function StudentsManagement() {
     if (!editingStudent) return;
 
     // Validate required fields
-    if (!formData.full_name || !formData.email) {
-      setUpdateStudentError('Please fill in all required fields (Name, Email)');
+    if (!formData.full_name || !formData.email || !formData.section) {
+      setUpdateStudentError('Please fill in all required fields (Name, Email, Section)');
       return;
     }
 
@@ -543,7 +725,7 @@ export default function StudentsManagement() {
     }
 
     // Verify selected school exists in schools list
-    const selectedSchool = schools.find((s: any) => s.id === formData.school_id);
+    const selectedSchool = schools.find((s: School) => s.id === formData.school_id);
     if (!selectedSchool) {
       console.error('Selected school not found in schools list:', formData.school_id);
       setUpdateStudentError('Selected school not found. Please select a valid school.');
@@ -565,6 +747,7 @@ export default function StudentsManagement() {
           email: formData.email,
           school_id: formData.school_id,
           grade: formData.grade || 'Not Specified',
+          section: formData.section,
           parent_name: formData.parent_name || null,
           parent_phone: formData.parent_phone || null,
         }),
@@ -579,7 +762,9 @@ export default function StudentsManagement() {
       // Success - reset form and close dialog
       setIsEditDialogOpen(false);
       setEditingStudent(null);
-      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
+      setSectionInputMode('predefined');
+      setCustomSection("");
       setNewPassword(""); // Reset new password
       setShowNewPassword(false); // Reset new password visibility
       setUpdateStudentError(null);
@@ -589,9 +774,9 @@ export default function StudentsManagement() {
       
       console.log('✅ Student updated successfully:', data.student);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating student:', error);
-      setUpdateStudentError(error.message || 'Failed to update student. Please try again.');
+      setUpdateStudentError(error instanceof Error ? error.message : 'Failed to update student. Please try again.');
     } finally {
       setIsUpdatingStudent(false);
     }
@@ -609,12 +794,32 @@ export default function StudentsManagement() {
     }
 
     // Validate all required fields
-    const invalidRows = bulkData.filter((item: any) => 
-      !item.student_name || !item.grade || !item.email || !item.password
-    );
+    const invalidRows = bulkData.filter((item: BulkImportData) => {
+      const hasName = item.student_name && item.student_name.trim() !== '';
+      const hasGrade = item.grade && item.grade.trim() !== '';
+      const hasSection = item.section && item.section.trim() !== '';
+      const hasEmail = item.email && item.email.trim() !== '';
+      const hasPassword = item.password && item.password.trim() !== '';
+      const hasSchool = selectedSchoolForImport || item.school_id;
+      
+      return !hasName || !hasGrade || !hasSection || !hasEmail || !hasPassword || !hasSchool;
+    });
 
     if (invalidRows.length > 0) {
-      setBulkImportError(`${invalidRows.length} row(s) are missing required fields. Please fill in all required fields.`);
+      const missingFields = invalidRows.map((item: BulkImportData, idx: number) => {
+        const missing: string[] = [];
+        if (!item.student_name?.trim()) missing.push('Name');
+        if (!item.grade?.trim()) missing.push('Grade');
+        if (!item.section?.trim()) missing.push('Section');
+        if (!item.email?.trim()) missing.push('Email');
+        if (!item.password?.trim()) missing.push('Password');
+        if (!selectedSchoolForImport && !item.school_id) missing.push('School');
+        return `Row ${idx + 1}: ${missing.join(', ')}`;
+      }).slice(0, 5); // Show first 5 errors
+      
+      setBulkImportError(
+        `${invalidRows.length} row(s) are missing required fields:\n${missingFields.join('\n')}${invalidRows.length > 5 ? `\n... and ${invalidRows.length - 5} more` : ''}`
+      );
       return;
     }
 
@@ -644,13 +849,14 @@ export default function StudentsManagement() {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  full_name: student.student_name,
-                  email: student.email,
+                  full_name: student.student_name.trim(),
+                  email: student.email?.trim() || '',
                   password: student.password,
-                  school_id: selectedSchoolForImport,
-                  grade: student.grade,
-                  phone: student.phone_number || null,
-                  parent_name: student.father_name || null
+                  school_id: selectedSchoolForImport || student.school_id, // Use selected school or fallback to item's school_id
+                  grade: student.grade.trim(), // Ensure grade is trimmed
+                  section: student.section.trim().toUpperCase(), // Ensure section is uppercase and trimmed
+                  phone: student.phone_number?.trim() || null,
+                  parent_name: student.father_name?.trim() || null
                 }),
               });
 
@@ -658,17 +864,19 @@ export default function StudentsManagement() {
 
               if (!response.ok) {
                 const msg = data.message || data.error || 'Failed to create student';
+                type DetailItem = { path?: (string | number)[]; message?: string };
                 const details = Array.isArray(data.details)
-                  ? data.details.map((d: any) => (typeof d === 'string' ? d : `${d.path?.join('.') || 'field'}: ${d.message}`)).join('; ')
+                  ? (data.details as (DetailItem | string)[]).map((d: DetailItem | string) => (typeof d === 'string' ? d : `${d.path?.join('.') || 'field'}: ${d.message}`)).join('; ')
                   : (typeof data.details === 'string' ? data.details : '');
                 throw new Error(details ? `${msg}: ${details}` : msg);
               }
 
               results.success++;
              
-            } catch (error: any) {
+            } catch (error: unknown) {
               results.failed++;
-              results.errors.push(`${student.student_name}: ${error.message || 'Unknown error'}`);
+              const errMsg = error instanceof Error ? error.message : 'Unknown error';
+              results.errors.push(`${student.student_name}: ${errMsg}`);
               console.error(`Error importing ${student.student_name}:`, error);
             }
           })
@@ -689,9 +897,9 @@ export default function StudentsManagement() {
         alert(`Failed to import students. ${results.errors.length > 0 ? `Errors: ${results.errors.slice(0, 3).join(', ')}` : ''}`);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error bulk importing students:', error);
-      setBulkImportError(`Bulk import error: ${error.message}`);
+      setBulkImportError(`Bulk import error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsBulkImporting(false);
     }
@@ -712,8 +920,8 @@ export default function StudentsManagement() {
 
       if (fileExtension === 'csv') {
         const normalizeKey = (k: string) => String(k || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-        const getValue = (row: Record<string, any>, candidates: string[]) => {
-          const byNormalized: Record<string, any> = {};
+        const getValue = (row: Record<string, unknown>, candidates: string[]) => {
+          const byNormalized: Record<string, unknown> = {};
           Object.keys(row || {}).forEach((key) => {
             byNormalized[normalizeKey(key)] = row[key];
           });
@@ -728,19 +936,20 @@ export default function StudentsManagement() {
         Papa.parse(file, {
           header: true,
           skipEmptyLines: true,
-          complete: (results: any) => {
+          complete: (results: { data?: Array<Record<string, unknown>>; meta?: { fields?: string[] } }) => {
             try {
-              const rows = (results?.data || []) as Array<Record<string, any>>;
+              const rows = (results?.data || []) as Array<Record<string, unknown>>;
 
-              parsedData = rows.map((row: any, index: number) => {
+              parsedData = rows.map((row: Record<string, unknown>, index: number) => {
                 // Flexible column mapping (case-insensitive, ignores spaces/underscores/dashes)
                 const studentName = getValue(row, ['Student Name', 'student_name', 'StudentName', 'Name', 'Full Name', 'full_name']);
                 const fatherName = getValue(row, ['Father Name', 'father_name', 'Father', 'Parent Name', 'parent_name']);
                 const phoneNumber = getValue(row, ['Phone Number', 'phone_number', 'Phone', 'phone', 'Contact', 'contact']);
                 const grade = getValue(row, ['Grade', 'grade', 'Class', 'class', 'Level', 'level']);
+                const section = getValue(row, ['Section', 'section', 'Class Section', 'class_section', 'Section Name', 'section_name']);
                 const schoolName = getValue(row, ['School', 'school', 'School Name', 'school_name', 'SchoolName']);
                 const selectedSchoolName = selectedSchoolForImport
-                  ? (schools.find((s: any) => s.id === selectedSchoolForImport)?.name || '')
+                  ? (schools.find((s: School) => s.id === selectedSchoolForImport)?.name || '')
                   : '';
 
                 return {
@@ -749,20 +958,51 @@ export default function StudentsManagement() {
                   father_name: fatherName,
                   phone_number: phoneNumber,
                   grade: grade,
+                  section: section,
                   school_name: schoolName || selectedSchoolName,
                   status: 'pending'
                 } as BulkImportData;
               });
 
-              const validData = parsedData.filter((item: BulkImportData) =>
-                Boolean(item.student_name && item.student_name.trim() !== '' && item.grade && item.grade.trim() !== '')
-              );
+              // Normalize grade format (handle "Grade 4", "4", "grade 4", etc.)
+              const normalizeGrade = (grade: string): string => {
+                if (!grade || !grade.trim()) return '';
+                const trimmed = grade.trim();
+                // If it already starts with "Grade ", return as is
+                if (trimmed.match(/^grade\s+\d+/i)) {
+                  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+                }
+                // If it's just a number, add "Grade " prefix
+                if (trimmed.match(/^\d+$/)) {
+                  return `Grade ${trimmed}`;
+                }
+                // Otherwise return as is (might be custom format)
+                return trimmed;
+              };
+
+              const validData = parsedData
+                .map((item: BulkImportData) => ({
+                  ...item,
+                  grade: normalizeGrade(item.grade || ''),
+                  section: (item.section || '').trim().toUpperCase(), // Normalize section to uppercase
+                  school_id: selectedSchoolForImport || undefined, // Set school_id from selection
+                }))
+                .filter((item: BulkImportData) =>
+                  Boolean(
+                    item.student_name && 
+                    item.student_name.trim() !== '' && 
+                    item.grade && 
+                    item.grade.trim() !== '' &&
+                    item.section && 
+                    item.section.trim() !== '' // Require section
+                  )
+                );
 
               if (validData.length === 0) {
                 const headerFields = Array.isArray(results?.meta?.fields) ? results.meta.fields : [];
                 setBulkData([]);
                 setBulkImportError(
-                  `No valid rows found in CSV. Ensure it has columns like "Student Name" and "Grade" and at least one row with values.\nDetected headers: ${headerFields.join(', ') || '(none)'}`
+                  `No valid rows found in CSV. Ensure it has columns: "Student Name", "Grade", and "Section" with at least one row with values.\nDetected headers: ${headerFields.join(', ') || '(none)'}`
                 );
               } else {
                 setBulkData(validData);
@@ -774,7 +1014,7 @@ export default function StudentsManagement() {
               event.target.value = '';
             }
           },
-          error: (error: any) => {
+          error: (error: { message?: string }) => {
             setBulkImportError(`Error parsing CSV: ${error.message || 'Unknown error'}`);
             setIsParsingFile(false);
             // Allow re-selecting the same file again
@@ -786,15 +1026,14 @@ export default function StudentsManagement() {
         const reader = new FileReader();
         reader.onload = async (e) => {
           try {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const arrayBuffer = e.target?.result as ArrayBuffer;
+            if (!arrayBuffer) {
+              setBulkImportError('Failed to read Excel file.');
+              setIsParsingFile(false);
+              return;
+            }
             const workbook = new ExcelJS.Workbook();
-            
-            // Load workbook from buffer
-            const buffer = data instanceof Uint8Array 
-              ? Buffer.from(data.buffer || data as unknown as ArrayBufferLike) 
-              : Buffer.from(data as unknown as ArrayBufferLike);
-             
-            await workbook.xlsx.load(buffer as any);
+            await workbook.xlsx.load(arrayBuffer);
             
             if (!workbook.worksheets || workbook.worksheets.length === 0) {
               setBulkImportError('Excel file appears to be empty or invalid. Please check the file and try again.');
@@ -802,61 +1041,44 @@ export default function StudentsManagement() {
               return;
             }
             
-            // Get first worksheet
             const worksheet = workbook.worksheets[0];
-            
             if (!worksheet) {
               setBulkImportError('Could not read worksheet from Excel file. Please check the file format.');
               setIsParsingFile(false);
               return;
             }
             
-            // Convert worksheet to JSON
-             
-            const jsonData: any[] = [];
+            const jsonData: Array<Record<string, string>> = [];
             const columnNames: string[] = [];
             
-            // Get headers from first row
+            const stringifyCell = (v: unknown): string => {
+              if (v == null) return '';
+              if (typeof v === 'object' && v !== null && 'text' in v) return String((v as { text?: string }).text ?? '');
+              return String(v);
+            };
+            
             const headerRow = worksheet.getRow(1);
             if (headerRow && headerRow.cellCount > 0) {
-              headerRow.eachCell({ includeEmpty: false }, (cell: any, colNumber: number) => {
-                const headerValue = cell.value?.toString() || '';
-                if (headerValue) {
-                  columnNames.push(headerValue);
-                }
+              headerRow.eachCell({ includeEmpty: false }, (cell, _colNumber) => {
+                const headerValue = stringifyCell(cell.value).trim();
+                if (headerValue) columnNames.push(headerValue);
               });
             }
             
-            // Process data rows (skip header row)
-            worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
-              if (rowNumber === 1) return; // Skip header row
-              
-               
-              const rowData: any = {};
-              row.eachCell({ includeEmpty: false }, (cell: any, colNumber: number) => {
+            worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+              if (rowNumber === 1) return;
+              const rowData: Record<string, string> = {};
+              row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
                 const headerName = columnNames[colNumber - 1] || `Column${colNumber}`;
-                const cellValue = cell.value;
-                // Handle different cell value types
-                if (cellValue !== null && cellValue !== undefined) {
-                  if (typeof cellValue === 'object' && 'text' in cellValue) {
-                     
-                    rowData[headerName] = (cellValue as any).text;
-                  } else {
-                    rowData[headerName] = cellValue.toString();
-                  }
-                } else {
-                  rowData[headerName] = '';
-                }
+                rowData[headerName] = stringifyCell(cell.value);
               });
-              
-              if (Object.keys(rowData).length > 0) {
-                jsonData.push(rowData);
-              }
+              if (Object.keys(rowData).length > 0) jsonData.push(rowData);
             });
             
             if (!jsonData || jsonData.length === 0) {
               setBulkImportError('No data found in Excel file. Please ensure the file contains student data with headers.');
-              console.log('Excel file parsed but no data found. Sheet names:', workbook.worksheets.map((ws: any) => ws.name));
+              const sheetNames = workbook.worksheets.map((ws) => (ws as { name?: string }).name);
+              console.log('Excel file parsed but no data found. Sheet names:', sheetNames);
               setIsParsingFile(false);
               return;
             }
@@ -865,15 +1087,16 @@ export default function StudentsManagement() {
             console.log('Detected columns:', columnNames);
 
              
-            parsedData = jsonData.map((row: any, index: number) => {
+            parsedData = jsonData.map((row: Record<string, string>, index: number) => {
               // Flexible column mapping for Excel - try multiple variations
               const studentName = row['Student Name'] || row['student_name'] || row['StudentName'] || row['Name'] || row['name'] || row['Full Name'] || row['full_name'] || '';
               const fatherName = row['Father Name'] || row['father_name'] || row['FatherName'] || row['Father'] || row['father'] || row['Parent Name'] || row['parent_name'] || '';
               const phoneNumber = row['Phone Number'] || row['phone_number'] || row['PhoneNumber'] || row['Phone'] || row['phone'] || row['Contact'] || row['contact'] || '';
               const grade = row['Grade'] || row['grade'] || row['Class'] || row['class'] || row['Level'] || row['level'] || '';
+              const section = row['Section'] || row['section'] || row['Class Section'] || row['class_section'] || row['Section Name'] || row['section_name'] || '';
               const schoolName = row['School'] || row['school'] || row['School Name'] || row['school_name'] || row['SchoolName'] || '';
               const selectedSchoolName = selectedSchoolForImport
-                ? (schools.find((s: any) => s.id === selectedSchoolForImport)?.name || '')
+                ? (schools.find((s: School) => s.id === selectedSchoolForImport)?.name || '')
                 : '';
               
               return {
@@ -882,22 +1105,52 @@ export default function StudentsManagement() {
                 father_name: fatherName,
                 phone_number: phoneNumber,
                 grade: grade,
+                section: section,
                 school_name: schoolName || selectedSchoolName,
                 status: 'pending'
               } as BulkImportData;
             });
 
-            // Filter out rows where required fields are missing
-            const validData = parsedData.filter((item: BulkImportData) => {
-              const isValid = item.student_name && item.student_name.trim() !== '' && item.grade && item.grade.trim() !== '';
-              if (!isValid) {
-                console.log('Filtered out row:', item);
+            // Normalize grade format (handle "Grade 4", "4", "grade 4", etc.)
+            const normalizeGrade = (grade: string): string => {
+              if (!grade || !grade.trim()) return '';
+              const trimmed = grade.trim();
+              // If it already starts with "Grade ", return as is (normalized)
+              if (trimmed.match(/^grade\s+\d+/i)) {
+                return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
               }
-              return isValid;
-            });
+              // If it's just a number, add "Grade " prefix
+              if (trimmed.match(/^\d+$/)) {
+                return `Grade ${trimmed}`;
+              }
+              // Otherwise return as is (might be custom format)
+              return trimmed;
+            };
+
+            // Filter out rows where required fields are missing and normalize data
+            const validData = parsedData
+              .map((item: BulkImportData) => ({
+                ...item,
+                grade: normalizeGrade(item.grade || ''),
+                section: (item.section || '').trim().toUpperCase(), // Normalize section to uppercase
+                school_id: selectedSchoolForImport || undefined, // Set school_id from selection
+              }))
+              .filter((item: BulkImportData) => {
+                const isValid = 
+                  item.student_name && 
+                  item.student_name.trim() !== '' && 
+                  item.grade && 
+                  item.grade.trim() !== '' &&
+                  item.section && 
+                  item.section.trim() !== ''; // Require section
+                if (!isValid) {
+                  console.log('Filtered out row:', item);
+                }
+                return isValid;
+              });
 
             if (validData.length === 0) {
-              setBulkImportError(`No valid rows found in Excel file. Please ensure the file contains columns: "Student Name" (or "Name") and "Grade". Found columns: ${columnNames.join(', ')}`);
+              setBulkImportError(`No valid rows found in Excel file. Please ensure the file contains columns: "Student Name" (or "Name"), "Grade", and "Section". Found columns: ${columnNames.join(', ')}`);
               console.error('All rows were filtered out. Original data length:', parsedData.length);
               setIsParsingFile(false);
               return;
@@ -908,9 +1161,10 @@ export default function StudentsManagement() {
             setBulkImportError(null); // Clear any previous errors
             setIsParsingFile(false);
            
-          } catch (error: any) {
+          } catch (error: unknown) {
             console.error('Error parsing Excel file:', error);
-            setBulkImportError(`Error parsing Excel file: ${error.message || 'Unknown error occurred. Please check the file format and try again.'}`);
+            const errMsg = error instanceof Error ? error.message : 'Unknown error occurred. Please check the file format and try again.';
+            setBulkImportError(`Error parsing Excel file: ${errMsg}`);
             setIsParsingFile(false);
           }
         };
@@ -930,22 +1184,22 @@ export default function StudentsManagement() {
         return;
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error uploading file:', error);
-      setBulkImportError(`Error uploading file: ${error.message}`);
+      setBulkImportError(`Error uploading file: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
   const handleEditBulkData = (id: string, field: keyof BulkImportData, value: string) => {
     setBulkData(prevData => 
-      prevData.map((item: any) => 
+      prevData.map((item: BulkImportData) => 
         item.id === id ? { ...item, [field]: value } : item
       )
     );
   };
 
   const handleDeleteBulkDataRow = (id: string) => {
-    setBulkData(prevData => prevData.filter((item: any) => item.id !== id));
+    setBulkData(prevData => prevData.filter((item: BulkImportData) => item.id !== id));
   };
 
   const assignEmailsAndPasswords = () => {
@@ -957,13 +1211,13 @@ export default function StudentsManagement() {
     
     // If no domain provided, use school name as fallback
     if (!domain && selectedSchoolForImport) {
-      const schoolName = schools.find((s: any) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '') || 'school';
+      const schoolName = schools.find((s: School) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '') || 'school';
       domain = `@${schoolName}.edu`;
     } else if (!domain) {
       domain = '@school.edu';
     }
 
-    const updatedData = bulkData.map((item, index) => {
+    const updatedData = bulkData.map((item, _index) => {
       let email = item.email;
       let password = item.password || defaultPassword;
 
@@ -986,25 +1240,31 @@ export default function StudentsManagement() {
   };
 
   const downloadSampleCSV = () => {
-    // Sample CSV data with headers + 10 example rows (template)
+    // Sample CSV data with headers + 15 example rows (template)
+    // Includes different grades and sections to demonstrate the format
     const sampleData = [
-      ['Student Name', 'Father Name', 'Phone Number', 'Grade'],
-      ['Aarav Sharma', 'Rohit Sharma', '+919876543210', 'Grade 6'],
-      ['Anaya Patel', 'Vivek Patel', '+919876543211', 'Grade 7'],
-      ['Vihaan Reddy', 'Suresh Reddy', '+919876543212', 'Grade 8'],
-      ['Diya Gupta', 'Amit Gupta', '+919876543213', 'Grade 5'],
-      ['Arjun Singh', 'Raj Singh', '+919876543214', 'Grade 9'],
-      ['Ishita Nair', 'Manoj Nair', '+919876543215', 'Grade 4'],
-      ['Reyansh Iyer', 'Kiran Iyer', '+919876543216', 'Grade 10'],
-      ['Meera Das', 'Sanjay Das', '+919876543217', 'Grade 3'],
-      ['Kabir Khan', 'Imran Khan', '+919876543218', 'Grade 11'],
-      ['Saanvi Joshi', 'Nitin Joshi', '+919876543219', 'Grade 12'],
+      ['Student Name', 'Father Name', 'Phone Number', 'Grade', 'Section'],
+      ['Aarav Sharma', 'Rohit Sharma', '+919876543210', 'Grade 4', 'A'],
+      ['Anaya Patel', 'Vivek Patel', '+919876543211', 'Grade 4', 'B'],
+      ['Vihaan Reddy', 'Suresh Reddy', '+919876543212', 'Grade 4', 'C'],
+      ['Diya Gupta', 'Amit Gupta', '+919876543213', 'Grade 5', 'A'],
+      ['Arjun Singh', 'Raj Singh', '+919876543214', 'Grade 5', 'B'],
+      ['Ishita Nair', 'Manoj Nair', '+919876543215', 'Grade 5', 'C'],
+      ['Reyansh Iyer', 'Kiran Iyer', '+919876543216', 'Grade 6', 'A'],
+      ['Meera Das', 'Sanjay Das', '+919876543217', 'Grade 6', 'B'],
+      ['Kabir Khan', 'Imran Khan', '+919876543218', 'Grade 7', 'A'],
+      ['Saanvi Joshi', 'Nitin Joshi', '+919876543219', 'Grade 7', 'B'],
+      ['Aditya Verma', 'Ramesh Verma', '+919876543220', 'Grade 8', 'A'],
+      ['Priya Mehta', 'Sunil Mehta', '+919876543221', 'Grade 8', 'C'],
+      ['Rohan Kapoor', 'Vikram Kapoor', '+919876543222', 'Grade 9', 'A'],
+      ['Sneha Agarwal', 'Anil Agarwal', '+919876543223', 'Grade 9', 'B'],
+      ['Karan Malhotra', 'Deepak Malhotra', '+919876543224', 'Grade 10', 'A'],
     ];
 
     // Convert to CSV format
-    const csvContent = sampleData.map((row: any) => {
+    const csvContent = sampleData.map((row: string[]) => {
       // Escape quotes and wrap in quotes if contains comma
-      return row.map((cell: any) => {
+      return row.map((cell: string | number) => {
         const cellStr = String(cell || '');
         if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
           return `"${cellStr.replace(/"/g, '""')}"`;
@@ -1030,29 +1290,32 @@ export default function StudentsManagement() {
     setIsExporting(true);
     try {
       // Filter students based on selected schools and grades
-      const filteredStudentsForExport = students.filter((student: any) => {
+      interface StudentWithSchools extends Student {
+        student_schools?: Array<StudentSchool>;
+      }
+      
+      const filteredStudentsForExport = students.filter((student: StudentWithSchools) => {
         // School filter
         const matchesSchool = exportSelectedSchools.length === 0 || 
-           
-          student.student_schools?.some((ss: any) => exportSelectedSchools.includes(ss.school_id));
+          student.student_schools?.some((ss: { school_id?: string }) => exportSelectedSchools.includes(ss.school_id || ''));
         
         // Grade filter
         const matchesGrade = exportSelectedGrades.length === 0 ||
-           
-          student.student_schools?.some((ss: any) => exportSelectedGrades.includes(ss.grade));
+          student.student_schools?.some((ss: { grade?: string }) => exportSelectedGrades.includes(ss.grade || ''));
         
         return matchesSchool && matchesGrade;
       });
 
       // Generate credentials with school and grade info
-      const credentials = filteredStudentsForExport.map((student: any) => {
+      const credentials = filteredStudentsForExport.map((student: StudentWithSchools) => {
         const schoolAssignment = student.student_schools?.[0];
         return {
           name: student.full_name,
           email: student.email,
           password: 'temp123', // Default password - in production, you'd need to retrieve actual passwords
           school: schoolAssignment?.schools?.name || 'N/A',
-          grade: schoolAssignment?.grade || 'N/A'
+          grade: schoolAssignment?.grade || 'N/A',
+          section: schoolAssignment?.section || 'N/A'
         };
       });
 
@@ -1067,7 +1330,7 @@ export default function StudentsManagement() {
       let filename = 'student_credentials';
       if (exportSelectedSchools.length > 0) {
         const schoolNames = exportSelectedSchools
-          .map((id: any) => schools.find((s: any) => s.id === id)?.name || id)
+          .map((id: string) => schools.find((s: School) => s.id === id)?.name || id)
           .join('_');
         filename += `_${schoolNames.replace(/\s+/g, '_')}`;
       }
@@ -1077,9 +1340,10 @@ export default function StudentsManagement() {
 
       if (exportFormat === 'csv') {
         // Create CSV content
+        type ExportCredential = { name?: string; email?: string; password?: string; school?: string; grade?: string; section?: string };
         const csvContent = [
-          'Name,Email,Password,School,Grade',
-          ...credentials.map((c: any) => `"${c.name}","${c.email}","${c.password}","${c.school}","${c.grade}"`)
+          'Name,Email,Password,School,Grade,Section',
+          ...(credentials as ExportCredential[]).map((c) => `"${c.name ?? ''}","${c.email ?? ''}","${c.password ?? ''}","${c.school ?? ''}","${c.grade ?? ''}","${c.section ?? ''}"`)
         ].join('\n');
 
         // Download CSV
@@ -1138,7 +1402,7 @@ export default function StudentsManagement() {
             <h1>Student Credentials Export</h1>
             <div class="summary">
               <p><strong>Total Students:</strong> ${credentials.length}</p>
-              <p><strong>Schools:</strong> ${exportSelectedSchools.length === 0 ? 'All Schools' : exportSelectedSchools.map((id: any) => schools.find((s: any) => s.id === id)?.name).filter(Boolean).join(', ')}</p>
+              <p><strong>Schools:</strong> ${exportSelectedSchools.length === 0 ? 'All Schools' : exportSelectedSchools.map((id: string) => schools.find((s: School) => s.id === id)?.name).filter(Boolean).join(', ')}</p>
               <p><strong>Grades:</strong> ${exportSelectedGrades.length === 0 ? 'All Grades' : exportSelectedGrades.join(', ')}</p>
               <p><strong>Export Date:</strong> ${new Date().toLocaleString()}</p>
             </div>
@@ -1151,6 +1415,7 @@ export default function StudentsManagement() {
                   <th>Password</th>
                   <th>School</th>
                   <th>Grade</th>
+                  <th>Section</th>
                 </tr>
               </thead>
               <tbody>
@@ -1162,6 +1427,7 @@ export default function StudentsManagement() {
                     <td>${c.password}</td>
                     <td>${c.school}</td>
                     <td>${c.grade}</td>
+                    <td>${c.section}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -1219,7 +1485,7 @@ export default function StudentsManagement() {
   const handleSchoolToggle = (schoolId: string) => {
     setExportSelectedSchools(prev => {
       if (prev.includes(schoolId)) {
-        return prev.filter((id: any) => id !== schoolId);
+        return prev.filter((id: string) => id !== schoolId);
       } else {
         return [...prev, schoolId];
       }
@@ -1229,7 +1495,7 @@ export default function StudentsManagement() {
   const handleGradeToggle = (grade: string) => {
     setExportSelectedGrades(prev => {
       if (prev.includes(grade)) {
-        return prev.filter((g: any) => g !== grade);
+        return prev.filter((g: string) => g !== grade);
       } else {
         return [...prev, grade];
       }
@@ -1241,11 +1507,20 @@ export default function StudentsManagement() {
     const grades = new Set<string>();
     students.forEach(student => {
        
-      student.student_schools?.forEach((ss: any) => {
+      interface StudentSchool {
+        school_id?: string;
+        grade?: string;
+        section?: string;
+        schools?: {
+          name?: string;
+        };
+      }
+      
+      student.student_schools?.forEach((ss: StudentSchool) => {
         if (ss.grade) grades.add(ss.grade);
       });
     });
-    return Array.from(grades).sort((a: any, b: any) => {
+    return Array.from(grades).sort((a: string, b: string) => {
       // Sort grades naturally (Grade 1, Grade 2, etc.)
       const numA = parseInt(a.replace(/\D/g, '')) || 0;
       const numB = parseInt(b.replace(/\D/g, '')) || 0;
@@ -1253,32 +1528,59 @@ export default function StudentsManagement() {
     });
   };
 
+  // Get all unique sections from students
+  const getAllSections = () => {
+    const sections = new Set<string>();
+    students.forEach((student: Student) => {
+      interface StudentSchool {
+        school_id?: string;
+        grade?: string;
+        section?: string;
+        schools?: {
+          name?: string;
+        };
+      }
+      
+      student.student_schools?.forEach((ss: StudentSchool) => {
+        if (ss.section) sections.add(ss.section);
+      });
+    });
+    return Array.from(sections).sort();
+  };
+
   // Filter students by school and search term
-  const filteredStudents = students.filter((student: any) => {
+  const filteredStudents = students.filter((student: Student) => {
     // School filter
     const matchesSchool = schoolFilter === "all" || 
        
-      student.student_schools?.some((assignment: any) => 
+      student.student_schools?.some((assignment: StudentSchool) => 
         assignment.school_id === schoolFilter
       );
 
     // Grade filter
     const matchesGrade = gradeFilter === "all" ||
-      student.student_schools?.some((assignment: any) =>
+      student.student_schools?.some((assignment: StudentSchool) =>
         String(assignment.grade || '').trim() === gradeFilter
+      );
+
+    // Section filter
+    const matchesSection = sectionFilter === "all" ||
+      student.student_schools?.some((assignment: StudentSchool) =>
+        String(assignment.section || '').trim() === sectionFilter
       );
     
     // Search filter (name only)
     const matchesSearch = !searchTerm.trim() || 
       student.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
     
-    return matchesSchool && matchesGrade && matchesSearch;
+    return matchesSchool && matchesGrade && matchesSection && matchesSearch;
   });
 
   // Clear all filters
   const clearFilters = () => {
     setSchoolFilter("all");
     setGradeFilter("all");
+    setSectionFilter("all");
     setSearchTerm("");
   };
 
@@ -1360,7 +1662,7 @@ export default function StudentsManagement() {
             <TabsContent value="students" className="space-y-6">
               {/* Filters and Actions Bar */}
               <div className="flex flex-col gap-4">
-                <div className="flex flex-col sm:flex-row gap-4 items-center">
+                <div className="flex flex-wrap gap-4 items-center">
                   {/* Action Buttons - Moved to Left */}
                   <div className="flex space-x-2 shrink-0">
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -1368,7 +1670,9 @@ export default function StudentsManagement() {
                         <Button 
                           onClick={() => {
                             setEditingStudent(null);
-                            setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+                            setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
+                            setSectionInputMode('predefined');
+                            setCustomSection("");
                           }}
                           className="bg-blue-600 hover:bg-blue-700 text-white"
                         >
@@ -1376,14 +1680,14 @@ export default function StudentsManagement() {
                           Add Student
                         </Button>
                       </DialogTrigger>
-                    <DialogContent className="sm:max-w-[425px] bg-white">
-                      <DialogHeader>
+                    <DialogContent className="sm:max-w-[425px] bg-white max-h-[90vh] flex flex-col">
+                      <DialogHeader className="flex-shrink-0">
                         <DialogTitle>Add New Student</DialogTitle>
                         <DialogDescription>
                           Create a new student account and assign to school
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="grid gap-4 py-4">
+                      <div className="grid gap-4 py-4 overflow-y-auto flex-1 pr-2" style={{ maxHeight: 'calc(90vh - 180px)' }}>
                         <div className="grid gap-2">
                           <Label htmlFor="full_name">Full Name</Label>
                           <Input
@@ -1423,7 +1727,11 @@ export default function StudentsManagement() {
                           ) : (
                             <Select
                               value={formData.school_id || undefined}
-                              onValueChange={(value) => setFormData({ ...formData, school_id: value })}
+                              onValueChange={(value) => {
+                                const selectedSchool = schools.find((s: School) => s.id === value);
+                                setSelectedSchoolSections(selectedSchool?.number_of_sections || null);
+                                setFormData({ ...formData, school_id: value, section: "" }); // Reset section when school changes
+                              }}
                             >
                               <SelectTrigger id="school_id" className="w-full">
                                 <SelectValue placeholder="Select school" />
@@ -1463,6 +1771,45 @@ export default function StudentsManagement() {
                           </Select>
                         </div>
                         <div className="grid gap-2">
+                          <Label htmlFor="section">Section <span className="text-red-500">*</span></Label>
+                          <Select
+                            value={sectionInputMode === 'predefined' ? formData.section || undefined : 'custom'}
+                            onValueChange={(value) => {
+                              if (value === 'custom') {
+                                setSectionInputMode('custom');
+                                setFormData({ ...formData, section: customSection });
+                              } else {
+                                setSectionInputMode('predefined');
+                                setFormData({ ...formData, section: value });
+                              }
+                            }}
+                          >
+                            <SelectTrigger id="section" className="w-full">
+                              <SelectValue placeholder="Select section" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-white">
+                              {predefinedSections.map((section) => (
+                                <SelectItem key={section} value={section}>
+                                  {section}
+                                </SelectItem>
+                              ))}
+                              <SelectItem value="custom">Custom...</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {sectionInputMode === 'custom' && (
+                            <Input
+                              id="custom_section"
+                              value={customSection}
+                              onChange={(e) => {
+                                setCustomSection(e.target.value);
+                                setFormData({ ...formData, section: e.target.value });
+                              }}
+                              placeholder="Enter custom section (e.g., Alpha, Beta)"
+                              className="mt-2"
+                            />
+                          )}
+                        </div>
+                        <div className="grid gap-2">
                           <Label htmlFor="parent_name">Parent&apos;s Name</Label>
                           <Input
                             id="parent_name"
@@ -1481,19 +1828,21 @@ export default function StudentsManagement() {
                             placeholder="Enter parent's phone number"
                           />
                         </div>
+                        {addStudentError && (
+                          <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <p className="text-sm text-red-600">{addStudentError}</p>
+                          </div>
+                        )}
                       </div>
-                      {addStudentError && (
-                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                          <p className="text-sm text-red-600">{addStudentError}</p>
-                        </div>
-                      )}
-                      <DialogFooter>
+                      <DialogFooter className="flex-shrink-0 border-t pt-4 mt-4">
                         <Button 
                           variant="outline" 
                           onClick={() => {
                             setIsDialogOpen(false);
                             setAddStudentError(null);
-                            setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+                            setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
+                            setSectionInputMode('predefined');
+                            setCustomSection("");
                           }}
                           disabled={isAddingStudent}
                         >
@@ -1501,7 +1850,7 @@ export default function StudentsManagement() {
                         </Button>
                         <Button 
                           onClick={handleAddStudent}
-                          disabled={isAddingStudent || !formData.full_name || !formData.email || !formData.password || !formData.school_id}
+                          disabled={isAddingStudent || !formData.full_name || !formData.email || !formData.password || !formData.school_id || !formData.section}
                           className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isAddingStudent ? (
@@ -1543,14 +1892,14 @@ export default function StudentsManagement() {
                   </div>
 
                   {/* Search Bar */}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-[200px] sm:min-w-[300px]">
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                       <Input
                         placeholder="Search by Student Name..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-10"
+                        className="pl-10 w-full"
                       />
                     </div>
                   </div>
@@ -1561,7 +1910,7 @@ export default function StudentsManagement() {
                       Filter by School:
                     </Label>
                     <Select value={schoolFilter} onValueChange={setSchoolFilter}>
-                      <SelectTrigger id="school-filter" className="w-[200px]">
+                      <SelectTrigger id="school-filter" className="w-[180px] sm:w-[200px]">
                         <SelectValue placeholder="All Schools" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1581,7 +1930,7 @@ export default function StudentsManagement() {
                       Filter by Grade:
                     </Label>
                     <Select value={gradeFilter} onValueChange={setGradeFilter}>
-                      <SelectTrigger id="grade-filter" className="w-[180px]">
+                      <SelectTrigger id="grade-filter" className="w-[160px] sm:w-[180px]">
                         <SelectValue placeholder="All Grades" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1595,8 +1944,28 @@ export default function StudentsManagement() {
                     </Select>
                   </div>
 
+                  {/* Section Filter */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Label htmlFor="section-filter" className="whitespace-nowrap text-sm font-medium">
+                      Filter by Section:
+                    </Label>
+                    <Select value={sectionFilter} onValueChange={setSectionFilter}>
+                      <SelectTrigger id="section-filter" className="w-[140px] sm:w-[150px]">
+                        <SelectValue placeholder="All Sections" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Sections</SelectItem>
+                        {getAllSections().map((section) => (
+                          <SelectItem key={section} value={section}>
+                            {section}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   {/* Clear Filters Button */}
-                  {(schoolFilter !== "all" || gradeFilter !== "all" || searchTerm.trim()) && (
+                  {(schoolFilter !== "all" || gradeFilter !== "all" || sectionFilter !== "all" || searchTerm.trim()) && (
                     <Button
                       variant="outline"
                       onClick={clearFilters}
@@ -1617,9 +1986,9 @@ export default function StudentsManagement() {
                     <div>
                       <CardTitle>Students ({filteredStudents.length})</CardTitle>
                       <CardDescription>
-                        {schoolFilter !== "all" && schools.find((s: any) => s.id === schoolFilter) && (
+                        {schoolFilter !== "all" && schools.find((s: School) => s.id === schoolFilter) && (
                           <span className="text-blue-600 font-medium">
-                            Showing students from: {schools.find((s: any) => s.id === schoolFilter)?.name}
+                            Showing students from: {schools.find((s: School) => s.id === schoolFilter)?.name}
                           </span>
                         )}
                         {schoolFilter === "all" && "Manage all student accounts"}
@@ -1659,6 +2028,7 @@ export default function StudentsManagement() {
                           <TableHead>Parent Phone</TableHead>
                           <TableHead>School</TableHead>
                           <TableHead>Grade</TableHead>
+                          <TableHead>Section</TableHead>
                           <TableHead>Courses</TableHead>
                           <TableHead>Progress</TableHead>
                           <TableHead>Actions</TableHead>
@@ -1669,14 +2039,11 @@ export default function StudentsManagement() {
                         <TableRow key={student.id}>
                           <TableCell className="font-medium">{student.full_name}</TableCell>
                           <TableCell>{student.email}</TableCell>
-                          { }
-                          <TableCell>{(student as any).parent_name || '-'}</TableCell>
-                          { }
-                          <TableCell>{(student as any).parent_phone || '-'}</TableCell>
+                          <TableCell>{student.parent_name || '-'}</TableCell>
+                          <TableCell>{student.parent_phone || '-'}</TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              { }
-                              {student.student_schools?.map((assignment: any, index: number) => (
+                              {student.student_schools?.map((assignment: StudentSchool, index: number) => (
                                 <div key={index} className="font-medium">
                                   {assignment.schools?.name || '-'}
                                 </div>
@@ -1688,8 +2055,7 @@ export default function StudentsManagement() {
                           </TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              { }
-                              {student.student_schools?.map((assignment: any, index: number) => {
+                              {student.student_schools?.map((assignment: StudentSchool, index: number) => {
                                 // Format grade: if it already starts with "Grade", use as-is, otherwise add "Grade" prefix
                                 const gradeValue = assignment.grade || '-';
                                 const displayGrade = gradeValue === '-' 
@@ -1711,10 +2077,24 @@ export default function StudentsManagement() {
                           </TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              { }
-                              {student.student_courses?.slice(0, 2).map((course: any, index: number) => (
+                              {student.student_schools?.map((assignment: StudentSchool, index: number) => {
+                                const sectionValue = assignment.section || '-';
+                                return (
+                                  <Badge key={index} variant="outline" className="text-xs">
+                                    {sectionValue}
+                                  </Badge>
+                                );
+                              })}
+                              {(!student.student_schools || student.student_schools.length === 0) && (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              {student.student_courses?.slice(0, 2).map((course: StudentCourse, index: number) => (
                                 <div key={index} className="text-sm">
-                                  {course.courses?.course_name}
+                                  {course.courses?.course_name ?? course.course_id}
                                 </div>
                               ))}
                               {student.student_courses && student.student_courses.length > 2 && (
@@ -1823,17 +2203,23 @@ export default function StudentsManagement() {
                         </CardHeader>
                         <CardContent>
                           <div className="space-y-3">
-                            { }
-                            {viewingStudent.student_schools.map((assignment: any, index: number) => (
+                            {viewingStudent.student_schools.map((assignment: StudentSchool, index: number) => (
                               <div key={index} className="p-3 border rounded-lg">
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <p className="font-medium">{assignment.schools?.name || 'Unknown School'}</p>
-                                    <Badge variant="outline" className="mt-1">
-                                      {assignment.grade?.toString().trim().toLowerCase().startsWith('grade') 
-                                        ? assignment.grade 
-                                        : `Grade ${assignment.grade}`}
-                                    </Badge>
+                                    <div className="flex gap-2 mt-1">
+                                      <Badge variant="outline">
+                                        {assignment.grade?.toString().trim().toLowerCase().startsWith('grade') 
+                                          ? assignment.grade 
+                                          : `Grade ${assignment.grade}`}
+                                      </Badge>
+                                      {assignment.section && (
+                                        <Badge variant="outline">
+                                          Section {assignment.section}
+                                        </Badge>
+                                      )}
+                                    </div>
                                   </div>
                                   <Badge variant={assignment.is_active ? "default" : "secondary"}>
                                     {assignment.is_active ? "Active" : "Inactive"}
@@ -1854,8 +2240,7 @@ export default function StudentsManagement() {
                         </CardHeader>
                         <CardContent>
                           <div className="space-y-2">
-                            { }
-                            {viewingStudent.student_courses.map((course: any, index: number) => (
+                            {viewingStudent.student_courses.map((course: StudentCourse, index: number) => (
                               <div key={index} className="p-2 border rounded">
                                 <p className="font-medium">{course.courses?.course_name || 'Unknown Course'}</p>
                                 {course.progress_percentage !== undefined && (
@@ -1913,7 +2298,9 @@ export default function StudentsManagement() {
               setIsEditDialogOpen(open);
               if (!open) {
                 setEditingStudent(null);
-                setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+                setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
+                setSectionInputMode('predefined');
+                setCustomSection("");
                 setNewPassword(""); // Reset new password
                 setShowNewPassword(false); // Reset new password visibility
                 setUpdateStudentError(null);
@@ -2059,6 +2446,45 @@ export default function StudentsManagement() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
+                    <Label htmlFor="edit_section">Section <span className="text-red-500">*</span></Label>
+                    <Select
+                      value={sectionInputMode === 'predefined' ? formData.section || undefined : 'custom'}
+                      onValueChange={(value) => {
+                        if (value === 'custom') {
+                          setSectionInputMode('custom');
+                          setFormData({ ...formData, section: customSection });
+                        } else {
+                          setSectionInputMode('predefined');
+                          setFormData({ ...formData, section: value });
+                        }
+                      }}
+                    >
+                      <SelectTrigger id="edit_section" className="w-full">
+                        <SelectValue placeholder="Select section" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white">
+                        {predefinedSections.map((section) => (
+                          <SelectItem key={section} value={section}>
+                            {section}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="custom">Custom...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {sectionInputMode === 'custom' && (
+                      <Input
+                        id="edit_custom_section"
+                        value={customSection}
+                        onChange={(e) => {
+                          setCustomSection(e.target.value);
+                          setFormData({ ...formData, section: e.target.value });
+                        }}
+                        placeholder="Enter custom section (e.g., Alpha, Beta)"
+                        className="mt-2"
+                      />
+                    )}
+                  </div>
+                  <div className="grid gap-2">
                     <Label htmlFor="edit_parent_name">Parent&apos;s Name</Label>
                     <Input
                       id="edit_parent_name"
@@ -2089,7 +2515,7 @@ export default function StudentsManagement() {
                     onClick={() => {
                       setIsEditDialogOpen(false);
                       setEditingStudent(null);
-                      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", parent_name: "", parent_phone: "" });
+                      setFormData({ full_name: "", email: "", password: "", school_id: "", grade: "", section: "", parent_name: "", parent_phone: "" });
                       setUpdateStudentError(null);
                     }}
                     disabled={isUpdatingStudent}
@@ -2098,7 +2524,7 @@ export default function StudentsManagement() {
                   </Button>
                   <Button 
                     onClick={handleUpdateStudent}
-                    disabled={isUpdatingStudent || !formData.full_name || !formData.email || !formData.school_id}
+                    disabled={isUpdatingStudent || !formData.full_name || !formData.email || !formData.school_id || !formData.section}
                     className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isUpdatingStudent ? (
@@ -2166,7 +2592,7 @@ export default function StudentsManagement() {
                       {exportSelectedSchools.length > 0 && (
                         <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
                           <p className="text-sm text-blue-800">
-                            Selected: {exportSelectedSchools.map((id: any) => schools.find((s: any) => s.id === id)?.name).filter(Boolean).join(', ')}
+                            Selected: {exportSelectedSchools.map((id: string) => schools.find((s: School) => s.id === id)?.name).filter(Boolean).join(', ')}
                           </p>
                         </div>
                       )}
@@ -2290,7 +2716,7 @@ export default function StudentsManagement() {
                           <strong>File Format:</strong> {exportFormat.toUpperCase()}
                         </p>
                         <p className="text-sm text-gray-600">
-                          <strong>Columns:</strong> Name, Email, Password, School, Grade
+                          <strong>Columns:</strong> Name, Email, Password, School, Grade, Section
                         </p>
                       </div>
                     </CardContent>
@@ -2346,7 +2772,7 @@ export default function StudentsManagement() {
                     <CardHeader>
                       <CardTitle className="text-lg">Step 1: Upload File</CardTitle>
                       <CardDescription>
-                        Supported formats: CSV, Excel (.xlsx, .xls). Required columns: Student Name, Father Name, Phone Number, Grade. 
+                        Supported formats: CSV, Excel (.xlsx, .xls). Required columns: Student Name, Father Name, Phone Number, Grade, Section. 
                         Download the sample CSV file below to see the exact format needed.
                       </CardDescription>
                     </CardHeader>
@@ -2355,7 +2781,7 @@ export default function StudentsManagement() {
                         <FileSpreadsheet className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                         <h3 className="text-lg font-medium mb-2">Upload File</h3>
                         <p className="text-gray-600 mb-4 text-sm">
-                          Upload a CSV or Excel file with columns: Student Name, Father Name, Phone Number, Grade
+                          Upload a CSV or Excel file with columns: Student Name, Father Name, Phone Number, Grade, Section
                         </p>
                         <div className="flex flex-col sm:flex-row gap-3 items-center justify-center">
                           <input
@@ -2495,13 +2921,13 @@ export default function StudentsManagement() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
-                                    const schoolName = schools.find((s: any) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '') || '';
+                                    const schoolName = schools.find((s: School) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '') || '';
                                     setEmailDomain(`@${schoolName}.edu`);
                                   }}
                                   className="text-xs mt-2 bg-white"
                                 >
                                   <School className="mr-1 h-3 w-3" />
-                                  Use School Name: {schools.find((s: any) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '')}.edu
+                                  Use School Name: {schools.find((s: School) => s.id === selectedSchoolForImport)?.name?.toLowerCase().replace(/\s+/g, '')}.edu
                                 </Button>
                               )}
                               {emailDomain && (
@@ -2583,6 +3009,7 @@ export default function StudentsManagement() {
                                   <TableHead>Father Name</TableHead>
                                   <TableHead>Phone</TableHead>
                                   <TableHead>Grade</TableHead>
+                                  <TableHead>Section</TableHead>
                                   <TableHead>Email</TableHead>
                                   <TableHead>Password</TableHead>
                                   <TableHead className="w-16">Actions</TableHead>
@@ -2632,6 +3059,14 @@ export default function StudentsManagement() {
                                           ))}
                                         </SelectContent>
                                       </Select>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Input
+                                        value={student.section || ''}
+                                        onChange={(e) => handleEditBulkData(student.id || `temp-${index}`, 'section', e.target.value)}
+                                        className="h-8 text-sm"
+                                        placeholder="Required (e.g., A, B, C)"
+                                      />
                                     </TableCell>
                                     <TableCell>
                                       <Input
@@ -2746,7 +3181,7 @@ export default function StudentsManagement() {
                   {bulkData.length > 0 && (
                     <Button 
                       onClick={handleBulkImport}
-                      disabled={isBulkImporting || !selectedSchoolForImport || bulkData.some((item: any) => !item.student_name || !item.grade || !item.email || !item.password)}
+                      disabled={isBulkImporting || !selectedSchoolForImport || bulkData.some((item: BulkImportData) => !item.student_name || !item.grade || !item.section || !item.email || !item.password)}
                       className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
                     >
                       {isBulkImporting ? (
@@ -2825,7 +3260,7 @@ export default function StudentsManagement() {
                                 <TableCell>{student.grade}</TableCell>
                                 <TableCell>
                                   {student.school_name ||
-                                    schools.find((s: any) => s.id === selectedSchoolForImport)?.name ||
+                                    schools.find((s: School) => s.id === selectedSchoolForImport)?.name ||
                                     'Not assigned'}
                                 </TableCell>
                               </TableRow>

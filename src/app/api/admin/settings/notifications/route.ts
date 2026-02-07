@@ -3,7 +3,6 @@ import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { notificationPreferencesSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
 // GET: Retrieve notification preferences for admin user
@@ -45,12 +44,12 @@ try {
     }
 
     // Try to get from user_preferences table
+    type UserPrefRow = { notification_preferences?: unknown };
     const { data: preferences } = await supabaseAdmin
       .from('user_preferences')
       .select('notification_preferences')
       .eq('user_id', user.id)
-       
-      .single() as any;
+      .single() as { data: UserPrefRow | null; error: unknown };
 
     if (preferences && preferences.notification_preferences) {
       return NextResponse.json({ notifications: preferences.notification_preferences });
@@ -116,7 +115,7 @@ try {
     const validation = validateRequestBody(notificationPreferencesSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for notification preferences', {
         endpoint: '/api/admin/settings/notifications',
         errors: errorMessages,
@@ -136,15 +135,14 @@ try {
     // Try to upsert user preferences
     const { error } = await (supabaseAdmin
       .from('user_preferences')
+      // @ts-expect-error - user_preferences table upsert type not in schema
       .upsert({
         user_id: user_id,
         notification_preferences: notificationPrefs,
-        updated_at: new Date().toISOString()
-       
-      } as any, {
+        updated_at: new Date().toISOString(),
+      }, {
         onConflict: 'user_id'
-       
-      }) as any);
+      }));
 
     if (error && error.code !== '42P01') { // 42P01 = table doesn't exist
       logger.warn('Error saving notification preferences (non-critical)', {

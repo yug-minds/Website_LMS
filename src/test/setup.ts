@@ -1,11 +1,12 @@
-import { expect, afterEach, vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom';
 
-// Mock environment variables
-(process.env as any).NODE_ENV = 'test';
-(process.env as any).NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
-(process.env as any).NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
-(process.env as any).SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
+// Mock environment variables (NodeJS.ProcessEnv allows string index)
+const env = process.env as Record<string, string | undefined>;
+env.NODE_ENV = 'test';
+env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
+env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
+env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
 process.env.NEXT_PUBLIC_SENTRY_DSN = '';
 process.env.UPSTASH_REDIS_REST_URL = 'https://test-redis.upstash.io';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'test-redis-token';

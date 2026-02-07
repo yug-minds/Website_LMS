@@ -4,7 +4,7 @@ import { logger, handleApiError } from '../../../../lib/logger';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { createCourseSchema, validateRequestBody } from '../../../../lib/validation-schemas';
-import { parseCursorParams, applyCursorPagination, createCursorResponse } from '../../../../lib/pagination';
+import { parseCursorParams, createCursorResponse } from '../../../../lib/pagination';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 
 
@@ -47,53 +47,11 @@ try {
     const status = searchParams.get('status') || '';
     const grade = searchParams.get('grade') || '';
 
-    // Build query - only fetch courses from the admin's school
-    // Simplified select to avoid nested query issues - fetch chapters separately if needed
-    // Fetch courses - chapters are fetched separately if needed
-    let query = supabaseAdmin
-      .from('courses')
-      .select('id, course_name, title, description, subject, grade, status, is_published, school_id, created_by, created_at, updated_at')
-      .eq('school_id', schoolId); // Enforce school_id filtering
-
-    // Apply filters
-    if (status && status !== 'all') {
-      query = query.eq('status', status);
-    }
-
-    // Note: grades filter removed - courses table may not have a grades array field
-    // Grade filtering is handled via course_access table in the expansion logic below
-
-    // Apply pagination
-    if (useCursor && cursorParams.cursor) {
-      query = applyCursorPagination(query, cursorParams.cursor, cursorParams.direction);
-      query = query.limit(limit + 1); // Fetch one extra to check if there's more
-    } else {
-      query = query.order('created_at', { ascending: false });
-      if (limit > 0) {
-        query = query.range(offset, offset + limit - 1);
-      }
-    }
-
-    const { data: courses, error } = await query;
-
-    if (error) {
-      logger.error('Failed to fetch courses', {
-        endpoint: '/api/school-admin/courses',
-        method: 'GET',
-        schoolId,
-      }, error);
-      
-      const errorInfo = await handleApiError(
-        error,
-        { endpoint: '/api/school-admin/courses', method: 'GET', schoolId: schoolId || undefined },
-        'Failed to fetch courses'
-      );
-      return NextResponse.json(errorInfo, { status: errorInfo.status });
-    }
+    // We'll fetch courses after getting course_access to ensure we only get courses
+    // that are accessible to this school via course_access table
 
     // Helper to normalize a single grade value to "Grade X" format
-     
-    const normalizeGradeValue = (g: any): string => {
+    const normalizeGradeValue = (g: string | number | null | undefined): string => {
       if (!g && g !== 0) return '';
       const str = String(g).trim();
       const numMatch = str.match(/(\d{1,2})/);
@@ -103,157 +61,230 @@ try {
       return str;
     };
 
-    // Helper to extract all grades from a course record
-     
-    const extractGrades = (c: any): string[] => {
-      // 1) If grades is an array (text[] or jsonb array)
-      if (Array.isArray(c.grades)) {
-        const arr = c.grades
-           
-          .map((v: any) => normalizeGradeValue(v))
-          .filter((v: string) => v.length > 0);
-        if (arr.length > 0) return Array.from(new Set(arr));
-      }
+    // NEW APPROACH: Query courses directly by school_id, then get grades and chapters
+    // Step 1: Fetch all courses for this school
+    const { data: courseDetails, error: coursesError } = await supabaseAdmin
+      .from('courses')
+      .select('id, course_name, title, description, subject, status, is_published, school_id, created_by, created_at, updated_at')
+      .eq('school_id', schoolId);
 
-      // 2) If grades is a JSONB object or string array representation
-      if (c.grades && typeof c.grades === 'string') {
-        try {
-          const parsed = JSON.parse(c.grades);
-          if (Array.isArray(parsed)) {
-            const arr = parsed
-               
-              .map((v: any) => normalizeGradeValue(v))
-              .filter((v: string) => v.length > 0);
-            if (arr.length > 0) return Array.from(new Set(arr));
-          }
-        } catch (e) {
-          logger.warn('Error parsing grades JSON (non-critical)', {
-            endpoint: '/api/school-admin/courses',
-          }, e instanceof Error ? e : new Error(String(e)));
-          // Not JSON, treat as comma-separated string
-          const parts = c.grades.split(',').map((s: string) => s.trim()).filter(Boolean);
-          if (parts.length > 0) {
-            return Array.from(new Set(parts.map((p: string) => normalizeGradeValue(p))));
-          }
-        }
-      }
+    if (coursesError) {
+      logger.error('Error fetching courses', {
+        endpoint: '/api/school-admin/courses',
+        error: coursesError.message
+      });
+      return NextResponse.json({ error: 'Failed to fetch courses', details: coursesError.message }, { status: 500 });
+    }
 
-      // 3) If there's a single grade field (TEXT)
-      if (c.grade) {
-        const gradeStr = String(c.grade).trim();
-        // Check if it contains a range like "4-9" or "Grade 4 to Grade 9"
-        const rangeMatch = gradeStr.match(/(\d{1,2})\s*(?:to|-|–)\s*(\d{1,2})/i);
-        if (rangeMatch) {
-          const min = parseInt(rangeMatch[1], 10);
-          const max = parseInt(rangeMatch[2], 10);
-          if (min && max && max >= min) {
-            return Array.from({ length: (max - min + 1) }, (_, i) => `Grade ${min + i}`);
-          }
-        }
-        // Check if it's comma-separated like "4,5,6,7,8,9"
-        const parts = gradeStr.split(',').map((s: string) => s.trim()).filter(Boolean);
-        if (parts.length > 1) {
-          return Array.from(new Set(parts.map((p: string) => normalizeGradeValue(p))));
-        }
-        // Single grade
-        return [normalizeGradeValue(c.grade)];
-      }
+    if (!courseDetails || courseDetails.length === 0) {
+      logger.info('No courses found for school', {
+        endpoint: '/api/school-admin/courses',
+        schoolId
+      });
+      return NextResponse.json({ courses: [] });
+    }
 
-      return [];
+    type CourseDetail = {
+      id: string;
+      course_name?: string | null;
+      title?: string | null;
+      description?: string | null;
+      subject?: string | null;
+      status?: string | null;
+      is_published?: boolean | null;
+      school_id?: string | null;
+      created_by?: string | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+      grade?: string | null;
     };
-
-    // Prefer authoritative mapping from course_access (one row per grade per school)
-     
-    let perGrade: any[] = [];
-    try {
-      const { data: accessRows, error: accessError } = await supabaseAdmin
-        .from('course_access')
-        .select(`
-          grade,
-          course:course_id (
-            * ,
-            chapters (
-              id,
-              order_number,
-              order_index,
-              name,
-              title,
-              learning_outcomes,
-              content_type,
-              content_url,
-              is_published,
-              created_at
-            )
-          )
-        `)
-         
-        .eq('school_id', schoolId) as any;
-
-      if (!accessError && Array.isArray(accessRows) && accessRows.length > 0) {
-         
-        perGrade = accessRows.map((row: any) => ({
-          ...(row.course || {}),
-          grade: normalizeGradeValue(row.grade)
-        }));
-      }
-    } catch (e) {
-      logger.warn('Error fetching course_access (non-critical)', {
-        endpoint: '/api/school-admin/courses',
-      }, e instanceof Error ? e : new Error(String(e)));
-      // Table may not exist in some environments; ignore and fallback
-    }
-
-    // Fallback: Expand each course into multiple rows (one per grade) using inline fields
-    if (perGrade.length === 0) {
-       
-      perGrade = (courses || []).flatMap((c: any) => {
-      const gradesArr = extractGrades(c);
-      
-      logger.debug('Processing course for grade expansion', {
-        endpoint: '/api/school-admin/courses',
-        method: 'GET',
-        schoolId,
-        courseId: c.id,
-        courseTitle: c.title || c.course_name,
-        grades_field: c.grades,
-        grade_field: c.grade,
-        extracted_grades: gradesArr
-      });
-
-      if (gradesArr.length === 0) {
-        // No grades found, return single row with existing grade or N/A
-        return [{ ...c, grade: c.grade ? normalizeGradeValue(c.grade) : 'N/A' }];
-      }
-
-      // Return one row per grade
-      return gradesArr.map((g: string) => ({
-        ...c,
-        grade: g // Set the specific grade for this row
-      }));
-      });
-    }
-
-    logger.debug('Expanded courses into grade-specific rows', {
+    const courseIds = ((courseDetails || []) as CourseDetail[]).map((c) => c.id).filter(Boolean);
+    logger.debug('Fetched courses for school', {
       endpoint: '/api/school-admin/courses',
-      method: 'GET',
       schoolId,
-      originalCount: courses?.length || 0,
-      expandedCount: perGrade.length,
+      coursesCount: courseDetails.length,
+      courseIds: courseIds.slice(0, 5)
     });
 
-    // Filter by search term if provided
-    let filteredCourses = perGrade || [];
+    // Step 2: Fetch course_access to get all grades for each course (in parallel with chapters)
+    const [accessResult, chaptersResult] = await Promise.all([
+      supabaseAdmin
+        .from('course_access')
+        .select('course_id, grade')
+        .eq('school_id', schoolId)
+        .in('course_id', courseIds),
+      supabaseAdmin
+        .from('chapters')
+        .select('id, course_id, order_number, order_index, name, title, learning_outcomes, content_type, content_url, content_description, is_published, created_at')
+        .in('course_id', courseIds)
+    ]);
+
+    const { data: accessRows, error: accessError } = accessResult;
+    const { data: chaptersData, error: chaptersError } = chaptersResult;
+
+    if (accessError) {
+      logger.warn('Error fetching course_access', {
+        endpoint: '/api/school-admin/courses',
+        error: accessError.message
+      });
+    }
+
+    if (chaptersError) {
+      logger.error('Error fetching chapters', {
+        endpoint: '/api/school-admin/courses',
+        error: chaptersError.message
+      });
+    }
+
+    type AccessRow = { course_id: string; grade?: string | null };
+    const gradesByCourse = new Map<string, string[]>();
+    if (accessRows && Array.isArray(accessRows)) {
+      (accessRows as AccessRow[]).forEach((row) => {
+        const courseId = row.course_id;
+        const grade = normalizeGradeValue(row.grade);
+        
+        if (!gradesByCourse.has(courseId)) {
+          gradesByCourse.set(courseId, []);
+        }
+        const grades = gradesByCourse.get(courseId)!;
+        if (!grades.includes(grade)) {
+          grades.push(grade);
+        }
+      });
+    }
+
+    type ChapterRow = { course_id?: string; order_number?: number; order_index?: number; [key: string]: unknown };
+    const chaptersByCourse = new Map<string, ChapterRow[]>();
+    if (chaptersData && Array.isArray(chaptersData) && chaptersData.length > 0) {
+      const sortedChapters = [...(chaptersData as ChapterRow[])].sort((a, b) => {
+        const aOrder = a.order_number ?? a.order_index ?? 0;
+        const bOrder = b.order_number ?? b.order_index ?? 0;
+        return aOrder - bOrder;
+      });
+      sortedChapters.forEach((ch) => {
+        const courseId = ch.course_id;
+        if (courseId) {
+          if (!chaptersByCourse.has(courseId)) {
+            chaptersByCourse.set(courseId, []);
+          }
+          chaptersByCourse.get(courseId)!.push(ch);
+        }
+      });
+    }
+
+    const courseDetailsTyped = (courseDetails || []) as CourseDetail[];
+    logger.debug('Data aggregation summary', {
+      endpoint: '/api/school-admin/courses',
+      coursesCount: courseDetailsTyped.length,
+      accessRowsCount: accessRows?.length || 0,
+      chaptersCount: chaptersData?.length || 0,
+      coursesWithGrades: gradesByCourse.size,
+      coursesWithChapters: chaptersByCourse.size,
+      sampleCourseId: courseDetailsTyped[0]?.id,
+      chaptersForSampleCourse: chaptersByCourse.get(courseDetailsTyped[0]?.id)?.length || 0
+    });
+
+    // Step 5: Aggregate courses with all grades and chapters
+    const aggregatedCourses = courseDetailsTyped.map((course: CourseDetail) => {
+      const courseId = course.id;
+      const grades = gradesByCourse.get(courseId) || [];
+      const chapters = chaptersByCourse.get(courseId) || [];
+      
+      // Sort grades numerically
+      const sortedGrades = grades.sort((a, b) => {
+        const aNum = parseInt(a.match(/\d+/)?.[0] || '0', 10);
+        const bNum = parseInt(b.match(/\d+/)?.[0] || '0', 10);
+        return aNum - bNum;
+      });
+
+      return {
+        ...course,
+        grades: sortedGrades, // Array of all grades
+        chapters: chapters, // Array of all chapters
+        num_chapters: chapters.length,
+        // Keep grade field for backward compatibility (comma-separated string)
+        grade: sortedGrades.length > 0 ? sortedGrades.join(', ') : (course.grade || 'N/A')
+      };
+    });
+
+    // Verify chapters are included
+    type CourseWithChapters = { chapters?: unknown[]; created_at?: string; id?: string; [key: string]: unknown };
+    const coursesWithChapters = aggregatedCourses.filter((c: CourseWithChapters) => c.chapters && c.chapters.length > 0);
+    logger.info('Aggregated courses summary', {
+      endpoint: '/api/school-admin/courses',
+      schoolId,
+      totalCourses: aggregatedCourses.length,
+      coursesWithChapters: coursesWithChapters.length,
+      totalChaptersInResponse: aggregatedCourses.reduce((sum: number, c: CourseWithChapters) => sum + (c.chapters?.length ?? 0), 0),
+      sampleCourse: aggregatedCourses[0] ? {
+        id: aggregatedCourses[0].id,
+        title: aggregatedCourses[0].title || aggregatedCourses[0].course_name,
+        grades: aggregatedCourses[0].grades,
+        chaptersCount: aggregatedCourses[0].chapters?.length || 0,
+        num_chapters: aggregatedCourses[0].num_chapters,
+        hasChaptersArray: Array.isArray(aggregatedCourses[0].chapters),
+        chaptersArrayLength: Array.isArray(aggregatedCourses[0].chapters) ? aggregatedCourses[0].chapters.length : 'not array'
+      } : null
+    });
+
+    // Apply filters
+    let filteredCourses = aggregatedCourses;
+    
+    // Filter by status
+    if (status && status !== 'all') {
+      filteredCourses = filteredCourses.filter((course: CourseWithChapters) => 
+        (course.status || '').toLowerCase() === status.toLowerCase()
+      );
+    }
+    
+    // Filter by search term
     if (search) {
       const searchLower = search.toLowerCase();
-       
-      filteredCourses = filteredCourses.filter((course: any) => {
+      filteredCourses = filteredCourses.filter((course: CourseWithChapters) => {
         return (
           course.title?.toLowerCase().includes(searchLower) ||
+          course.course_name?.toLowerCase().includes(searchLower) ||
           course.description?.toLowerCase().includes(searchLower) ||
           course.subject?.toLowerCase().includes(searchLower)
         );
       });
     }
+    
+    // Filter by grade if provided
+    if (grade && grade !== 'all') {
+      filteredCourses = filteredCourses.filter((course: CourseWithChapters) => {
+        const courseGrades = course.grades || [];
+        return courseGrades.some((g: string) => 
+          g.toLowerCase().includes(grade.toLowerCase()) || 
+          grade.toLowerCase().includes(g.toLowerCase())
+        );
+      });
+    }
+    
+    // Apply pagination
+    const totalCount = filteredCourses.length;
+    let paginatedCourses = filteredCourses;
+    
+    if (useCursor && cursorParams.cursor) {
+      // Cursor pagination would need to be implemented based on cursor position
+      // For now, apply simple offset pagination
+      const startIndex = offset;
+      const endIndex = offset + limit;
+      paginatedCourses = filteredCourses.slice(startIndex, endIndex);
+    } else {
+      if (limit > 0) {
+        const startIndex = offset;
+        const endIndex = offset + limit;
+        paginatedCourses = filteredCourses.slice(startIndex, endIndex);
+      }
+    }
+    
+    // Sort by created_at descending
+    paginatedCourses = paginatedCourses.sort((a: CourseWithChapters, b: CourseWithChapters) => {
+      const aDate = new Date(a.created_at || 0).getTime();
+      const bDate = new Date(b.created_at || 0).getTime();
+      return bDate - aDate;
+    });
 
     logger.info('Courses fetched successfully', {
       endpoint: '/api/school-admin/courses',
@@ -262,11 +293,10 @@ try {
       count: filteredCourses.length,
     });
 
-    // For cursor pagination, create response with cursor
-    let responseData: any;
+    let responseData: { courses: unknown[]; pagination?: { nextCursor?: string; prevCursor?: string; hasMore?: boolean }; total?: number };
     if (useCursor) {
       const cursorResponse = createCursorResponse(
-        filteredCourses as Array<{ created_at: string; id: string }>,
+        paginatedCourses as Array<{ created_at: string; id: string }>,
         limit
       );
       responseData = {
@@ -278,7 +308,10 @@ try {
         }
       };
     } else {
-      responseData = { courses: filteredCourses };
+      responseData = { 
+        courses: paginatedCourses,
+        total: totalCount
+      };
     }
 
     const requestStartTime = Date.now();
@@ -384,7 +417,7 @@ try {
     const validation = validateRequestBody(createCourseSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: { path: (string | number)[]; message: string }) => `${e.path.join('.')}: ${e.message}`).join(', ') ?? validation.error ?? 'Invalid request data';
       logger.warn('Validation failed for course creation', {
         endpoint: '/api/school-admin/courses',
         errors: errorMessages,
@@ -426,12 +459,10 @@ try {
         subject: subject,
         grades: grades || [],
         status: status || 'Draft',
-        created_at: new Date().toISOString()
-       
-      } as any)
+        created_at: new Date().toISOString(),
+      } as never)
       .select()
-       
-      .single() as any;
+      .single() as { data: { id: string } | null; error: unknown };
 
     if (courseError) {
       logger.error('Failed to create course', {
@@ -439,7 +470,6 @@ try {
         method: 'POST',
         schoolId,
       }, courseError);
-      
       const errorInfo = await handleApiError(
         courseError,
         { endpoint: '/api/school-admin/courses', method: 'POST', schoolId: schoolId || undefined },
@@ -448,12 +478,13 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
+    const courseId = (course as { id: string }).id;
+
     // Step 2: Create chapters if provided (use chapters table, course_chapters is deprecated)
     if (chapters && Array.isArray(chapters) && chapters.length > 0) {
-       
-      const chaptersData = chapters.map((chapter: any, index: number) => ({
-         
-        course_id: (course as any).id,
+      type ChapterInput = { title?: string; name?: string; learning_outcomes?: unknown[]; content_description?: string; description?: string; is_published?: boolean };
+      const chaptersData = chapters.map((chapter: ChapterInput, index: number) => ({
+        course_id: courseId,
         order_number: index + 1,
         order_index: index + 1,
         name: chapter.title || chapter.name || `Chapter ${index + 1}`,
@@ -466,8 +497,7 @@ try {
 
       const { error: chaptersError } = await supabaseAdmin
         .from('chapters')
-         
-        .insert(chaptersData as any);
+        .insert(chaptersData as never);
 
       if (chaptersError) {
         logger.warn('Failed to create chapters (non-critical, course was created)', {
@@ -475,7 +505,7 @@ try {
           method: 'POST',
           schoolId,
            
-          courseId: (course as any).id,
+          courseId: courseId,
         }, chaptersError);
         // Continue anyway - course was created
       } else {
@@ -484,7 +514,7 @@ try {
           method: 'POST',
           schoolId,
            
-          courseId: (course as any).id,
+          courseId: courseId,
           chapterCount: chapters.length,
         });
       }
@@ -507,16 +537,15 @@ try {
             )
       `)
        
-      .eq('id', (course as any).id)
-       
-      .single() as any;
+      .eq('id', courseId)
+      .single() as { data: unknown; error: unknown };
 
     logger.info('Course created successfully', {
       endpoint: '/api/school-admin/courses',
       method: 'POST',
       schoolId,
        
-      courseId: (course as any).id,
+      courseId: courseId,
       hasChapters: chapters && chapters.length > 0,
     });
 

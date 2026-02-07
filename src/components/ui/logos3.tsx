@@ -63,9 +63,9 @@ const Logos3 = ({
         if (!res.ok) throw new Error(`Failed to fetch logos: ${res.status}`);
         // Be defensive: some caches/middleware can cause 200 responses with empty bodies.
         const raw = await res.text();
-        let data: any = null;
+        let data: { logos?: unknown } | null = null;
         try {
-          data = raw ? JSON.parse(raw) : null;
+          data = raw ? (JSON.parse(raw) as { logos?: unknown } | null) : null;
         } catch (e) {
           throw new Error(`Failed to parse /api/logos JSON. Body: ${raw?.slice(0, 200) ?? ""}`);
         }
@@ -178,6 +178,7 @@ const Logos3 = ({
                   >
                     <div className="mx-6 md:mx-10 flex shrink-0 items-center justify-center min-h-[80px] md:min-h-[112px] lg:min-h-[128px]">
                       <div className="relative w-full flex items-center justify-center">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={logo.image}
                           alt={logo.description || 'School logo'}

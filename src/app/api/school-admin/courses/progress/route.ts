@@ -5,7 +5,7 @@ import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../..
 import { logger, handleApiError } from '../../../../../lib/logger';
 import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 // GET - Compute per-course progress for the current school admin's school
 export async function GET(request: NextRequest) {
@@ -39,8 +39,7 @@ try {
     const { data: courses, error: coursesError } = await supabaseAdmin
       .from('courses')
       .select('id, title')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId);
 
     if (coursesError) {
       return NextResponse.json(
@@ -62,8 +61,7 @@ try {
       const { data: enrollments, error: enrollError } = await supabaseAdmin
         .from('student_courses')
         .select('student_id, progress_percentage, is_completed')
-         
-        .eq('course_id', c.id) as any;
+        .eq('course_id', c.id);
 
       if (enrollError) {
         // If enrollment query fails, push zeros but continue
@@ -80,14 +78,13 @@ try {
       // Grade-wise breakdown (join student_schools for these student_ids in this school)
       let breakdown: Array<{ grade: string; total: number; completed: number; average_progress: number }> = [];
        
-      const studentIds = (enrollments || []).map((e: any) => e.student_id).filter(Boolean);
+      const studentIds = (enrollments || []).map((e: { student_id?: string }) => e.student_id).filter((id): id is string => id != null);
       if (studentIds.length > 0) {
         const { data: studentGrades, error: sgError } = await supabaseAdmin
           .from('student_schools')
-          .select('student_id, grade')
+          .select('student_id, grade, section')
           .in('student_id', studentIds)
-           
-          .eq('school_id', schoolId) as any;
+          .eq('school_id', schoolId);
 
         if (!sgError) {
           const gradeMap = new Map<string, { total: number; completed: number; sumProgress: number }>();
@@ -120,11 +117,10 @@ try {
             .select('grade')
             .eq('course_id', c.id)
              
-            .eq('school_id', schoolId) as any;
+            .eq('school_id', schoolId);
 
           if (!caError && Array.isArray(courseAccess) && courseAccess.length > 0) {
-             
-            gradesForCourse = courseAccess.map((r: any) => String(r.grade));
+            gradesForCourse = (courseAccess as { grade?: string }[]).map((r: { grade?: string }) => String(r.grade));
           }
         } catch (e) {
           logger.warn('Error fetching course_access (non-critical)', {
@@ -135,10 +131,9 @@ try {
 
         // 2) Fallback to the course's own grade field
         if (gradesForCourse.length === 0) {
-           
-          if ((c as any).grade) {
-             
-            gradesForCourse = [String((c as any).grade)];
+          const courseWithGrade = c as { grade?: string };
+          if (courseWithGrade.grade) {
+            gradesForCourse = [String(courseWithGrade.grade)];
           }
         }
 
@@ -152,14 +147,15 @@ try {
           breakdown = [];
           for (const g of gradesForCourse) {
             const normalizedGrade = normalized(g);
-            const { data: countRows, error: countErr } = await supabaseAdmin
+            const { data: countRows, error: _countErr } = await supabaseAdmin
               .from('student_schools')
               .select('id', { count: 'exact', head: true })
               .eq('school_id', schoolId)
                
-              .eq('grade', normalizedGrade) as any;
+              .eq('grade', normalizedGrade);
 
-            const gradeTotal = (countRows as any)?.length ? (countRows as any).length : (countRows === null ? 0 : 0);
+            const countArr = Array.isArray(countRows) ? countRows : null;
+            const gradeTotal = countArr?.length ?? (countRows === null ? 0 : 0);
             // When using head:true, count is exposed via PostgREST header; not readable here,
             // so re-run without head to get count reliably.
             if (!countRows) {
@@ -167,15 +163,14 @@ try {
                 .from('student_schools')
                 .select('id')
                 .eq('school_id', schoolId)
-                 
-                .eq('grade', normalizedGrade) as any;
+                .eq('grade', normalizedGrade);
               breakdown.push({ grade: normalizedGrade, total: (rows || []).length, completed: 0, average_progress: 0 });
             } else {
               breakdown.push({ grade: normalizedGrade, total: gradeTotal, completed: 0, average_progress: 0 });
             }
           }
 
-          total = breakdown.reduce((s: number, b: any) => s + b.total, 0);
+          total = breakdown.reduce((s: number, b: { total: number }) => s + b.total, 0);
           completed = 0;
           avg = 0;
         }

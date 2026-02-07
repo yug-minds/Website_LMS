@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../../../../lib/supabase';
 import { getTeacherUserId, validateTeacherSchoolAccess } from '../../../../lib/teacher-auth';
 import { parsePaginationParams, createPaginationResponse, PaginationLimits } from '../../../../lib/pagination';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
+import type { ZodIssue } from 'zod';
 import { teacherClassAssignmentSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../lib/logger';
 export async function GET(request: NextRequest) {
@@ -64,8 +65,7 @@ try {
             .select('id')
             .eq('teacher_id', teacherId)
             .eq('school_id', schoolId)
-             
-            .limit(1) as any;
+            .limit(1);
           
           if (scheduleError) {
             console.error('❌ Error checking schedules:', scheduleError);
@@ -81,8 +81,7 @@ try {
               .select('school_id')
               .eq('teacher_id', teacherId)
               .eq('school_id', schoolId)
-               
-              .maybeSingle() as any;
+              .maybeSingle();
             
             if (teacherSchoolError) {
               console.error('❌ Error checking teacher_schools:', teacherSchoolError);
@@ -96,7 +95,7 @@ try {
           }
         }
        
-      } catch (validationError: any) {
+      } catch (validationError: unknown) {
         logger.warn('Error during school validation (non-critical)', {
           endpoint: '/api/teacher/classes',
         }, validationError instanceof Error ? validationError : new Error(String(validationError)));
@@ -131,6 +130,7 @@ try {
     }
 
     // Build schedule query (independent of teacher_classes query)
+    // Get current active schedules (effective_to IS NULL)
     const scheduleQuery = supabaseAdmin
       .from('class_schedules')
       .select(`
@@ -152,7 +152,8 @@ try {
         )
       `)
       .eq('teacher_id', teacherId)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .is('effective_to', null); // Only current active schedules
 
     if (schoolId) {
       scheduleQuery.eq('school_id', schoolId);
@@ -169,7 +170,35 @@ try {
     ]);
 
      
-    let teacherClassesData: any[] = [];
+    interface TeacherClass {
+      id?: string;
+      class_id?: string;
+      school_id?: string;
+      assigned_at?: string;
+      is_primary?: boolean;
+      classes?: Array<{
+        id: string;
+        class_name?: string;
+        grade?: string;
+        subject?: string;
+        max_students?: number;
+        description?: string;
+        is_active?: boolean;
+        academic_year?: string;
+      }> | {
+        id: string;
+        class_name?: string;
+        grade?: string;
+        subject?: string;
+        max_students?: number;
+        description?: string;
+        is_active?: boolean;
+        academic_year?: string;
+      };
+      schools?: Array<{ id?: string }> | { id?: string };
+    }
+    
+    let teacherClassesData: TeacherClass[] = [];
 
     if (error) {
       console.error('❌ Error fetching teacher classes:', error);
@@ -200,12 +229,50 @@ try {
     console.log('📅 Schedules found:', schedules?.length || 0);
 
      
-    const classesFromSchedules: any[] = [];
+    interface ClassFromSchedule {
+      id: string;
+      schedule_id?: string;
+      class_id?: string | null;
+      class_name?: string;
+      grade?: string;
+      subject?: string;
+      max_students?: number;
+      description?: string;
+      is_active?: boolean;
+      academic_year?: string;
+      school_id?: string;
+      day_of_week?: string;
+      start_time?: string;
+      end_time?: string;
+      from_schedule?: boolean;
+    }
+    
+    const classesFromSchedules: ClassFromSchedule[] = [];
     
     if (!schedulesError && schedules && schedules.length > 0) {
       // Create a class entry for each schedule (so each schedule shows as a separate class)
+      
+      interface Schedule {
+        id: string;
+        school_id?: string;
+        day_of_week?: string;
+        start_time?: string;
+        end_time?: string;
+        grade?: string;
+        subject?: string;
+        class?: {
+          id: string;
+          class_name?: string;
+          grade?: string;
+          subject?: string;
+          max_students?: number;
+          description?: string;
+          is_active?: boolean;
+          academic_year?: string;
+        };
+      }
        
-      schedules.forEach((schedule: any) => {
+      schedules.forEach((schedule: Schedule) => {
         const classData = schedule.class;
         const formatTime = (time: string) => {
           if (!time) return '';
@@ -271,7 +338,27 @@ try {
 
     // Transform teacher_classes data first
      
-    const transformedTeacherClasses = (teacherClassesData || []).map((tc: any) => {
+    interface TransformedClass {
+      id: string;
+      class_id?: string;
+      class_name?: string;
+      grade?: string;
+      subject?: string;
+      max_students?: number;
+      description?: string;
+      is_active?: boolean;
+      academic_year?: string;
+      school_id?: string;
+      school?: { id?: string };
+      assignment?: {
+        id?: string;
+        assigned_at?: string;
+        is_primary?: boolean;
+      };
+      from_schedule?: boolean;
+    }
+    
+    const transformedTeacherClasses = (teacherClassesData || []).map((tc: TeacherClass): TransformedClass | null => {
       const classData = Array.isArray(tc.classes) ? tc.classes[0] : tc.classes;
       const schoolData = Array.isArray(tc.schools) ? tc.schools[0] : tc.schools;
       
@@ -282,8 +369,8 @@ try {
       }
       
       return {
-        id: classData.id || tc.class_id,
-        class_id: tc.class_id,
+        id: (classData.id ?? tc.class_id ?? '') as string,
+        class_id: (tc.class_id ?? '') as string,
         class_name: classData.class_name || 'Unnamed Class',
         grade: classData.grade || '',
         subject: classData.subject || '',
@@ -291,7 +378,7 @@ try {
         description: classData.description || '',
         is_active: classData.is_active !== undefined ? classData.is_active : true,
         academic_year: classData.academic_year || '2024-25',
-        school_id: tc.school_id || schoolData?.id,
+        school_id: (tc.school_id ?? schoolData?.id ?? '') as string,
         school: schoolData,
         assignment: {
           id: tc.id,
@@ -301,7 +388,7 @@ try {
         from_schedule: false
       };
      
-    }).filter((c: any) => c !== null);
+    }).filter((c): c is TransformedClass => c !== null);
 
     console.log('✅ Transformed teacher_classes:', transformedTeacherClasses.length);
 
@@ -312,7 +399,7 @@ try {
     
     // First, add classes from schedules (each schedule is a separate class entry)
      
-    classesFromSchedules.forEach((cls: any) => {
+    classesFromSchedules.forEach((cls: ClassFromSchedule) => {
       // Use schedule_id as key to ensure each schedule is unique
       const key = cls.schedule_id || cls.id;
       if (!classMap.has(key)) {
@@ -322,10 +409,10 @@ try {
     
     // Then, add classes from teacher_classes (only if not already present from schedules)
      
-    transformedTeacherClasses.forEach((cls: any) => {
+    transformedTeacherClasses.forEach((cls: TransformedClass) => {
       // Check if this class is already represented by a schedule
        
-      const scheduleExists = classesFromSchedules.some((s: any) => 
+      const scheduleExists = classesFromSchedules.some((s: ClassFromSchedule) => 
         s.class_id === cls.class_id || 
         (s.class_id === null && s.subject === cls.subject && s.grade === cls.grade && s.school_id === cls.school_id)
       );
@@ -346,13 +433,12 @@ try {
     let filteredClasses = allClasses;
     
     if (grade) {
-       
-      filteredClasses = filteredClasses.filter((cls: any) => cls.grade === grade);
+      filteredClasses = filteredClasses.filter((cls: ClassFromSchedule | TransformedClass) => cls.grade === grade);
     }
     
     if (subject) {
        
-      filteredClasses = filteredClasses.filter((cls: any) => cls.subject === subject);
+      filteredClasses = filteredClasses.filter((cls: ClassFromSchedule | TransformedClass) => cls.subject === subject);
     }
 
     // Apply pagination
@@ -390,6 +476,14 @@ try {
 }
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -422,8 +516,7 @@ try {
     // Validate request body
     const validation = validateRequestBody(teacherClassAssignmentSchema, body);
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher class assignment', {
         endpoint: '/api/teacher/classes',
         errors: errorMessages,
@@ -460,7 +553,7 @@ try {
       .eq('teacher_id', teacherId)
       .eq('class_id', class_id)
        
-      .single() as any;
+      .single();
 
     if (existingAssignment) {
       return NextResponse.json(
@@ -471,17 +564,26 @@ try {
 
     // Assign teacher to class (using admin client to bypass RLS)
      
-    const { data: assignment, error } = await ((supabaseAdmin as any)
+    type _TeacherClassInsert = {
+      teacher_id: string;
+      school_id: string;
+      class_id: string;
+      assigned_at: string;
+    };
+    
+    const insertPayload = {
+      teacher_id: teacherId,
+      school_id,
+      class_id,
+      assigned_at: assigned_at || new Date().toISOString()
+    };
+    type AssignmentRow = { id?: string };
+    const { data: assignmentData, error } = await supabaseAdmin
       .from('teacher_classes')
-      .insert({
-        teacher_id: teacherId, // Use authenticated teacher_id
-        school_id,
-        class_id,
-        assigned_at: assigned_at || new Date().toISOString()
-      })
+      .insert(insertPayload as unknown as never)
       .select()
-       
-      .single() as any) as any;
+      .single();
+    const assignment = assignmentData as AssignmentRow | null;
 
     if (error) {
       logger.error('Failed to assign teacher to class', {
@@ -505,7 +607,9 @@ try {
       assignmentId: assignment?.id,
     });
 
-    return NextResponse.json({ assignment }, { status: 201 });
+    const response = NextResponse.json({ assignment }, { status: 201 });
+    ensureCsrfToken(response, request);
+    return response;
   } catch (error) {
     logger.error('Unexpected error in POST /api/teacher/classes', {
       endpoint: '/api/teacher/classes',
@@ -521,6 +625,14 @@ try {
 }
 
 export async function DELETE(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -556,13 +668,14 @@ try {
     }
 
     // Verify the assignment belongs to this teacher before deleting
-    const { data: assignment, error: fetchError } = await supabaseAdmin
+    type AssignmentRow = { teacher_id?: string };
+    const { data: assignmentData, error: fetchError } = await supabaseAdmin
       .from('teacher_classes')
       .select('teacher_id')
       .eq('id', assignmentId)
-       
-      .single() as any;
+      .single();
 
+    const assignment = assignmentData as AssignmentRow | null;
     if (fetchError || !assignment) {
       return NextResponse.json(
         { error: 'Assignment not found' },
@@ -570,7 +683,7 @@ try {
       );
     }
 
-    if (assignment.teacher_id !== teacherId) {
+    if ((assignment.teacher_id ?? '') !== teacherId) {
       return NextResponse.json(
         { error: 'Forbidden: You can only delete your own assignments' },
         { status: 403 }
@@ -589,7 +702,9 @@ try {
       return NextResponse.json({ error: 'Failed to remove teacher from class' }, { status: 500 });
     }
 
-    return NextResponse.json({ message: 'Teacher removed from class successfully' });
+    const response = NextResponse.json({ message: 'Teacher removed from class successfully' });
+    ensureCsrfToken(response, request);
+    return response;
   } catch (error) {
     logger.error('Unexpected error in DELETE /api/teacher/classes', {
       endpoint: '/api/teacher/classes',

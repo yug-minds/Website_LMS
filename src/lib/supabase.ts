@@ -1,5 +1,8 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { getRequiredEnv } from './env'
+
+// Type for Supabase client - using Record<string, unknown> as database schema type
+type SupabaseClientType = SupabaseClient<Record<string, unknown>>
 
 // Get environment variables - Next.js automatically exposes NEXT_PUBLIC_* vars to client
 // Access them directly via process.env which Next.js replaces at build time
@@ -46,7 +49,7 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   console.log('🔧 Supabase Anon Key:', supabaseAnonKey ? 'SET' : 'NOT SET');
 }
 
-export const supabase = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient<Record<string, unknown>, 'public'>(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
@@ -81,7 +84,7 @@ export const supabase = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey
       
       // Helper function to perform fetch with timeout and retry
       const fetchWithRetry = async (maxRetries: number = 2, timeoutMs: number = 45000): Promise<Response> => {
-        let lastError: any = null;
+        let lastError: unknown = null;
         
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           const controller = new AbortController();
@@ -99,14 +102,15 @@ export const supabase = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey
             clearTimeout(timeoutId);
             console.log(`✅ Supabase fetch succeeded on attempt ${attempt}`);
             return response;
-          } catch (error: any) {
+          } catch (error: unknown) {
             clearTimeout(timeoutId);
             lastError = error;
             
-            const isTimeout = error.name === 'AbortError' || error.name === 'TimeoutError';
-            const isNetworkError = error instanceof TypeError && error.message.includes('Failed to fetch');
+            const errorObj = error as Error & { name?: string };
+            const isTimeout = errorObj.name === 'AbortError' || errorObj.name === 'TimeoutError';
+            const isNetworkError = error instanceof TypeError && errorObj.message?.includes('Failed to fetch');
             
-            console.warn(`⚠️ Supabase fetch attempt ${attempt}/${maxRetries} failed:`, error.message);
+            console.warn(`⚠️ Supabase fetch attempt ${attempt}/${maxRetries} failed:`, errorObj.message || String(error));
             
             // Only retry on timeout or network errors
             if ((isTimeout || isNetworkError) && attempt < maxRetries) {
@@ -123,14 +127,23 @@ export const supabase = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey
         }
         
         // All retries exhausted
-        if (lastError?.name === 'AbortError' || lastError?.name === 'TimeoutError') {
-          const timeoutError = new Error('Request timeout: The authentication server took too long to respond. Please try again.');
-          (timeoutError as any).isTimeout = true;
+        const lastErrorObj = lastError as Error & { name?: string };
+        if (lastErrorObj?.name === 'AbortError' || lastErrorObj?.name === 'TimeoutError') {
+          interface TimeoutError extends Error {
+            isTimeout: boolean;
+          }
+          
+          const timeoutError = new Error('Request timeout: The authentication server took too long to respond. Please try again.') as TimeoutError;
+          timeoutError.isTimeout = true;
           throw timeoutError;
         }
         if (lastError instanceof TypeError && lastError.message.includes('Failed to fetch')) {
-          const networkError = new Error('Network error: Unable to connect to the authentication server. Please check your internet connection.');
-          (networkError as any).isNetworkError = true;
+          interface NetworkError extends Error {
+            isNetworkError: boolean;
+          }
+          
+          const networkError = new Error('Network error: Unable to connect to the authentication server. Please check your internet connection.') as NetworkError;
+          networkError.isNetworkError = true;
           throw networkError;
         }
         throw lastError;
@@ -174,13 +187,14 @@ export const supabase = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey
           keepalive: true,
           headers: mergedHeaders
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         clearTimeout(timeoutId);
         // Enhanced error handling for network issues
-        if (error.name === 'AbortError') {
+        const errorObj = error as Error & { name?: string };
+        if (errorObj.name === 'AbortError') {
           throw new Error('Request timeout: The server took too long to respond.');
         }
-        if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        if (error instanceof TypeError && errorObj.message?.includes('Failed to fetch')) {
           console.error('❌ Network error connecting to Supabase:', url);
           console.error('This could indicate:');
           console.error('  1. Supabase instance is down or unreachable');
@@ -245,7 +259,7 @@ function createSupabaseAdmin() {
       console.log('✅ [supabaseAdmin] Service key length looks correct')
     }
 
-    const client = createClient<any, 'public'>(supabaseUrl, supabaseServiceKey, {
+    const client = createClient<Record<string, unknown>, 'public'>(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -333,14 +347,18 @@ export function resetSupabaseAdmin() {
   console.log('🔄 [supabaseAdmin] Client cache cleared - will recreate on next access')
 }
 
-export const supabaseAdmin: any = new Proxy({} as any, {
+interface _SupabaseAdminProxy {
+  [key: string]: unknown;
+}
+
+export const supabaseAdmin = new Proxy({} as SupabaseClientType, {
   get(_target, prop) {
     if (!_supabaseAdmin) {
       // @ts-expect-error - Type system limitation with Supabase client proxy types
       _supabaseAdmin = createSupabaseAdmin();
     }
 
-    const value = (_supabaseAdmin as any)[prop];
+    const value = (_supabaseAdmin as SupabaseClientType)[prop as keyof SupabaseClientType];
     if (typeof value === 'function') {
       return value.bind(_supabaseAdmin);
     }
@@ -358,7 +376,7 @@ export const supabaseAdmin: any = new Proxy({} as any, {
 export async function createAuthenticatedClient(accessToken: string) {
   // Create client with access token
 
-  const client = createClient<any, 'public'>(supabaseUrl, supabaseAnonKey, {
+  const client = createClient<Record<string, unknown>, 'public'>(supabaseUrl, supabaseAnonKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -403,9 +421,15 @@ export async function createAuthenticatedClient(accessToken: string) {
     expires_at: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
     token_type: 'bearer',
 
-    user: null as any, // Will be populated by Supabase
-
-  } as any);
+    user: null, // Will be populated by Supabase
+  } as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    expires_at: number;
+    token_type: string;
+    user: null;
+  });
 
   return client;
 }

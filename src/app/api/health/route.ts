@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { performHealthCheck } from '../../../lib/monitoring';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../lib/rate-limit';
-import { logger, handleApiError } from '../../../lib/logger';
 
 /**
  * Health Check Endpoint
@@ -16,7 +14,7 @@ import { logger, handleApiError } from '../../../lib/logger';
 let cachedHealthCheck: { result: Awaited<ReturnType<typeof performHealthCheck>>; timestamp: number } | null = null;
 const HEALTH_CHECK_CACHE_TTL = 5000; // 5 seconds
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   // Skip CSRF and rate limiting for health check to make it fast
   // Health checks should be lightweight and fast
   
@@ -46,7 +44,7 @@ export async function GET(request: NextRequest) {
       : 503;
 
     return NextResponse.json(healthCheck, { status: statusCode });
-  } catch (error) {
+  } catch {
     // On timeout or error, return a minimal healthy response immediately
     // This prevents health checks from blocking and ensures fast response
     const fallbackResult = {

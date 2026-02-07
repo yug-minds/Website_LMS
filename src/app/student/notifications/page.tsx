@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
+import { Card, CardContent } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Badge } from "../../../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
@@ -13,7 +13,6 @@ import {
   AlertCircle,
   Award,
   Calendar,
-  X,
   Check,
   Trash2
 } from "lucide-react";
@@ -43,14 +42,15 @@ export default function NotificationsPage() {
     if (!notifications || notifications.length === 0) return;
     
      
-    const unreadNotifications = notifications.filter((n: any) => !n.is_read);
+    type NotificationItem = { id: string; is_read?: boolean };
+    const unreadNotifications = notifications.filter((n: NotificationItem) => !n.is_read);
     if (unreadNotifications.length === 0) return;
 
     try {
       // Mark all unread notifications as read
       await Promise.all(
          
-        unreadNotifications.map((notif: any) => markAsRead.mutateAsync(notif.id))
+        unreadNotifications.map((notif: NotificationItem) => markAsRead.mutateAsync(notif.id))
       );
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
@@ -94,13 +94,14 @@ export default function NotificationsPage() {
   };
 
    
-  const filteredNotifications = notifications?.filter((notif: any) => {
+  type NotifItem = { id: string; is_read?: boolean; type?: string; title?: string; message?: string; created_at?: string };
+  const filteredNotifications = notifications?.filter((notif: NotifItem) => {
     if (filter === 'unread') return !notif.is_read;
     return true;
   }) || [];
 
    
-  const unreadCount = notifications?.filter((n: any) => !n.is_read).length || 0;
+  const unreadCount = notifications?.filter((n: NotifItem) => !n.is_read).length || 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -146,7 +147,7 @@ export default function NotificationsPage() {
             </div>
           ) : filteredNotifications.length > 0 ? (
             <div className="space-y-3">
-              {filteredNotifications.map((notification: any) => (
+              {filteredNotifications.map((notification: NotifItem) => (
                 <Card 
                   key={notification.id}
                   className={`transition-all hover:shadow-md ${getNotificationColor(notification.type, notification.is_read)}`}
@@ -224,7 +225,7 @@ export default function NotificationsPage() {
         <TabsContent value="unread" className="space-y-4">
           {filteredNotifications.length > 0 ? (
             <div className="space-y-3">
-              {filteredNotifications.map((notification: any) => (
+              {filteredNotifications.map((notification: NotifItem) => (
                 <Card 
                   key={notification.id}
                   className={`transition-all hover:shadow-md ${getNotificationColor(notification.type, notification.is_read)}`}

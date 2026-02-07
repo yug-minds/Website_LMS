@@ -24,6 +24,15 @@ import { supabaseAdmin } from '../../../../lib/supabase'
  * Returns: { processed: number, success: number, errors: number, results: array }
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '10', 10)
@@ -51,7 +60,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!pendingCertificates || pendingCertificates.length === 0) {
+    type PendingCertRow = { id: string; student_id: string; course_id: string; certificate_name?: string; issued_at?: string };
+    const pendingList = (pendingCertificates || []) as PendingCertRow[];
+    if (pendingList.length === 0) {
       return NextResponse.json({
         processed: 0,
         success: 0,
@@ -77,7 +88,7 @@ export async function POST(request: NextRequest) {
                    'http://localhost:3000'
 
     // Process each pending certificate
-    for (const cert of pendingCertificates) {
+    for (const cert of pendingList) {
       try {
         // Call the auto-generate endpoint internally
         const response = await fetch(`${baseUrl}/api/certificates/auto-generate`, {
@@ -111,25 +122,25 @@ export async function POST(request: NextRequest) {
             error: result.error || 'Unknown error',
           })
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
         results.push({
           certificateId: cert.id,
           studentId: cert.student_id,
           courseId: cert.course_id,
           success: false,
-          error: error.message || 'Failed to process certificate',
+          error: error instanceof Error ? error.message : 'Failed to process certificate',
         })
         console.error(`Error processing certificate ${cert.id}:`, error)
       }
     }
 
     return NextResponse.json({
-      processed: pendingCertificates.length,
+      processed: pendingList.length,
       success: successCount,
       errors: errorCount,
       results,
-      message: `Processed ${pendingCertificates.length} certificate(s): ${successCount} success, ${errorCount} errors`,
+      message: `Processed ${pendingList.length} certificate(s): ${successCount} success, ${errorCount} errors`,
     })
   } catch (error) {
     console.error('Error in process-pending certificates:', error)
@@ -151,7 +162,7 @@ export async function POST(request: NextRequest) {
  * 
  * Returns count of pending certificates without processing them
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const { data: pendingCertificates, error } = await supabaseAdmin
       .from('certificates')

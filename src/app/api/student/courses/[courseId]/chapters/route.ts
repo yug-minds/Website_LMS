@@ -4,6 +4,9 @@ import { supabaseAdmin } from '../../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../lib/rate-limit';
 import { ensureCsrfToken } from '../../../../../../lib/csrf-middleware';
 
+type CourseRow = { id?: string; name?: string | null; course_name?: string | null; is_published?: boolean | null; status?: string | null };
+type StudentSchoolRow = { school_id?: string | null; grade?: string | null };
+
 // GET - Get chapters for a course (with access verification)
 export async function GET(
   request: NextRequest,
@@ -74,12 +77,13 @@ export async function GET(
     }
 
     // Verify course exists and is published
-    const { data: course, error: courseError } = await supabaseAdmin
+    const { data: courseData, error: courseError } = await supabaseAdmin
       .from('courses')
       .select('id, name, course_name, is_published, status')
       .eq('id', courseId)
       .single();
 
+    const course = courseData as CourseRow | null;
     if (courseError || !course) {
       logger.warn('Course not found', {
         endpoint: '/api/student/courses/[courseId]/chapters',
@@ -117,20 +121,23 @@ export async function GET(
     let hasAccess = !!enrollment;
     
     if (!hasAccess) {
-      const { data: studentSchool } = await supabaseAdmin
+      const { data: studentSchoolData } = await supabaseAdmin
         .from('student_schools')
         .select('school_id, grade')
         .eq('student_id', user.id)
         .eq('is_active', true)
         .maybeSingle();
 
-      if (studentSchool?.school_id && studentSchool?.grade) {
+      const studentSchool = studentSchoolData as StudentSchoolRow | null;
+      const schoolId = studentSchool?.school_id ?? '';
+      const gradeVal = studentSchool?.grade ?? '';
+      if (schoolId && gradeVal) {
         const { data: courseAccess } = await supabaseAdmin
           .from('course_access')
           .select('id')
           .eq('course_id', courseId)
-          .eq('school_id', studentSchool.school_id)
-          .eq('grade', studentSchool.grade)
+          .eq('school_id', schoolId)
+          .eq('grade', gradeVal)
           .maybeSingle();
 
         hasAccess = !!courseAccess;
@@ -141,16 +148,16 @@ export async function GET(
             .from('course_access')
             .select('id, grade')
             .eq('course_id', courseId)
-            .eq('school_id', studentSchool.school_id);
+            .eq('school_id', schoolId);
 
           if (allCourseAccess && allCourseAccess.length > 0) {
             // Normalize grades for comparison
             const normalizeGrade = (g: string) => 
               g.toLowerCase().trim().replace(/^grade\s*/i, '').replace(/grade/i, '');
             
-            const studentGradeNormalized = normalizeGrade(studentSchool.grade);
-            hasAccess = allCourseAccess.some((ca: { id: string; grade: string }) => 
-              normalizeGrade(ca.grade) === studentGradeNormalized
+            const studentGradeNormalized = normalizeGrade(gradeVal);
+            hasAccess = (allCourseAccess as { id?: string; grade?: string }[]).some((ca) => 
+              normalizeGrade(ca.grade ?? '') === studentGradeNormalized
             );
           }
         }
@@ -214,7 +221,8 @@ export async function GET(
     );
 
     // Enhance chapters with progress information
-    const chaptersWithProgress = (chapters || []).map((chapter: any) => {
+    type ChapterRow = { id: string; [key: string]: unknown };
+    const chaptersWithProgress = (chapters || []).map((chapter: ChapterRow) => {
       const chapterProgress: ChapterProgress | undefined = progressMap.get(chapter.id);
       
       // Use actual progress data - only mark as completed if progress exists and is marked as completed

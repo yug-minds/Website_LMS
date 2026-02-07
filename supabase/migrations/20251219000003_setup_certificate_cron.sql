@@ -18,13 +18,23 @@ BEGIN
       'process-pending-certificates',
       '*/5 * * * *', -- Every 5 minutes
       $$
-      SELECT net.http_post(
-        url := COALESCE(
-          current_setting('app.api_url', true),
-          'http://localhost:3000/api/certificates/process-pending'
+      SELECT COALESCE(
+        extensions.net.http_post(
+          url := COALESCE(
+            current_setting('app.api_url', true),
+            'http://localhost:3000/api/certificates/process-pending'
+          ),
+          headers := jsonb_build_object('Content-Type', 'application/json'),
+          body := jsonb_build_object('limit', 10)
         ),
-        headers := jsonb_build_object('Content-Type', 'application/json'),
-        body := jsonb_build_object('limit', 10)
+        net.http_post(
+          url := COALESCE(
+            current_setting('app.api_url', true),
+            'http://localhost:3000/api/certificates/process-pending'
+          ),
+          headers := jsonb_build_object('Content-Type', 'application/json'),
+          body := jsonb_build_object('limit', 10)
+        )
       );
       $$
     );

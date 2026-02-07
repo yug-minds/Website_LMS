@@ -3,8 +3,7 @@
 import ResizableNavbar from "../components/ResizableNavbar";
 import HomeHero from "../components/public/HomeHero";
 import HomeFeatures from "../components/public/HomeFeatures";
-import HomeTestimonials from "../components/public/HomeTestimonials";
-import Logos3 from "../components/ui/logos3";
+import CombinedSchoolsTestimonials from "../components/public/CombinedSchoolsTestimonials";
 import Footer from "../components/Footer";
 
 export default function HomePage() {
@@ -17,8 +16,7 @@ export default function HomePage() {
       <main>
         <HomeHero />
         <HomeFeatures />
-        <Logos3 heading="Our Leading Schools" />
-        <HomeTestimonials />
+        <CombinedSchoolsTestimonials />
       </main>
 
       {/* Footer */}

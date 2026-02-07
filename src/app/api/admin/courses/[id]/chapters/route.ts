@@ -3,7 +3,6 @@ import { supabaseAdmin } from '../../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../lib/rate-limit';
 import { createChapterSchema, validateRequestBody } from '../../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../../lib/csrf-middleware';
 
 
 // POST: Add a chapter to an existing course
@@ -43,7 +42,7 @@ export async function POST(
     const validation = validateRequestBody(createChapterSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -73,8 +72,7 @@ export async function POST(
       .from('courses')
       .select('id')
       .eq('id', courseId)
-       
-      .single() as any;
+      .single();
 
     if (courseError || !course) {
       return NextResponse.json(
@@ -85,10 +83,18 @@ export async function POST(
 
     // Determine the table name (could be 'chapters' or 'course_chapters')
     // Try chapters first (most common schema)
+    type ChapterInsertData = {
+      course_id: string;
+      title: string | null;
+      description: string | null;
+      order_index: number;
+      is_published: boolean;
+      learning_outcomes?: unknown[];
+    };
      
-    const chapterData: any = {
+    const chapterData: ChapterInsertData = {
       course_id: courseId,
-      title: title || name,
+      title: title || name || null,
       description: description || null,
       order_index: order_number || 1,
       is_published: true
@@ -100,13 +106,11 @@ export async function POST(
     }
 
     // Insert into chapters table (course_chapters is deprecated)
-    const { data: insertedChapter, error: insertError } = await (supabaseAdmin
+    const { data: insertedChapter, error: insertError } = await supabaseAdmin
       .from('chapters')
-       
-      .insert([chapterData] as any)
+      .insert([chapterData] as never)
       .select()
-       
-      .single() as any);
+      .single();
 
     if (insertError) {
       console.error('❌ Error inserting chapter:', insertError);
@@ -171,8 +175,7 @@ export async function GET(
       .from('chapters')
       .select('id, course_id, title, description, order_index, video_url, duration, created_at, updated_at')
       .eq('course_id', courseId)
-       
-      .order('order_index', { ascending: true, nullsFirst: false }) as any;
+      .order('order_index', { ascending: true, nullsFirst: false });
 
     if (chaptersError) {
       return NextResponse.json(

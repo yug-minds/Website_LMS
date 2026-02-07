@@ -2,7 +2,7 @@
  * Auto-grading service for assignments
  */
 
-import { normalizeAnswer, answersMatch, matchesAnyAnswer, calculatePartialCredit, generateFeedback } from './grading-utils'
+import { normalizeAnswer, matchesAnyAnswer, calculatePartialCredit, generateFeedback } from './grading-utils'
 
 export interface Question {
   id: string
@@ -61,11 +61,6 @@ function gradeQuestion(
     options: question.options
   })
   
-  // Normalize student answer
-  const normalizedStudentAnswer = typeof answer === 'string' 
-    ? normalizeAnswer(answer) 
-    : answer
-  
   // Handle different question types
   switch (question_type.toLowerCase()) {
     case 'mcq':
@@ -88,7 +83,7 @@ function gradeQuestion(
         } else {
           // correct_answer is option text, need to compare text values
           let studentOptionText: string
-          let correctOptionText: string = correct_answer
+          const correctOptionText: string = correct_answer
           
           if (typeof answer === 'number') {
             // Student answer is index, get the option text

@@ -11,7 +11,6 @@ import {
   Home, 
   Users, 
   BookOpen, 
-  Settings, 
   LogOut,
   User,
   School,
@@ -43,7 +42,7 @@ export default function Navbar() {
           .select('id, email, full_name, role, created_at, updated_at')
           .eq('id', authUser.id)
            
-          .single() as any;
+          .single();
         setUser(profile);
       }
       setLoading(false);
@@ -63,7 +62,7 @@ export default function Navbar() {
             .select('id, email, full_name, role, created_at, updated_at')
             .eq('id', session.user.id)
              
-            .single() as any;
+            .single();
           setUser(profile);
         }
       }

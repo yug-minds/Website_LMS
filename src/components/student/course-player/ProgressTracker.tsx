@@ -1,7 +1,6 @@
 'use client'
 
 import { Progress } from '../../ui/progress'
-import { CheckCircle, Circle } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 
 interface ProgressTrackerProps {

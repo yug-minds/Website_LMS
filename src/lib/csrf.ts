@@ -27,7 +27,7 @@ export function generateCsrfToken(): string {
   const array = new Uint8Array(CSRF_TOKEN_LENGTH);
   crypto.getRandomValues(array);
   return Array.from(array)
-    .map((b: any) => b.toString(16).padStart(2, '0'))
+    .map((b: number) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
@@ -159,7 +159,7 @@ export async function validateCsrfProtection(request: NextRequest): Promise<Next
     '/api/health', // Health check (read-only)
   ];
 
-  if (skipCsrfEndpoints.some((endpoint: any) => pathname.startsWith(endpoint))) {
+  if (skipCsrfEndpoints.some((endpoint: string) => pathname.startsWith(endpoint))) {
     return null; // Skip CSRF for these endpoints
   }
 

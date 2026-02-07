@@ -10,7 +10,6 @@ import {
   Code,
   Cpu,
   Brain,
-  BookOpen,
   Award,
   Rocket,
   RefreshCw,
@@ -224,9 +223,11 @@ export default function ProgramsPage() {
                 <Button size="lg" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 h-12 text-lg">
                   Order Robotics Kit
                 </Button>
-                <Button size="lg" variant="outline" className="w-full sm:w-auto border-blue-600 text-blue-600 hover:bg-blue-50 h-12 text-lg">
-                  For More Information
-                </Button>
+                <Link href="/contact">
+                  <Button size="lg" variant="outline" className="w-full sm:w-auto border-blue-600 text-blue-600 hover:bg-blue-50 h-12 text-lg">
+                    For More Information
+                  </Button>
+                </Link>
               </div>
             </div>
             <div className="order-1 lg:order-2 bg-gray-100 rounded-3xl overflow-hidden w-full max-w-[408px] mx-auto lg:mx-auto pl-0 lg:pl-4 xl:pl-8 2xl:pl-12 pr-0 lg:pr-8 xl:pr-12 2xl:pr-16">

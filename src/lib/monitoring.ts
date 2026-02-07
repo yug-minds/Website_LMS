@@ -27,6 +27,17 @@ export interface PerformanceMetrics {
   };
 }
 
+interface Metric extends PerformanceMetrics {
+  endpoint: string;
+  phaseTimings?: {
+    middleware?: number;
+    authentication?: number;
+    cache?: number;
+    database?: number;
+    processing?: number;
+  };
+}
+
 export interface ApiMetrics {
   totalRequests: number;
   successfulRequests: number;
@@ -61,14 +72,21 @@ class MetricsCollector {
    */
   getMetrics(): ApiMetrics {
     const total = this.metrics.length;
-    const successful = this.metrics.filter((m: any) => m.statusCode < 400).length;
-    const failed = this.metrics.filter((m: any) => m.statusCode >= 400).length;
+    interface Metric {
+      statusCode?: number;
+      duration?: number;
+      middlewareOverhead?: number;
+      cacheHit?: boolean;
+    }
     
-    const totalDuration = this.metrics.reduce((sum: number, m: any) => sum + m.duration, 0);
+    const successful = this.metrics.filter((m: Metric) => (m.statusCode || 0) < 400).length;
+    const failed = this.metrics.filter((m: Metric) => (m.statusCode || 0) >= 400).length;
+    
+    const totalDuration = this.metrics.reduce((sum: number, m: Metric) => sum + (m.duration || 0), 0);
     const averageResponseTime = total > 0 ? totalDuration / total : 0;
 
     // Calculate P95 and P99 latencies
-    const sortedDurations = this.metrics.map((m: any) => m.duration).sort((a: any, b: any) => a - b);
+    const sortedDurations = this.metrics.map((m: Metric) => m.duration || 0).sort((a: number, b: number) => a - b);
     const p95Latency = sortedDurations.length > 0 
       ? sortedDurations[Math.floor(sortedDurations.length * 0.95)] 
       : 0;
@@ -77,14 +95,14 @@ class MetricsCollector {
       : 0;
 
     // Calculate middleware overhead
-    const metricsWithOverhead = this.metrics.filter((m: any) => m.middlewareOverhead !== undefined);
+    const metricsWithOverhead = this.metrics.filter((m: Metric) => m.middlewareOverhead !== undefined);
     const averageMiddlewareOverhead = metricsWithOverhead.length > 0
-      ? metricsWithOverhead.reduce((sum: number, m: any) => sum + (m.middlewareOverhead || 0), 0) / metricsWithOverhead.length
+      ? metricsWithOverhead.reduce((sum: number, m: Metric) => sum + (m.middlewareOverhead || 0), 0) / metricsWithOverhead.length
       : undefined;
 
     // Calculate cache hit rate
-    const metricsWithCache = this.metrics.filter((m: any) => m.cacheHit !== undefined);
-    const cacheHits = metricsWithCache.filter((m: any) => m.cacheHit === true).length;
+    const metricsWithCache = this.metrics.filter((m: Metric) => m.cacheHit !== undefined);
+    const cacheHits = metricsWithCache.filter((m: Metric) => m.cacheHit === true).length;
     const cacheHitRate = metricsWithCache.length > 0
       ? (cacheHits / metricsWithCache.length) * 100
       : undefined;
@@ -117,7 +135,7 @@ class MetricsCollector {
    * Get metrics for a specific endpoint
    */
   getEndpointMetrics(endpoint: string): PerformanceMetrics[] {
-    return this.metrics.filter((m: any) => m.endpoint === endpoint);
+    return this.metrics.filter((m: Metric) => m.endpoint === endpoint);
   }
 
   /**
@@ -145,10 +163,10 @@ class MetricsCollector {
     processing?: number;
   } {
     const relevantMetrics = endpoint 
-      ? this.metrics.filter((m: any) => m.endpoint === endpoint)
+      ? this.metrics.filter((m: Metric) => m.endpoint === endpoint)
       : this.metrics;
     
-    const metricsWithPhases = relevantMetrics.filter((m: any) => m.phaseTimings);
+    const metricsWithPhases = relevantMetrics.filter((m: Metric) => m.phaseTimings);
     if (metricsWithPhases.length === 0) {
       return {};
     }
@@ -237,9 +255,10 @@ export async function trackPerformance<T>(
     const result = await handler();
     return result;
    
-  } catch (err: any) {
-    statusCode = err.statusCode || 500;
-    error = err.message || 'Unknown error';
+  } catch (err: unknown) {
+    const errObj = err as { statusCode?: number; message?: string };
+    statusCode = errObj.statusCode || 500;
+    error = errObj.message || 'Unknown error';
     throw err;
   } finally {
     const duration = Date.now() - startTime;
@@ -381,7 +400,11 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
     );
     
     try {
-      const { error } = await Promise.race([dbCheck, timeout]) as any;
+      interface DbCheckResult {
+        error?: { message?: string };
+      }
+      
+      const { error } = await Promise.race([dbCheck, timeout]) as DbCheckResult;
       const dbDuration = Date.now() - dbStart;
       
       if (error) {
@@ -395,7 +418,7 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
           responseTime: dbDuration
         };
       }
-    } catch (raceError: any) {
+    } catch (raceError: unknown) {
       // On timeout, mark as healthy (assume DB is fine, just slow to respond)
       // This prevents health checks from blocking
       checks.database = {
@@ -404,7 +427,7 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
       };
     }
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     // On error, mark as healthy to prevent blocking health checks
     checks.database = {
       status: 'healthy',
@@ -421,7 +444,7 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
       maxSize: 0
     };
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     checks.cache = {
       status: 'healthy', // Don't fail health check on cache issues
       size: 0,
@@ -450,7 +473,7 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
       averageResponseTime: metrics.averageResponseTime
     };
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     checks.api = {
       status: 'unhealthy',
       totalRequests: 0,
@@ -460,8 +483,12 @@ export async function performHealthCheck(): Promise<HealthCheckResult> {
   }
 
   // Determine overall status
-  const hasUnhealthy = Object.values(checks).some((c: any) => c.status === 'unhealthy');
-  const hasDegraded = Object.values(checks).some((c: any) => c.status === 'degraded');
+  interface Check {
+    status?: 'healthy' | 'degraded' | 'unhealthy';
+  }
+  
+  const hasUnhealthy = Object.values(checks).some((c: Check) => c.status === 'unhealthy');
+  const hasDegraded = Object.values(checks).some((c: Check) => c.status === 'degraded');
   
   const status: 'healthy' | 'degraded' | 'unhealthy' = hasUnhealthy 
     ? 'unhealthy' 

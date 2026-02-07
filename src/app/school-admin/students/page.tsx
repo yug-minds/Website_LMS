@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../../../lib/supabase";
 import { fetchWithCsrf, addTokensToHeaders } from "../../../lib/csrf-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -17,14 +17,11 @@ import {
   Edit,
   Trash2,
   Download,
-  Filter,
   User,
-  Mail,
   Calendar,
   GraduationCap,
   Eye,
   EyeOff,
-  Key,
   RefreshCw,
   Copy,
   Shield
@@ -35,6 +32,7 @@ interface Student {
   profile_id: string;
   school_id: string;
   grade: string;
+  section?: string;
   joining_code: string;
   enrolled_at: string;
   is_active: boolean;
@@ -60,6 +58,7 @@ export default function StudentsManagement() {
   const [isAddingStudent, setIsAddingStudent] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [gradeFilter, setGradeFilter] = useState("all");
+  const [sectionFilter, setSectionFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -68,15 +67,31 @@ export default function StudentsManagement() {
   const [viewingStudent, setViewingStudent] = useState<Student | null>(null);
   const [schoolId, setSchoolId] = useState<string>("");
   const [schoolGrades, setSchoolGrades] = useState<string[]>([]);
+  const [schoolNumberOfSections, setSchoolNumberOfSections] = useState<number | null>(null);
+
+  // Generate section options based on school's number_of_sections
+  const predefinedSections = useMemo(() => {
+    if (schoolNumberOfSections && schoolNumberOfSections > 0) {
+      // Generate sections A, B, C, ... up to the number specified
+      return Array.from({ length: Math.min(schoolNumberOfSections, 26) }, (_, i) => 
+        String.fromCharCode(65 + i) // 65 is 'A' in ASCII
+      );
+    }
+    // Default fallback if no sections configured
+    return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+  }, [schoolNumberOfSections]);
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [sectionInputMode, setSectionInputMode] = useState<'predefined' | 'custom'>('predefined');
+  const [customSection, setCustomSection] = useState("");
 
   // Form states
   const [formData, setFormData] = useState({
     full_name: "",
     email: "",
     grade: "",
+    section: "",
     joining_code: "",
     password: "",
     parent_name: "",
@@ -119,7 +134,7 @@ export default function StudentsManagement() {
       // Fetch school info to get school_id and grades_offered
       // API route uses school_admins table to get school_id (primary source of truth)
       try {
-        const session = await supabase.auth.getSession();
+        await supabase.auth.getSession();
         const schoolResponse = await fetchWithCsrf(`/api/school-admin/school`, {
           cache: 'no-store',
           headers: {
@@ -132,6 +147,9 @@ export default function StudentsManagement() {
           if (schoolData.school) {
             // Set school_id from API response (comes from school_admins table)
             setSchoolId(schoolData.school.id);
+            
+            // Set number_of_sections from school configuration
+            setSchoolNumberOfSections(schoolData.school.number_of_sections || null);
             
             if (schoolData.school.grades_offered && Array.isArray(schoolData.school.grades_offered)) {
               setSchoolGrades(schoolData.school.grades_offered);
@@ -165,7 +183,8 @@ export default function StudentsManagement() {
         const data = await response.json();
         // Transform API response to match expected format
          
-        const transformedStudents = (data.students || []).map((student: any) => ({
+        type ApiStudentRow = { id?: string; profile?: { id?: string; full_name?: string; email?: string; parent_name?: string; parent_phone?: string }; student_id?: string; school_id?: string; grade?: string; section?: string; joining_code?: string; is_active?: boolean; enrolled_at?: string };
+        const transformedStudents = (data.students || []).map((student: ApiStudentRow) => ({
           id: student.id,
           profile_id: student.profile?.id || student.student_id,
           student_id: student.student_id,
@@ -211,8 +230,8 @@ export default function StudentsManagement() {
       }
 
       // Validate required fields
-      if (!formData.full_name || !formData.email || !formData.grade || !formData.password) {
-        alert('Please fill in all required fields: Full Name, Email, Grade, and Password');
+      if (!formData.full_name || !formData.email || !formData.grade || !formData.password || !formData.section) {
+        alert('Please fill in all required fields: Full Name, Email, Grade, Section, and Password');
         setIsAddingStudent(false);
         return;
       }
@@ -250,6 +269,7 @@ export default function StudentsManagement() {
           full_name: formData.full_name,
           email: formData.email,
           grade: formData.grade,
+          section: formData.section || null,
           joining_code: formData.joining_code || null,
           password: formData.password,
           parent_name: formData.parent_name || null,
@@ -275,11 +295,14 @@ export default function StudentsManagement() {
           full_name: "",
           email: "",
           grade: "",
+          section: "",
           joining_code: "",
           password: "",
           parent_name: "",
           parent_phone: ""
         });
+        setSectionInputMode('predefined');
+        setCustomSection("");
         setIsAddDialogOpen(false);
         // Reload students list to show the new student
         await loadStudents();
@@ -289,9 +312,10 @@ export default function StudentsManagement() {
         alert(`Failed to create student: ${result.error || 'Please try again.'}`);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error adding student:', error);
-      alert(`Error adding student: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error adding student: ${msg}`);
     } finally {
       setIsAddingStudent(false);
     }
@@ -304,10 +328,15 @@ export default function StudentsManagement() {
 
   const handleEditStudentClick = (student: Student) => {
     setSelectedStudent(student);
+    const sectionValue = student.section || "";
+    const isPredefined = predefinedSections.includes(sectionValue);
+    setSectionInputMode(isPredefined ? 'predefined' : 'custom');
+    setCustomSection(isPredefined ? "" : sectionValue);
     setFormData({
       full_name: student?.profile?.full_name || "",
       email: student?.profile?.email || "",
       grade: student.grade || "",
+      section: sectionValue,
       joining_code: student.joining_code || "",
       password: "",
       parent_name: student?.profile?.parent_name || "",
@@ -365,9 +394,10 @@ export default function StudentsManagement() {
       // Refresh the student list to get updated data
       await loadStudents();
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing password:', error);
-      alert(`Failed to change password: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Failed to change password: ${msg}`);
     } finally {
       setActionLoading(null);
     }
@@ -408,6 +438,7 @@ export default function StudentsManagement() {
           full_name: formData.full_name,
           email: formData.email,
           grade: formData.grade,
+          section: formData.section || null,
           joining_code: formData.joining_code || null,
           parent_name: formData.parent_name || null,
           parent_phone: formData.parent_phone || null
@@ -428,9 +459,10 @@ export default function StudentsManagement() {
       await loadStudents();
       alert(`Student "${formData.full_name}" updated successfully!`);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating student:', error);
-      alert(`Error updating student: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error updating student: ${msg}`);
     }
   };
 
@@ -462,13 +494,14 @@ export default function StudentsManagement() {
       await loadStudents();
       alert(`Student "${student?.profile?.full_name || 'student'}" deleted successfully!`);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error deleting student:', error);
-      alert(`Error deleting student: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error deleting student: ${msg}`);
     }
   };
 
-  const handleResetPassword = async (student: Student) => {
+  const _handleResetPassword = async (student: Student) => {
     if (!confirm(`Are you sure you want to reset the password for "${student?.profile?.full_name || 'student'}"? They will need to use the new password to log in.`)) {
       return;
     }
@@ -501,27 +534,37 @@ export default function StudentsManagement() {
       console.log('✅ Password reset successfully');
       alert(`Password reset successfully for "${student?.profile?.full_name || 'student'}"!\n\nNew temporary password: ${newPassword}\n\nPlease share this password securely with the student.`);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error resetting password:', error);
-      alert(`Error resetting password: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error resetting password: ${msg}`);
     }
   };
 
-  const filteredStudents = students.filter((student: any) => {
+  const filteredStudents = students.filter((student: Student) => {
     const q = (searchTerm || "").toLowerCase();
     const fullName = (student?.profile?.full_name ?? "").toString().toLowerCase();
     const email = (student?.profile?.email ?? "").toString().toLowerCase();
     const matchesSearch = fullName.includes(q) || email.includes(q);
     const matchesGrade = gradeFilter === "all" || student.grade === gradeFilter;
+    const matchesSection = sectionFilter === "all" || String(student.section || '').trim() === sectionFilter;
     const matchesStatus = statusFilter === "all" || 
                          (statusFilter === "active" && student.is_active) ||
                          (statusFilter === "inactive" && !student.is_active);
     
-    return matchesSearch && matchesGrade && matchesStatus;
+    return matchesSearch && matchesGrade && matchesSection && matchesStatus;
   });
 
+  const getAllSections = () => {
+    const sections = new Set<string>();
+    students.forEach((student: Student) => {
+      if (student.section) sections.add(student.section);
+    });
+    return Array.from(sections).sort();
+  };
+
   const getGradeOptions = () => {
-    const grades = [...new Set(students.map((s: any) => s.grade))].sort();
+    const grades = [...new Set(students.map((s: Student) => s.grade))].sort();
     return grades;
   };
 
@@ -532,11 +575,12 @@ export default function StudentsManagement() {
     }
 
     // Prepare CSV data
-    const headers = ['Name', 'Email', 'Grade', 'Joining Code', 'Status', 'Enrolled Date'];
-    const rows = filteredStudents.map((student: any) => [
+    const headers = ['Name', 'Email', 'Grade', 'Section', 'Joining Code', 'Status', 'Enrolled Date'];
+    const rows = filteredStudents.map((student: Student) => [
       student?.profile?.full_name || '',
       student?.profile?.email || '',
       student.grade || '',
+      student.section || '',
       student.joining_code || '',
       student.is_active ? 'Active' : 'Inactive',
       new Date(student.enrolled_at).toLocaleDateString()
@@ -545,7 +589,7 @@ export default function StudentsManagement() {
     // Create CSV content
     const csvContent = [
       headers.join(','),
-      ...rows.map((row: any) => row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ...rows.map((row: (string | number)[]) => row.map((cell: string | number) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     // Create blob and download
@@ -604,8 +648,19 @@ export default function StudentsManagement() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Grades</SelectItem>
-              {getGradeOptions().map((grade: any) => (
+              {getGradeOptions().map((grade: string) => (
                 <SelectItem key={grade} value={grade}>Grade {grade}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sectionFilter} onValueChange={setSectionFilter}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Filter by section" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sections</SelectItem>
+              {getAllSections().map((section: string) => (
+                <SelectItem key={section} value={section}>Section {section}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -693,6 +748,47 @@ export default function StudentsManagement() {
                     </Select>
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="section" className="text-right">
+                      Section <span className="text-red-500">*</span>
+                    </Label>
+                    <div className="col-span-3 space-y-2">
+                      <Select
+                        value={sectionInputMode === 'predefined' ? formData.section || undefined : 'custom'}
+                        onValueChange={(value) => {
+                          if (value === 'custom') {
+                            setSectionInputMode('custom');
+                            setFormData({...formData, section: customSection});
+                          } else {
+                            setSectionInputMode('predefined');
+                            setFormData({...formData, section: value});
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select section" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {predefinedSections.map((section) => (
+                            <SelectItem key={section} value={section}>
+                              {section}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="custom">Custom...</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {sectionInputMode === 'custom' && (
+                        <Input
+                          value={customSection}
+                          onChange={(e) => {
+                            setCustomSection(e.target.value);
+                            setFormData({...formData, section: e.target.value});
+                          }}
+                          placeholder="Enter custom section"
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="joining_code" className="text-right">
                       Joining Code
                     </Label>
@@ -751,7 +847,7 @@ export default function StudentsManagement() {
                   </Button>
                   <Button 
                     onClick={handleAddStudent}
-                    disabled={isAddingStudent}
+                    disabled={isAddingStudent || !formData.full_name || !formData.email || !formData.grade || !formData.password || !formData.section}
                   >
                     {isAddingStudent ? (
                       <>
@@ -784,6 +880,7 @@ export default function StudentsManagement() {
               <TableRow>
                 <TableHead>Student</TableHead>
                 <TableHead>Grade</TableHead>
+                <TableHead>Section</TableHead>
                 <TableHead>Parent Name</TableHead>
                 <TableHead>Parent Number</TableHead>
                 <TableHead>Joining Code</TableHead>
@@ -808,6 +905,13 @@ export default function StudentsManagement() {
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">Grade {student.grade}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {student.section ? (
+                      <Badge variant="outline">Section {student.section}</Badge>
+                    ) : (
+                      <span className="text-gray-400 italic text-sm">-</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="text-sm">
@@ -918,6 +1022,14 @@ export default function StudentsManagement() {
                 <div>
                   <Label className="text-sm font-medium text-gray-500">Grade</Label>
                   <Badge variant="outline">Grade {viewingStudent.grade}</Badge>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-500">Section</Label>
+                  {viewingStudent.section ? (
+                    <Badge variant="outline">Section {viewingStudent.section}</Badge>
+                  ) : (
+                    <p className="text-base text-gray-400 italic">Not assigned</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-gray-500">Joining Code</Label>
@@ -1112,6 +1224,47 @@ export default function StudentsManagement() {
               </Select>
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="edit_section" className="text-right">
+                Section <span className="text-red-500">*</span>
+              </Label>
+              <div className="col-span-3 space-y-2">
+                <Select
+                  value={sectionInputMode === 'predefined' ? formData.section || undefined : 'custom'}
+                  onValueChange={(value) => {
+                    if (value === 'custom') {
+                      setSectionInputMode('custom');
+                      setFormData({...formData, section: customSection});
+                    } else {
+                      setSectionInputMode('predefined');
+                      setFormData({...formData, section: value});
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {predefinedSections.map((section) => (
+                      <SelectItem key={section} value={section}>
+                        {section}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="custom">Custom...</SelectItem>
+                  </SelectContent>
+                </Select>
+                {sectionInputMode === 'custom' && (
+                  <Input
+                    value={customSection}
+                    onChange={(e) => {
+                      setCustomSection(e.target.value);
+                      setFormData({...formData, section: e.target.value});
+                    }}
+                    placeholder="Enter custom section"
+                  />
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="edit_joining_code" className="text-right">
                 Joining Code
               </Label>
@@ -1152,7 +1305,12 @@ export default function StudentsManagement() {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleEditStudent}>Save Changes</Button>
+            <Button 
+              onClick={handleEditStudent}
+              disabled={!formData.full_name || !formData.email || !formData.section}
+            >
+              Save Changes
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

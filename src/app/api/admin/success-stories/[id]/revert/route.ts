@@ -23,16 +23,32 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const versionId = String(body.version_id || '');
     if (!versionId) return NextResponse.json({ error: 'version_id required' }, { status: 400, headers });
 
+    type VersionRow = { snapshot: unknown; version_number: number };
     const { data: vData, error: vErr } = await supabaseAdmin
       .from('success_story_versions')
       .select('snapshot,version_number')
       .eq('id', versionId)
       .single();
     if (vErr) throw vErr;
-    const snap = vData.snapshot as any;
+    const versionRow = vData as VersionRow | null;
+    if (!versionRow) throw new Error('Version not found');
+    type SnapshotData = {
+      title?: string | null;
+      body_primary?: string | null;
+      body_secondary?: string | null;
+      body_tertiary?: string | null;
+      image_url?: string | null;
+      background?: string | null;
+      image_position?: string | null;
+      order_index?: number | null;
+      is_published?: boolean | null;
+      published_at?: string | null;
+    };
+    const snap = versionRow.snapshot as SnapshotData;
 
     const { data: updated, error: uErr } = await supabaseAdmin
       .from('success_story_sections')
+      // @ts-expect-error - Supabase generated types use never for untyped schema
       .update({
         title: snap.title,
         body_primary: snap.body_primary,
@@ -50,12 +66,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .single();
     if (uErr) throw uErr;
 
+    type SectionRow = { id: string; title?: string | null; body_primary?: string | null; body_secondary?: string | null; body_tertiary?: string | null; image_url?: string | null; background?: string | null; image_position?: string | null; order_index?: number | null; is_published?: boolean | null; published_at?: string | null };
+    const updatedSection = updated as SectionRow | null;
     const { error: vInsErr } = await supabaseAdmin
       .from('success_story_versions')
-      .insert({ section_id: id, version_number: Number(vData.version_number) + 1, snapshot: updated, created_by: auth.userId });
+      // @ts-expect-error - Supabase generated types use never for untyped schema
+      .insert({ section_id: id, version_number: Number(versionRow.version_number) + 1, snapshot: updatedSection ?? snap, created_by: auth.userId });
     if (vInsErr) logger.warn('Version insert error on revert', { endpoint: '/api/admin/success-stories/[id]/revert' }, vInsErr);
 
-    return NextResponse.json({ section: updated }, { status: 200, headers });
+    return NextResponse.json({ section: updatedSection ?? updated }, { status: 200, headers });
   } catch (error) {
     const errorInfo = await handleApiError(error, { endpoint: '/api/admin/success-stories/[id]/revert' }, 'Failed to revert section');
     return NextResponse.json(errorInfo, { status: errorInfo.status });

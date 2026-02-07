@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "../../lib/supabase";
 import { useTeacherSchool } from "./context";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { 
@@ -15,7 +14,6 @@ import {
   Calendar,
   Clock,
   Users,
-  TrendingUp,
   AlertCircle,
   RefreshCw
 } from "lucide-react";
@@ -47,7 +45,7 @@ interface DashboardStats {
 }
 
 export default function TeacherDashboard() {
-  const router = useRouter();
+  const _router = useRouter();
   const queryClient = useQueryClient();
   const { selectedSchool } = useTeacherSchool();
   const [stats, setStats] = useState<DashboardStats>({
@@ -188,6 +186,7 @@ export default function TeacherDashboard() {
   });
 
   // Use useMemo to calculate stats and activity efficiently (only recalculates when data changes)
+  // Only calculate when data is actually loaded (not during loading states)
   const dashboardStats = useMemo(() => {
     if (!selectedSchool) return {
       todaysClasses: 0,
@@ -198,26 +197,81 @@ export default function TeacherDashboard() {
       totalStudents: 0
     };
 
+    // Only calculate stats if data is loaded (not undefined due to loading)
+    // For each data source, if it's still loading, return 0 to avoid showing stale/cached values
+    
+    // Today's classes count - use real schedule-based data
+    const todaysClassesCount = (() => {
+      // If still loading, return 0
+      if (todaysClassesLoading || todaysClasses === undefined) return 0;
+      return Array.isArray(todaysClasses) ? todaysClasses.length : 0;
+    })();
+
+    // Pending reports count
+    const pendingReportsCount = (() => {
+      if (reportsLoading || reports === undefined) return 0;
+      return Array.isArray(reports) 
+        ? reports.filter((r: { report_status?: string }) => r.report_status === 'Submitted').length 
+        : 0;
+    })();
+
+    // Total classes count
+    const totalClassesCount = (() => {
+      if (classesLoading || classes === undefined) return 0;
+      return Array.isArray(classes) ? classes.length : 0;
+    })();
+
     // Calculate monthly attendance percentage
     const attendancePct = (() => {
-      if (!monthlyAttendance || monthlyAttendance.length === 0) return 0;
-      const currentMonth = monthlyAttendance[0];
-      const total = currentMonth.total_days || currentMonth.present_count + currentMonth.absent_count + currentMonth.leave_count + currentMonth.unreported_count || 1;
-      const present = currentMonth.present_count || 0;
-      return Math.round((present / total) * 100);
+      if (attendanceLoading || !monthlyAttendance || monthlyAttendance.length === 0) return 0;
+      
+      // Get current month data - monthlyAttendance is sorted descending (most recent first)
+      const currentMonthData = monthlyAttendance[0];
+      
+      if (!currentMonthData) return 0;
+      
+      // Use total_days if available, otherwise calculate from individual counts
+      const total = currentMonthData.total_days || 
+        (currentMonthData.present_count + currentMonthData.absent_count + 
+         currentMonthData.leave_count + currentMonthData.unreported_count) || 1;
+      
+      const present = currentMonthData.present_count || 0;
+      
+      // Calculate percentage
+      const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+      
+      return percentage;
+    })();
+
+    // Pending leaves count
+    const pendingLeavesCount = (() => {
+      if (leavesLoading || leaves === undefined) return 0;
+      return Array.isArray(leaves) 
+        ? leaves.filter((l: { status?: string }) => l.status === 'Pending').length 
+        : 0;
     })();
 
     return {
-      todaysClasses: todaysClasses?.length || 0,
-       
-      pendingReports: reports?.filter((r: any) => r.report_status === 'Submitted').length || 0,
-      totalClasses: classes?.length || 0,
+      todaysClasses: todaysClassesCount,
+      pendingReports: pendingReportsCount,
+      totalClasses: totalClassesCount,
       monthlyAttendance: attendancePct,
-       
-      pendingLeaves: leaves?.filter((l: any) => l.status === 'Pending').length || 0,
+      pendingLeaves: pendingLeavesCount,
       totalStudents: 0
     };
-  }, [selectedSchool, classes, todaysClasses, reports, leaves, monthlyAttendance]);
+  }, [
+    selectedSchool, 
+    classes, 
+    classesLoading,
+    todaysClasses, 
+    todaysClassesLoading,
+    reports, 
+    reportsLoading,
+    leaves, 
+    leavesLoading,
+    monthlyAttendance, 
+    attendanceLoading
+  ]);
 
   // Update stats when calculated values change
   useEffect(() => {

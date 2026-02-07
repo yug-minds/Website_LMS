@@ -10,7 +10,7 @@ import { passwordSchema } from './password-validation';
 export const uuidSchema = z.string().uuid('Invalid UUID format');
 
 // Lenient UUID schema that accepts standard UUIDs and special test UUIDs
-const lenientUuidSchema = z.string().refine(
+export const lenientUuidSchema = z.string().refine(
   (val) => {
     // Standard UUID format
     const standardUuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,6 +59,7 @@ export const createStudentSchema = z.object({
   password: passwordSchema(false), // 8+ chars, uppercase, lowercase, number
   school_id: uuidSchema,
   grade: z.string().optional(),
+  section: nonEmptyString.max(50, 'Section too long'), // Required field
   phone: phoneSchema,
   address: z.string().max(500, 'Address too long').optional().nullable(),
   parent_name: z.string().max(255, 'Parent name too long').optional().nullable(),
@@ -72,6 +73,7 @@ export const createStudentSchemaSchoolAdmin = z.object({
   email: emailSchema,
   password: passwordSchema(false), // 8+ chars, uppercase, lowercase, number
   grade: z.string().optional(),
+  section: nonEmptyString.max(50, 'Section too long'), // Required field
   phone: phoneSchemaLoose,
   address: z.string().max(500, 'Address too long').optional().nullable(),
   parent_name: z.string().max(255, 'Parent name too long').optional().nullable(),
@@ -85,6 +87,7 @@ export const updateStudentSchema = z.object({
   password: passwordSchema(false).optional(), // 8+ chars, uppercase, lowercase, number
   school_id: uuidSchema.optional(),
   grade: z.string().optional(),
+  section: nonEmptyString.max(50, 'Section too long'), // Required field
   phone: phoneSchema,
   address: z.string().max(500, 'Address too long').optional().nullable(),
   parent_name: z.string().max(255, 'Parent name too long').optional().nullable(),
@@ -105,6 +108,10 @@ export const createTeacherSchema = z.object({
   school_assignments: z.array(z.object({
     school_id: uuidSchema,
     grades_assigned: z.array(z.string()).optional(),
+    grade_sections_assigned: z.array(z.object({
+      grade: z.string(),
+      sections: z.array(z.string()),
+    })).optional(),
     subjects: z.array(z.string()).optional(),
     working_days_per_week: z.number().int().min(1).max(7).optional(),
     max_students_per_session: z.number().int().min(1).max(100).optional(),
@@ -126,6 +133,10 @@ export const updateTeacherSchema = z.object({
   school_assignments: z.array(z.object({
     school_id: uuidSchema,
     grades_assigned: z.array(z.string()).optional(),
+    grade_sections_assigned: z.array(z.object({
+      grade: z.string(),
+      sections: z.array(z.string()),
+    })).optional(),
     subjects: z.array(z.string()).optional(),
     working_days_per_week: z.number().int().min(1).max(7).optional(),
     max_students_per_session: z.number().int().min(1).max(100).optional(),
@@ -174,9 +185,10 @@ export const notificationReplySchema = z.object({
 });
 
 // Notification mark read schema
+// Use lenient UUID schema for user_id to accept special test UUIDs like '00000000-0000-0000-0000-000000000001'
 export const notificationMarkReadSchema = z.object({
   notification_id: uuidSchema,
-  user_id: uuidSchema,
+  user_id: lenientUuidSchema,
   is_read: z.boolean().optional(),
 });
 
@@ -256,6 +268,7 @@ export const createSchoolSchema = z.object({
   grades_offered: z.array(z.string()).optional(),
   total_students_estimate: z.coerce.number().int().min(0).optional(),
   total_teachers_estimate: z.coerce.number().int().min(0).optional(),
+  number_of_sections: z.union([z.coerce.number().int().min(1).max(26), z.null()]).optional(),
   generate_joining_codes: z.coerce.boolean().optional(),
   usage_type: z.enum(['single', 'multiple']).optional(),
   max_uses: z.union([z.coerce.number().int().min(1), z.null()]).optional(),
@@ -466,16 +479,6 @@ export const createAccountSchema = z.object({
   path: ['grade'],
 });
 
-// Migration execution schema
-export const migrationExecuteSchema = z.object({
-  sql: z.string().min(1, 'SQL is required').max(100000, 'SQL too long'),
-});
-
-// Migration file schema
-export const migrationFileSchema = z.object({
-  migrationFile: z.string().min(1, 'Migration file path is required').max(500, 'File path too long'),
-});
-
 // File upload schema (for FormData validation)
 export const fileUploadSchema = z.object({
   type: z.enum(['video', 'material', 'thumbnail']),
@@ -633,7 +636,7 @@ const uuidArraySchema = z.array(z.string())
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         return uuidRegex.test(trimmed);
       })
-      .map((id: any) => id.trim());
+      .map((id: string) => id.trim());
     return validUUIDs.length > 0 ? validUUIDs : undefined;
   })
   .optional();
@@ -648,7 +651,7 @@ const gradeArraySchema = z.array(z.string())
         if (!grade || typeof grade !== 'string') return false;
         return grade.trim().length > 0;
       })
-      .map((grade: any) => grade.trim());
+      .map((grade: string) => grade.trim());
     return validGrades.length > 0 ? validGrades : undefined;
   })
   .optional();

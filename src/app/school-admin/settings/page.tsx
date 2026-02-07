@@ -2,21 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../../lib/supabase";
-import { fetchWithCsrf, addTokensToHeaders } from "../../../lib/csrf-client";
+import { addTokensToHeaders } from "../../../lib/csrf-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../../../components/ui/dialog";
 import { 
-  Settings,
   Key,
-  Save,
   Edit,
-  Download,
-  Upload,
   Eye,
   EyeOff,
   AlertCircle,
@@ -32,9 +27,6 @@ export default function SettingsPage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importType, setImportType] = useState<'students' | 'teachers'>('students');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // Load saved password form (only current_password for convenience, not new passwords)
@@ -50,7 +42,7 @@ export default function SettingsPage() {
 
   // Auto-save password form (only saves current_password for convenience)
   // Note: new_password and confirm_password are NOT saved for security
-  const { isDirty: isPasswordFormDirty, clearSavedData: clearPasswordForm } = useAutoSaveForm({
+  const { isDirty: _isPasswordFormDirty, clearSavedData: clearPasswordForm } = useAutoSaveForm({
     formId: 'school-admin-password-form',
     formData: {
       current_password: passwordForm.current_password,
@@ -180,7 +172,7 @@ export default function SettingsPage() {
         confirm_password: ""
       });
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating password:', error);
       setMessage({ type: 'error', text: 'Error updating password. Please try again.' });
     } finally {
@@ -188,93 +180,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleExportData = async () => {
-    try {
-      setSaving(true);
-      const session = await supabase.auth.getSession();
-      
-      const response = await fetchWithCsrf('/api/school-admin/data/export', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        setMessage({ type: 'error', text: `Failed to export data: ${errorData.error || 'Unknown error'}` });
-        return;
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `school-data-export-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      setMessage({ type: 'success', text: 'Data exported successfully' });
-     
-    } catch (error: any) {
-      console.error('Error exporting data:', error);
-      setMessage({ type: 'error', text: 'Error exporting data. Please try again.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleImportData = async () => {
-    if (!importFile) {
-      setMessage({ type: 'error', text: 'Please select a file to import' });
-      return;
-    }
-
-    try {
-      setImporting(true);
-      const session = await supabase.auth.getSession();
-      
-      const formData = new FormData();
-      formData.append('file', importFile);
-      formData.append('type', importType);
-
-      const response = await fetchWithCsrf('/api/school-admin/data/import', {
-        method: 'POST',
-        headers: {
-          // Don't set Content-Type for FormData - browser will set it with boundary
-        },
-        body: formData
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setMessage({ type: 'error', text: `Failed to import data: ${data.error || 'Unknown error'}` });
-        return;
-      }
-
-      setMessage({ 
-        type: 'success', 
-        text: `Successfully imported ${data.imported} ${importType}${data.errors ? ` (${data.errors.length} errors)` : ''}` 
-      });
-      
-      if (data.errors && data.errors.length > 0) {
-        console.warn('Import errors:', data.errors);
-      }
-
-      setImportFile(null);
-      // Reload data to show imported records
-      await loadData();
-     
-    } catch (error: any) {
-      console.error('Error importing data:', error);
-      setMessage({ type: 'error', text: 'Error importing data. Please try again.' });
-    } finally {
-      setImporting(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -319,7 +224,6 @@ export default function SettingsPage() {
       <Tabs defaultValue="security" className="space-y-6">
         <TabsList>
           <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="data">Data Management</TabsTrigger>
         </TabsList>
 
         {/* Security Tab */}
@@ -429,84 +333,6 @@ export default function SettingsPage() {
                     </DialogContent>
                   </Dialog>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Data Management Tab */}
-        <TabsContent value="data" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Data Management</CardTitle>
-              <CardDescription>Export and manage your school&apos;s data</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-4 border rounded-lg">
-                  <div className="flex items-center space-x-3 mb-3">
-                    <Download className="h-5 w-5 text-blue-600" />
-                    <h4 className="font-medium">Export Data</h4>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-4">
-                    Download your school&apos;s data including students, teachers, and settings.
-                  </p>
-                  <Button onClick={handleExportData} variant="outline">
-                    <Download className="mr-2 h-4 w-4" />
-                    Export All Data
-                  </Button>
-                </div>
-
-                <div className="p-4 border rounded-lg">
-                  <div className="flex items-center space-x-3 mb-3">
-                    <Upload className="h-5 w-5 text-green-600" />
-                    <h4 className="font-medium">Import Data</h4>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-4">
-                    Import student and teacher data from CSV files. CSV should have columns: email, name (or full_name), phone (optional), grade (for students).
-                  </p>
-                  <div className="space-y-3">
-                    <Select value={importType} onValueChange={(value: 'students' | 'teachers') => setImportType(value)}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="students">Import Students</SelectItem>
-                        <SelectItem value="teachers">Import Teachers</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <div>
-                      <Label htmlFor="import-file" className="sr-only">Select CSV file</Label>
-                      <Input
-                        id="import-file"
-                        type="file"
-                        accept=".csv"
-                        onChange={(e) => setImportFile(e.target.files?.[0] || null)}
-                        className="cursor-pointer"
-                      />
-                    </div>
-                    <Button 
-                      variant="outline" 
-                      onClick={handleImportData}
-                      disabled={!importFile || importing}
-                      className="w-full"
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      {importing ? 'Importing...' : 'Import Data'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <div className="flex items-center space-x-2 mb-2">
-                  <AlertCircle className="h-5 w-5 text-yellow-600" />
-                  <h4 className="font-medium text-yellow-800">Data Retention</h4>
-                </div>
-                <p className="text-sm text-yellow-700">
-                  Your school&apos;s data is retained according to our privacy policy. 
-                  Contact support if you need assistance with data management.
-                </p>
               </div>
             </CardContent>
           </Card>

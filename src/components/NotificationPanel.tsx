@@ -22,7 +22,7 @@ interface NotificationProps {
 
 export function NotificationPanel({ notifications, onMarkAsRead, onDismiss }: NotificationProps) {
   const [isMounted, setIsMounted] = useState(false);
-  const unreadCount = notifications.filter((n: any) => !n.read).length;
+  const _unreadCount = notifications.filter((n: Notification) => !n.read).length;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -126,18 +126,18 @@ export function useNotifications() {
 
     // Auto-dismiss after 5 seconds
     setTimeout(() => {
-      setNotifications(prev => prev.filter((n: any) => n.id !== newNotification.id));
+      setNotifications(prev => prev.filter((n: Notification) => n.id !== newNotification.id));
     }, 5000);
   };
 
   const markAsRead = (id: string) => {
     setNotifications(prev => 
-      prev.map((n: any) => n.id === id ? { ...n, read: true } : n)
+      prev.map((n: Notification) => n.id === id ? { ...n, read: true } : n)
     );
   };
 
   const dismiss = (id: string) => {
-    setNotifications(prev => prev.filter((n: any) => n.id !== id));
+    setNotifications(prev => prev.filter((n: Notification) => n.id !== id));
   };
 
   const clearAll = () => {

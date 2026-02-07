@@ -42,7 +42,7 @@ try {
     }
     
      
-    const user = users?.users?.find((u: any) => u.email === email);
+    const user = users?.users?.find((u: { email?: string }) => u.email === email);
     
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -54,7 +54,7 @@ try {
       .select('*')
       .eq('id', user.id)
        
-      .single() as any;
+      .single();
     
     if (profileError) {
       return NextResponse.json({ error: profileError.message }, { status: 500 });

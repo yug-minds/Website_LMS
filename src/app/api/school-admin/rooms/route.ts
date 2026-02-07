@@ -6,7 +6,7 @@ import { roomSchema, validateRequestBody } from '../../../../lib/validation-sche
 import { logger, handleApiError } from '../../../../lib/logger';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 // GET /api/school-admin/rooms
@@ -41,7 +41,7 @@ try {
       .select('id, school_id, room_number, room_name, capacity, location, facilities, is_active, created_at, updated_at')
       .eq('school_id', schoolId)
        
-      .order('room_number', { ascending: true }) as any;
+      .order('room_number', { ascending: true });
 
     if (error) {
       return NextResponse.json(
@@ -106,7 +106,8 @@ try {
     const validation = validateRequestBody(roomSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -125,7 +126,7 @@ try {
       );
     }
 
-    const { data: room, error } = await (supabaseAdmin
+    const { data: room, error } = await supabaseAdmin
       .from('rooms')
       .insert({
         school_id: schoolId,
@@ -135,11 +136,9 @@ try {
         location: location || null,
         facilities: facilities || [],
         is_active: is_active !== undefined ? is_active : true
-       
-      } as any)
+      } as never)
       .select()
-       
-      .single() as any);
+      .single();
 
     if (error) {
       return NextResponse.json(

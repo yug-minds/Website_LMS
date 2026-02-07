@@ -74,42 +74,86 @@ try {
     }
 
     // Get unique teacher IDs and school IDs
+    type TeacherReport = {
+      teacher_id: string;
+      school_id: string;
+      id: string;
+      date: string;
+      class_name?: string | null;
+      grade?: string | null;
+      topics_taught?: string | null;
+      report_status?: string | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+      student_count?: number | null;
+      duration_hours?: number | null;
+      notes?: string | null;
+      activities?: string | null;
+      start_time?: string | null;
+      end_time?: string | null;
+    };
+    const teacherIds = [...new Set(((reports || []) as TeacherReport[]).map((r) => r.teacher_id).filter(Boolean))];
      
-    const teacherIds = [...new Set((reports || []).map((r: any) => r.teacher_id).filter(Boolean))];
-     
-    const schoolIds = [...new Set((reports || []).map((r: any) => r.school_id).filter(Boolean))];
+    const schoolIds = [...new Set(((reports || []) as TeacherReport[]).map((r) => r.school_id).filter(Boolean))];
 
     // Fetch teacher profiles
-    const teachersMap = new Map();
+    type Teacher = {
+      id: string;
+      full_name?: string | null;
+      email?: string | null;
+    };
+    const teachersMap = new Map<string, Teacher>();
     if (teacherIds.length > 0) {
       const { data: teachersData } = await supabaseAdmin
         .from('profiles')
         .select('id, full_name, email')
-         
-        .in('id', teacherIds) as any;
+        .in('id', teacherIds);
 
-      (teachersData || []).forEach((teacher: any) => {
+      ((teachersData || []) as Teacher[]).forEach((teacher) => {
         teachersMap.set(teacher.id, teacher);
       });
     }
 
     // Fetch schools
-    const schoolsMap = new Map();
+    type School = {
+      id: string;
+      name?: string | null;
+    };
+    const schoolsMap = new Map<string, School>();
     if (schoolIds.length > 0) {
       const { data: schoolsData } = await supabaseAdmin
         .from('schools')
         .select('id, name')
-         
-        .in('id', schoolIds) as any;
+        .in('id', schoolIds);
 
-      (schoolsData || []).forEach((school: any) => {
+      ((schoolsData || []) as School[]).forEach((school) => {
         schoolsMap.set(school.id, school);
       });
     }
 
     // Transform the data with teacher and school names
-     
-    const transformedReports = (reports || []).map((report: any) => {
+    type TransformedReport = {
+      id: string;
+      teacher_id: string;
+      school_id: string;
+      date: string;
+      grade: string;
+      class_name?: string | null;
+      topics_taught?: string | null;
+      student_count?: number | null;
+      duration_hours?: number | null;
+      notes?: string | null;
+      activities?: string | null;
+      start_time?: string | null;
+      end_time?: string | null;
+      created_at?: string | null;
+      profiles?: { full_name?: string | null; email?: string | null } | null;
+      schools?: { name?: string | null } | null;
+      teacher_name: string;
+      teacher_email: string;
+      school_name: string;
+    };
+    const transformedReports = ((reports || []) as TeacherReport[]).map((report): TransformedReport => {
       const teacher = teachersMap.get(report.teacher_id);
       const school = schoolsMap.get(report.school_id);
       
@@ -141,8 +185,7 @@ try {
     // Apply search filter if provided
     let filteredReports = transformedReports;
     if (search) {
-       
-      filteredReports = transformedReports.filter((report: any) => 
+      filteredReports = transformedReports.filter((report) => 
         report.teacher_name?.toLowerCase().includes(search.toLowerCase()) ||
         report.school_name?.toLowerCase().includes(search.toLowerCase()) ||
         report.grade?.toLowerCase().includes(search.toLowerCase()) ||

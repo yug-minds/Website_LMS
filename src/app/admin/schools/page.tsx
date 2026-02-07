@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "../../../lib/supabase";
 import { fetchWithCsrf } from "../../../lib/csrf-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
@@ -19,7 +18,6 @@ import {
   Plus, 
   Edit, 
   Trash2, 
-  Eye, 
   School,
   Search,
   RefreshCw,
@@ -29,14 +27,10 @@ import {
   MapPin,
   Phone,
   Mail,
-  User,
   Calendar,
   BookOpen,
-  Users,
-  GraduationCap,
   Power,
   PowerOff,
-  Settings,
   Key
 } from "lucide-react";
 import { 
@@ -78,7 +72,7 @@ interface School {
   total_teachers_estimate?: number;
   status?: string;
    
-  joining_codes: any;
+  joining_codes?: Record<string, unknown> | null;
   is_active: boolean;
   created_at: string;
   created_by?: string;
@@ -162,7 +156,7 @@ export default function SchoolsManagement() {
       }
 
       // Remove from local state
-      setSchools(prev => prev.filter((school: any) => school.id !== schoolId));
+      setSchools(prev => prev.filter((school: School) => school.id !== schoolId));
       alert('School deleted successfully!');
     } catch (error) {
       console.error('Error deleting school:', error);
@@ -195,10 +189,10 @@ export default function SchoolsManagement() {
         return;
       }
 
-      const data = await response.json();
+      await response.json();
 
       // Update local state
-      setSchools(prev => prev.map((school: any) => 
+      setSchools(prev => prev.map((school: School) => 
         school.id === schoolId 
           ? { ...school, is_active: !currentStatus }
           : school
@@ -273,7 +267,7 @@ export default function SchoolsManagement() {
       const data = await response.json();
 
       // Update local state
-      setSchools(prev => prev.map((school: any) => 
+      setSchools(prev => prev.map((school: School) => 
         school.id === editingSchool.id 
           ? { ...school, ...editFormData, ...data.school }
           : school
@@ -291,7 +285,7 @@ export default function SchoolsManagement() {
     }
   };
 
-  const filteredSchools = schools.filter((school: any) => 
+  const filteredSchools = schools.filter((school: School) => 
     school.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     school.contact_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     school.school_admin_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -299,7 +293,7 @@ export default function SchoolsManagement() {
     school.state?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const formatDate = (dateString: string) => {
+  const _formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',

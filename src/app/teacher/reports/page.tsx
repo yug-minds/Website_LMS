@@ -18,10 +18,14 @@ import {
   useTeacherPeriods,
   useTeacherSchedules
 } from "../../../hooks/useTeacherData";
-import { Calendar, FileText, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { FileText, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
 import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
 import { useAutoSaveForm } from "../../../hooks/useAutoSaveForm";
 import { loadFormData, clearFormData } from "../../../lib/form-persistence";
+
+type ScheduleRow = { day_of_week?: string; period_id?: string };
+type PeriodRow = { id: string; period_number?: number; grade?: string; subject?: string; start_time?: string; end_time?: string; class_name?: string };
+type ReportRow = { id?: string; grade?: string; date?: string; report_status?: string; classes?: Array<{ grade?: string }> };
 
 /**
  * Submit Daily Teaching Report Page
@@ -80,7 +84,7 @@ export default function SubmitReportPage() {
     );
   };
 
-  const { data: classes, isLoading: classesLoading, refetch: refetchClasses } = useTeacherClasses(selectedSchool?.id);
+  const { data: _classes, isLoading: _classesLoading, refetch: refetchClasses } = useTeacherClasses(selectedSchool?.id);
   const { data: reports, isLoading: reportsLoading, refetch: refetchReports } = useTeacherReports(
     selectedSchool?.id,
     { date: formData.date }
@@ -129,7 +133,7 @@ export default function SubmitReportPage() {
   const todaysSchedules = useMemo(() => {
     if (!schedules) return [];
      
-    return schedules.filter((s: any) => s.day_of_week === todayDayName);
+    return schedules.filter((s: ScheduleRow) => s.day_of_week === todayDayName);
   }, [schedules, todayDayName]);
 
   // Refresh function to reload all data
@@ -186,14 +190,14 @@ export default function SubmitReportPage() {
   const selectedPeriod = useMemo(() => {
     if (!formData.period_id || !periods) return null;
      
-    return periods.find((p: any) => p.id === formData.period_id);
+    return periods.find((p: PeriodRow) => p.id === formData.period_id);
   }, [formData.period_id, periods]);
 
   // Get matching schedule details for display
   const matchingSchedule = useMemo(() => {
     if (!formData.period_id || todaysSchedules.length === 0) return null;
      
-    return todaysSchedules.find((s: any) => s.period_id === formData.period_id);
+    return todaysSchedules.find((s: ScheduleRow) => s.period_id === formData.period_id);
   }, [formData.period_id, todaysSchedules]);
 
   // When period is selected, auto-populate grade from the period's schedule
@@ -215,13 +219,12 @@ export default function SubmitReportPage() {
     
     // Find the selected period from the periods list
      
-    const period = periods.find((p: any) => p.id === formData.period_id);
+    const period = periods.find((p: PeriodRow) => p.id === formData.period_id);
     
     if (!period) {
       console.warn('⚠️ Period not found in periods list:', {
         period_id: formData.period_id,
-         
-        available_periods: periods.map((p: any) => ({ id: p.id, period_number: p.period_number }))
+        available_periods: periods.map((p: PeriodRow) => ({ id: p.id, period_number: p.period_number }))
       });
       return;
     }
@@ -347,33 +350,31 @@ export default function SubmitReportPage() {
 
       alert('Report submitted successfully! Your attendance has been marked as Present.');
      
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string; response?: { json: () => Promise<{ details?: string; error?: string }> }; data?: { details?: string; error?: string }; details?: string; hint?: string };
       console.error('❌ Error submitting report:', {
         error,
-        message: error?.message,
-        response: error?.response,
-        data: error?.data,
-        details: error?.details,
-        hint: error?.hint
+        message: err?.message,
+        response: err?.response,
+        data: err?.data,
+        details: err?.details,
+        hint: err?.hint
       });
-      
-      // Extract error message from response if available
       let errorMessage = 'Unknown error';
-      if (error?.response) {
+      if (err?.response) {
         try {
-          const errorData = await error.response.json();
-          errorMessage = errorData.details || errorData.error || error.message;
-        } catch (e) {
-          errorMessage = error.message || 'Failed to submit report';
+          const errorData = await err.response.json();
+          errorMessage = errorData.details || errorData.error || err.message || 'Failed to submit report';
+        } catch {
+          errorMessage = err?.message || 'Failed to submit report';
         }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.data?.details) {
-        errorMessage = error.data.details;
-      } else if (error?.data?.error) {
-        errorMessage = error.data.error;
+      } else if (err?.message) {
+        errorMessage = err.message;
+      } else if (err?.data?.details) {
+        errorMessage = err.data.details;
+      } else if (err?.data?.error) {
+        errorMessage = err.data.error;
       }
-      
       alert(`Error submitting report: ${errorMessage}`);
     }
   };
@@ -399,7 +400,7 @@ export default function SubmitReportPage() {
     // Priority 2: Find period from periods list and get grade
     if (periods && periods.length > 0) {
        
-      const period = periods.find((p: any) => p.id === formData.period_id);
+      const period = periods.find((p: PeriodRow) => p.id === formData.period_id);
       if (period && period.grade) {
         console.log('✅ Using grade from period in periods list:', period.grade);
         return period.grade;
@@ -423,7 +424,7 @@ export default function SubmitReportPage() {
   }, [formData.grade, formData.period_id, periods, selectedPeriod]);
 
    
-  const existingReport = reports?.find((r: any) => r.grade === finalGrade);
+  const existingReport = reports?.find((r: ReportRow) => r.grade === finalGrade);
 
   // Separate periods into available and already submitted
   const { availablePeriods, submittedPeriods } = useMemo(() => {
@@ -434,25 +435,17 @@ export default function SubmitReportPage() {
     // Get all grades that have reports for the selected date
     const submittedGrades = new Set(
       reports
-         
-        .filter((r: any) => r.date === formData.date)
-         
-        .map((r: any) => r.grade)
+        .filter((r: ReportRow) => r.date === formData.date)
+        .map((r: ReportRow) => r.grade)
         .filter(Boolean)
     );
 
-    // Separate periods
-     
-    const available: any[] = [];
-     
-    const submitted: any[] = [];
+    const available: PeriodRow[] = [];
+    const submitted: (PeriodRow & { report?: ReportRow })[] = [];
 
-     
-    periods.forEach((period: any) => {
+    periods.forEach((period: PeriodRow) => {
       if (period.grade && submittedGrades.has(period.grade)) {
-        // Find the report for this period
-         
-        const report = reports.find((r: any) => 
+        const report = reports.find((r: ReportRow) =>
           r.grade === period.grade && r.date === formData.date
         );
         submitted.push({ ...period, report });
@@ -559,7 +552,7 @@ export default function SubmitReportPage() {
                         <SelectItem value="loading" disabled>Loading periods...</SelectItem>
                       ) : availablePeriods && availablePeriods.length > 0 ? (
                          
-                        availablePeriods.map((period: any) => {
+                        availablePeriods.map((period: PeriodRow) => {
                           const formatTime = (time: string) => {
                             if (!time) return '';
                             const [hours, minutes] = time.split(':');
@@ -620,7 +613,7 @@ export default function SubmitReportPage() {
                     <div className="mt-4 space-y-2">
                       <Label className="text-sm font-medium text-gray-700">Already Submitted Periods</Label>
                       <div className="space-y-2">
-                        {submittedPeriods.map((periodWithReport: any) => {
+                        {submittedPeriods.map((periodWithReport: PeriodRow & { report?: ReportRow }) => {
                           const formatTime = (time: string) => {
                             if (!time) return '';
                             const [hours, minutes] = time.split(':');
@@ -813,7 +806,7 @@ export default function SubmitReportPage() {
                 </div>
               ) : reports && reports.length > 0 ? (
                 <div className="space-y-3">
-                  {reports.slice(0, 5).map((report: any) => (
+                  {reports.slice(0, 5).map((report: ReportRow) => (
                     <div
                       key={report.id}
                       className="p-3 border rounded-lg hover:bg-gray-50"

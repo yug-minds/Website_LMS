@@ -3,7 +3,6 @@
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
 import { Download, File, FileText, Image, Video, FileDown } from 'lucide-react'
-import { cn } from '../../../lib/utils'
 
 interface Material {
   id: string
@@ -28,6 +27,8 @@ export default function ResourcesPanel({
   isOpen = false,
   onToggle,
 }: ResourcesPanelProps) {
+  // courseId is kept in props for API compatibility but not used in this component
+  void courseId
   // Filter materials by chapter if chapterId is provided
   const filteredMaterials = chapterId
     ? materials.filter((m) => m.chapter_id === chapterId)

@@ -54,7 +54,7 @@ try {
       .select('id')
       .eq('school_id', schoolId)
        
-      .eq('role', 'student') as any;
+      .eq('role', 'student');
 
     if (studentsError) {
       return NextResponse.json(
@@ -132,6 +132,13 @@ try {
 
 // POST: Send notifications from teacher
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -156,7 +163,8 @@ try {
     const validation = validateRequestBody(createNotificationSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher notification creation', {
         endpoint: '/api/teacher/notifications',
         errors: errorMessages,
@@ -173,7 +181,7 @@ try {
 
     const { title, message, type = 'general', recipientType, recipients } = validation.data;
      
-    const school_id = (body as any).school_id; // school_id is required for teachers but not in base schema
+    const school_id = (body as { school_id?: string }).school_id; // school_id is required for teachers but not in base schema
 
     if (!title || !message) {
       return NextResponse.json(
@@ -225,7 +233,7 @@ try {
         .select('id')
         .eq('school_id', school_id)
          
-        .in('role', validRoles) as any;
+        .in('role', validRoles);
 
       if (roleError) {
         console.error('❌ Error fetching profiles by role:', roleError);
@@ -244,7 +252,7 @@ try {
         .eq('school_id', school_id)
         .eq('role', 'student')
          
-        .in('id', recipients) as any;
+        .in('id', recipients);
 
       if (profilesError) {
         console.error('❌ Error fetching profiles:', profilesError);
@@ -265,7 +273,7 @@ try {
     }
 
     // Create notifications for all recipients
-    const notificationsToInsert = userIds.map((userId: any) => ({
+    const notificationsToInsert = userIds.map((userId: string) => ({
       user_id: userId,
       title,
       message,
@@ -274,11 +282,10 @@ try {
     }));
 
      
-    const { data: insertedNotifications, error: insertError } = await ((supabaseAdmin as any)
+    const { data: insertedNotifications, error: insertError } = await supabaseAdmin
       .from('notifications')
-      .insert(notificationsToInsert)
-       
-      .select()) as any;
+      .insert(notificationsToInsert as never)
+      .select();
 
     if (insertError) {
       console.error('❌ Error inserting notifications:', insertError);

@@ -9,7 +9,6 @@ import { Label } from "../../../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 
 export default function UpdatePasswordPage() {
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,11 +30,10 @@ export default function UpdatePasswordPage() {
         .from('profiles')
         .select('force_password_change')
         .eq('id', user.id)
-         
-        .single() as any;
+        .single();
 
-      // If force_password_change is not set, redirect to dashboard
-      if (!profile?.force_password_change) {
+      type ProfileRow = { force_password_change?: boolean };
+      if (!(profile as ProfileRow | null)?.force_password_change) {
         router.push('/redirect');
       }
     };
@@ -77,8 +75,8 @@ export default function UpdatePasswordPage() {
       // Update the force_password_change flag to false
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { error: profileError } = await supabase
-          .from('profiles')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- profiles.force_password_change not in generated types
+        const { error: profileError } = await (supabase.from('profiles') as any)
           .update({ force_password_change: false })
           .eq('id', user.id);
 
@@ -93,7 +91,7 @@ export default function UpdatePasswordPage() {
       setTimeout(() => {
         router.push('/redirect');
       }, 2000);
-    } catch (error) {
+    } catch {
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);

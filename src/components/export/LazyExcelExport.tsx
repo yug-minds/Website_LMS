@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 
 interface LazyExcelExportProps {
-  data: any[];
+  data: unknown[];
   filename: string;
   onExport?: () => void;
   children: (exportFn: () => Promise<void>, isLoading: boolean) => React.ReactNode;
@@ -15,7 +15,7 @@ export default function LazyExcelExport({
   onExport,
   children
 }: LazyExcelExportProps) {
-  const [ExcelJS, setExcelJS] = useState<any>(null);
+  const [ExcelJS, setExcelJS] = useState<unknown>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {

@@ -6,6 +6,15 @@ import { supabaseAdmin } from '../../../../lib/supabase';
  * No retries, no complexity - just direct database save
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   console.log('🚀 [save-chapter-progress] API called');
   
   try {
@@ -37,12 +46,14 @@ export async function POST(request: NextRequest) {
     // Direct insert/update to course_progress table
     console.log('📝 [save-chapter-progress] Checking for existing record...');
     
-    const { data: existing, error: selectError } = await supabaseAdmin
+    type ProgressRow = { id?: string };
+    const { data: existingData, error: selectError } = await supabaseAdmin
       .from('course_progress')
       .select('id')
       .eq('student_id', studentId)
       .eq('chapter_id', chapterId)
       .maybeSingle();
+    const existing = existingData as ProgressRow | null;
 
     if (selectError) {
       console.error('❌ [save-chapter-progress] Select error:', selectError);
@@ -58,15 +69,16 @@ export async function POST(request: NextRequest) {
 
     if (existing) {
       console.log('📝 [save-chapter-progress] Updating existing record:', existing.id);
+      const updatePayload = {
+        completed: completed,
+        progress_percent: completed ? 100 : 0,
+        completed_at: completed ? now : null,
+        updated_at: now
+      };
       const { data, error } = await supabaseAdmin
         .from('course_progress')
-        .update({
-          completed: completed,
-          progress_percent: completed ? 100 : 0,
-          completed_at: completed ? now : null,
-          updated_at: now
-        })
-        .eq('id', existing.id)
+        .update(updatePayload as unknown as never)
+        .eq('id', existing.id ?? '')
         .select();
 
       if (error) {
@@ -81,16 +93,17 @@ export async function POST(request: NextRequest) {
       result = { action: 'updated', data };
     } else {
       console.log('📝 [save-chapter-progress] Inserting new record...');
+      const insertPayload = {
+        student_id: studentId,
+        course_id: courseId,
+        chapter_id: chapterId,
+        completed: completed,
+        progress_percent: completed ? 100 : 0,
+        completed_at: completed ? now : null
+      };
       const { data, error } = await supabaseAdmin
         .from('course_progress')
-        .insert({
-          student_id: studentId,
-          course_id: courseId,
-          chapter_id: chapterId,
-          completed: completed,
-          progress_percent: completed ? 100 : 0,
-          completed_at: completed ? now : null
-        })
+        .insert(insertPayload as unknown as never)
         .select();
 
       if (error) {

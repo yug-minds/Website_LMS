@@ -7,8 +7,6 @@ import { Badge } from '../../ui/badge'
 import { Download, File, CheckCircle, Loader2, Clock, ExternalLink } from 'lucide-react'
 import { supabase } from '../../../lib/supabase'
 import { useCourseProgressStore } from '../../../store/course-progress-store'
-import { useToast } from '../../ui/toast'
-import { useQueryClient } from '@tanstack/react-query'
 
 interface PDFContentViewerProps {
   content: {
@@ -24,7 +22,7 @@ interface PDFContentViewerProps {
 }
 
 // Debounce utility
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
+function debounce<T extends (...args: unknown[]) => unknown>(fn: T, delay: number) {
   let timeoutId: NodeJS.Timeout
   return (...args: Parameters<T>) => {
     clearTimeout(timeoutId)
@@ -41,20 +39,16 @@ export default function PDFContentViewer({
   const [timeRemaining, setTimeRemaining] = useState(15)
   const [timerStarted, setTimerStarted] = useState(false)
   const [pdfLoaded, setPdfLoaded] = useState(false)
+  const [hasCompleted, setHasCompleted] = useState(false)
   
-  const hasCompletedRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Global progress store
   const { 
     setContentCompleted, 
     isContentCompleted,
-    setSavingProgress,
     isSaving 
   } = useCourseProgressStore()
-
-  const toast = useToast()
-  const queryClient = useQueryClient()
 
   const isCompleted = isContentCompleted(content.id)
   const saving = isSaving(content.id)
@@ -70,16 +64,18 @@ export default function PDFContentViewer({
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        const { data: progress } = await supabase
+        type ProgressRow = { is_completed?: boolean };
+        const { data: progressData } = await supabase
           .from('student_progress')
           .select('is_completed')
           .eq('student_id', user.id)
           .eq('content_id', content.id)
           .maybeSingle()
 
+        const progress = progressData as ProgressRow | null;
         if (progress?.is_completed) {
           setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
-          hasCompletedRef.current = true
+          setHasCompleted(true)
         }
       } catch (error) {
         console.warn('Failed to check completion:', error)
@@ -91,8 +87,8 @@ export default function PDFContentViewer({
 
   // Mark as complete - delegate to parent for database saving
   const handleMarkComplete = useCallback(() => {
-    if (hasCompletedRef.current) return
-    hasCompletedRef.current = true
+    if (hasCompleted) return
+    setHasCompleted(true)
 
     console.log('📄 [PDFViewer] Marking as complete, calling parent onComplete...')
     
@@ -103,7 +99,7 @@ export default function PDFContentViewer({
     setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
     
     console.log('✅ [PDFViewer] Marked as complete')
-  }, [content.id, resolvedCourseId, resolvedChapterId, onComplete, setContentCompleted])
+  }, [content.id, resolvedCourseId, resolvedChapterId, onComplete, setContentCompleted, hasCompleted])
 
   // Debounced version for UI interactions
   const debouncedMarkComplete = useMemo(
@@ -113,14 +109,18 @@ export default function PDFContentViewer({
 
   // Start timer when PDF loads
   useEffect(() => {
-    if (pdfLoaded && !timerStarted && !isCompleted && !hasCompletedRef.current) {
-      setTimerStarted(true)
+    if (pdfLoaded && !timerStarted && !isCompleted && !hasCompleted) {
+      // Use setTimeout to avoid calling setState synchronously in effect
+      const timer = setTimeout(() => {
+        setTimerStarted(true)
+      }, 0)
+      return () => clearTimeout(timer)
     }
-  }, [pdfLoaded, timerStarted, isCompleted])
+  }, [pdfLoaded, timerStarted, isCompleted, hasCompleted])
 
   // Countdown timer
   useEffect(() => {
-    if (!timerStarted || isCompleted || hasCompletedRef.current) return
+    if (!timerStarted || isCompleted || hasCompleted) return
 
     const interval = setInterval(() => {
       setTimeRemaining((prev) => {
@@ -134,7 +134,7 @@ export default function PDFContentViewer({
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [timerStarted, isCompleted, debouncedMarkComplete])
+  }, [timerStarted, isCompleted, hasCompleted, debouncedMarkComplete])
 
   return (
     <Card className="p-6" ref={containerRef}>
@@ -231,7 +231,7 @@ export default function PDFContentViewer({
         )}
 
         {/* Manual complete button */}
-        {!isCompleted && !hasCompletedRef.current && (
+        {!isCompleted && !hasCompleted && (
           <Button 
             onClick={() => {
               setTimeRemaining(0)
@@ -252,7 +252,7 @@ export default function PDFContentViewer({
       </div>
 
       {/* Timer hint */}
-      {!isCompleted && !hasCompletedRef.current && timerStarted && timeRemaining > 0 && (
+      {!isCompleted && !hasCompleted && timerStarted && timeRemaining > 0 && (
         <p className="text-xs text-gray-500 mt-2 text-right">
           Auto-completing in {timeRemaining} seconds...
         </p>

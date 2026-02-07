@@ -5,7 +5,7 @@ import NextImage from "next/image";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { Alert, AlertDescription } from "../ui/alert";
-import { Upload, X, File, Image, FileVideo, FileText, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, X, File, Image, FileVideo, FileText, Loader2, AlertCircle } from "lucide-react";
 import { fetchWithCsrf } from "../../lib/csrf-client";
 import { cn } from "../../lib/utils";
 
@@ -159,6 +159,7 @@ export function FileUploadZone({
         setUploading(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- maxFileSize kept for validateFile correctness
     [validateFile, type, courseId, chapterId, maxFileSize, onUploadComplete, onUploadError]
   );
 

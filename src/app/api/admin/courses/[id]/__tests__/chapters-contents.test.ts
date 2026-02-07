@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { GET as GETHandler } from '../../route';
 
 // Type assertion for GET handler to fix TypeScript inference
@@ -214,7 +214,7 @@ vi.mock('../../../../../../lib/auth-utils', () => ({
   verifyAdmin: vi.fn(() => Promise.resolve({ 
     success: true, 
     userId: 'admin-id',
-    response: null as any // Not used when success is true
+    response: null as NextResponse | null // Not used when success is true
   })),
 }));
 
@@ -263,23 +263,34 @@ describe('GET /api/admin/courses/[id] - Chapters and Contents', () => {
     const data = await response.json();
     
     // Check that chapters have contents array
-    const chapter1 = data.course.chapters.find((ch: any) => ch.id === 'chapter-1');
+    type Chapter = {
+      id: string;
+      contents?: Array<{
+        id: string;
+        content_type: string;
+        title?: string;
+        content_text?: string | null;
+        content_url?: string | null;
+        duration_minutes?: number | null;
+      }>;
+    };
+    const chapter1 = (data.course.chapters as Chapter[]).find((ch) => ch.id === 'chapter-1');
     expect(chapter1).toBeDefined();
-    expect(chapter1.contents).toBeDefined();
-    expect(Array.isArray(chapter1.contents)).toBe(true);
-    expect(chapter1.contents.length).toBe(2);
+    expect(chapter1?.contents).toBeDefined();
+    expect(Array.isArray(chapter1?.contents)).toBe(true);
+    expect(chapter1?.contents?.length).toBe(2);
     
     // Verify content structure
-    const textContent = chapter1.contents.find((c: any) => c.content_type === 'text');
+    const textContent = chapter1?.contents?.find((c) => c.content_type === 'text');
     expect(textContent).toBeDefined();
-    expect(textContent.title).toBe('Introduction Text');
-    expect(textContent.content_text).toBe('This is the introduction text');
+    expect(textContent?.title).toBe('Introduction Text');
+    expect(textContent?.content_text).toBe('This is the introduction text');
     
-    const videoContent = chapter1.contents.find((c: any) => c.content_type === 'video_link');
+    const videoContent = chapter1?.contents?.find((c) => c.content_type === 'video_link');
     expect(videoContent).toBeDefined();
-    expect(videoContent.title).toBe('Introduction Video');
-    expect(videoContent.content_url).toBe('https://youtube.com/watch?v=123');
-    expect(videoContent.duration_minutes).toBe(10);
+    expect(videoContent?.title).toBe('Introduction Video');
+    expect(videoContent?.content_url).toBe('https://youtube.com/watch?v=123');
+    expect(videoContent?.duration_minutes).toBe(10);
   });
 
   it('should include top-level chapter_contents array', async () => {
@@ -304,7 +315,8 @@ describe('GET /api/admin/courses/[id] - Chapters and Contents', () => {
     expect(data.course.chapter_contents.length).toBe(3);
     
     // Verify content has all required fields
-    const pdfContent = data.course.chapter_contents.find((c: any) => c.content_type === 'pdf');
+    type ChapterContentRow = { content_type?: string; id?: string; chapter_id?: string; title?: string; storage_path?: string };
+    const pdfContent = (data.course.chapter_contents as ChapterContentRow[]).find((c: ChapterContentRow) => c.content_type === 'pdf');
     expect(pdfContent).toBeDefined();
     expect(pdfContent.id).toBe('content-3');
     expect(pdfContent.chapter_id).toBe('chapter-2');
@@ -329,12 +341,13 @@ describe('GET /api/admin/courses/[id] - Chapters and Contents', () => {
     const data = await response.json();
     
     // Verify chapter 1 has 2 contents
-    const chapter1 = data.course.chapters.find((ch: any) => ch.id === 'chapter-1');
-    expect(chapter1.contents.length).toBe(2);
-    expect(chapter1.contents.every((c: any) => c.chapter_id === 'chapter-1')).toBe(true);
+    type ChapterRow = { id?: string; contents?: { chapter_id?: string }[] };
+    const chapter1 = (data.course.chapters as ChapterRow[]).find((ch: ChapterRow) => ch.id === 'chapter-1');
+    expect(chapter1?.contents?.length).toBe(2);
+    expect(chapter1?.contents?.every((c: { chapter_id?: string }) => c.chapter_id === 'chapter-1')).toBe(true);
     
     // Verify chapter 2 has 1 content
-    const chapter2 = data.course.chapters.find((ch: any) => ch.id === 'chapter-2');
+    const chapter2 = (data.course.chapters as ChapterRow[]).find((ch: ChapterRow) => ch.id === 'chapter-2');
     expect(chapter2.contents.length).toBe(1);
     expect(chapter2.contents[0].chapter_id).toBe('chapter-2');
   });

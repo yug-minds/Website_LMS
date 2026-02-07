@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../lib/rate-limit';
-import { logger, handleApiError } from '../../../../../../lib/logger';
+import { handleApiError } from '../../../../../../lib/logger';
 import { verifyAdmin } from '../../../../../../lib/auth-utils';
 
 export const dynamic = 'force-dynamic';

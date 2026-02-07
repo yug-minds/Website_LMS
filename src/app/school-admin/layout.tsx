@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { Sidebar } from "../../components/ui/modern-side-bar";
 import { SchoolAdminProvider } from "../../contexts/SchoolAdminContext";
@@ -10,22 +10,35 @@ import { startActivityTracking, stopActivityTracking } from "../../lib/activity-
 import { waitForSession } from "../../lib/session-utils";
 import { useAppStore, type AppState } from "../../store/app-store";
 import { useBrowserNavigation } from "../../hooks/useBrowserNavigation";
+import type { User } from "@supabase/supabase-js";
+
+type UserProfile = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  [key: string]: unknown;
+};
+
+type SchoolInfo = {
+  id: string;
+  name?: string | null;
+  [key: string]: unknown;
+};
 
 export default function SchoolAdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
-  const [schoolInfo, setSchoolInfo] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [_schoolInfo, setSchoolInfo] = useState<SchoolInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const pathname = usePathname();
   
   // Get sidebar state from store
   const sidebarCollapsed = useAppStore((state: AppState) => state.sidebarCollapsed);
-  const setSidebarCollapsed = useAppStore((state: AppState) => state.setSidebarCollapsed);
 
   // Refs for concurrency protection and preventing loops
   const getUserInProgressRef = useRef(false);
@@ -59,7 +72,7 @@ export default function SchoolAdminLayout({
   });
 
   // Use session validation hook for automatic session management
-  const { logout, isValid: sessionValid } = useSessionValidation({
+  const { logout, isValid: _sessionValid } = useSessionValidation({
     checkInterval: 30000, // Check every 30 seconds
     showAlert: true,
     redirectOnInvalid: true,
@@ -130,11 +143,11 @@ export default function SchoolAdminLayout({
         
         const session = sessionResult.session;
         console.log('✅ School Admin layout: Session found, user ID:', session.user.id);
-        console.log('✅ School Admin layout: Session expires at:', new Date(session.expires_at * 1000).toISOString());
+        console.log('✅ School Admin layout: Session expires at:', session.expires_at != null ? new Date(session.expires_at * 1000).toISOString() : 'N/A');
         
         // Verify session is valid and not expired
         const now = Math.floor(Date.now() / 1000);
-        if (session.expires_at && session.expires_at < now) {
+        if (session.expires_at != null && session.expires_at < now) {
           console.error('❌ School Admin layout: Session is expired');
           if (mounted) {
             router.push('/login');
@@ -217,8 +230,8 @@ export default function SchoolAdminLayout({
             // The school might not be critical for initial load
           }
          
-        } catch (err: any) {
-          console.error('Error loading bootstrap data:', err?.message || err);
+        } catch (err: unknown) {
+          console.error('Error loading bootstrap data:', err instanceof Error ? err.message : err);
           if (mounted) router.push('/login');
           return;
         }

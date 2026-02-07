@@ -30,7 +30,7 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
         csrfTokenPromise = null; // Reset promise so others can use cached token
       }
     };
-  } catch (e) {
+  } catch {
     // BroadcastChannel not supported, continue without it
   }
 }
@@ -122,7 +122,7 @@ async function fetchCsrfTokenInternal(): Promise<string | null> {
                 type: 'csrf-token',
                 token,
               });
-            } catch (e) {
+            } catch {
               // Ignore broadcast errors
             }
           }

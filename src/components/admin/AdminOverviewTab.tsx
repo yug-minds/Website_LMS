@@ -67,7 +67,7 @@ export default function AdminOverviewTab({
   isLoading = false,
   onQuickAction
 }: AdminOverviewTabProps) {
-  const router = useRouter();
+  const _router = useRouter();
 
   if (isLoading) {
     return <SkeletonDashboard />;
@@ -227,7 +227,10 @@ export default function AdminOverviewTab({
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3 text-gray-400" />
                     <span className="text-xs text-gray-400">
-                      {Math.round((Date.now() - new Date(activity.created_at).getTime()) / (1000 * 60))}m ago
+                      {(() => {
+                        const ms = Date.now() - new Date(activity.created_at).getTime();
+                        return `${Math.round(ms / (1000 * 60))}m ago`;
+                      })()}
                     </span>
                   </div>
                 </div>

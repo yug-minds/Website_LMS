@@ -93,18 +93,47 @@ BEGIN
           
           -- Attempt to call API via pg_net (if extension is available)
           BEGIN
-            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_net') THEN
-              -- Use pg_net to make HTTP request
-              SELECT net.http_post(
-                url := api_url,
-                headers := jsonb_build_object(
-                  'Content-Type', 'application/json'
-                ),
-                body := jsonb_build_object(
-                  'studentId', NEW.student_id::text,
-                  'courseId', NEW.course_id::text
-                )
-              ) INTO response_id;
+            IF EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE e.extname = 'pg_net') THEN
+              -- Use pg_net to make HTTP request (check both public.net and extensions.net)
+              BEGIN
+                -- Try extensions.net first (preferred location)
+                IF EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid WHERE e.extname = 'pg_net' AND n.nspname = 'extensions') THEN
+                  SELECT extensions.net.http_post(
+                    url := api_url,
+                    headers := jsonb_build_object(
+                      'Content-Type', 'application/json'
+                    ),
+                    body := jsonb_build_object(
+                      'studentId', NEW.student_id::text,
+                      'courseId', NEW.course_id::text
+                    )
+                  ) INTO response_id;
+                ELSE
+                  -- Fallback to public.net (for backward compatibility during migration)
+                  SELECT net.http_post(
+                    url := api_url,
+                    headers := jsonb_build_object(
+                      'Content-Type', 'application/json'
+                    ),
+                    body := jsonb_build_object(
+                      'studentId', NEW.student_id::text,
+                      'courseId', NEW.course_id::text
+                    )
+                  ) INTO response_id;
+                END IF;
+              EXCEPTION WHEN OTHERS THEN
+                -- If schema-qualified call fails, try unqualified (backward compatibility)
+                SELECT net.http_post(
+                  url := api_url,
+                  headers := jsonb_build_object(
+                    'Content-Type', 'application/json'
+                  ),
+                  body := jsonb_build_object(
+                    'studentId', NEW.student_id::text,
+                    'courseId', NEW.course_id::text
+                  )
+                ) INTO response_id;
+              END;
               
               RAISE NOTICE 'Certificate generation API called via pg_net, request_id: %', response_id;
             ELSE

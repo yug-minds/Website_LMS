@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { frontendLogger, fetchWithLogging, handleApiErrorResponse } from "../../../lib/frontend-logger";
+import { frontendLogger, handleApiErrorResponse } from "../../../lib/frontend-logger";
 import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
 import { useAutoSaveForm } from "../../../hooks/useAutoSaveForm";
-import { loadFormData, clearFormData } from "../../../lib/form-persistence";
+import { loadFormData } from "../../../lib/form-persistence";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
@@ -82,6 +82,7 @@ interface TeacherSchool {
   teacher_id: string;
   school_id: string;
   grades_assigned: string[];
+  grade_sections_assigned?: Array<{ grade: string; sections: string[] }>;
   subjects: string[];
   working_days_per_week: number;
   max_students_per_session: number;
@@ -99,6 +100,8 @@ interface School {
   school_code: string;
   city?: string;
   state?: string;
+  grades_offered?: string[];
+  number_of_sections?: number;
 }
 
 interface LeaveRequest {
@@ -138,7 +141,25 @@ interface AttendanceSummary {
   absentToday?: number;
   onLeaveToday?: number;
   totalTeachers?: number;
-  teacherTodayStatus?: Record<string, { status: string; isOnLeave: boolean; leaveType?: string }>;
+  teacherTodayStatus?: Record<string, { status: string; isOnLeave: boolean; leaveType?: string; attendanceRate?: number }>;
+}
+
+interface MonthlyAttendanceData {
+  id: string;
+  teacher_id: string;
+  school_id: string;
+  month: string;
+  year: number;
+  month_number: number;
+  month_name: string;
+  present_days: number;
+  absent_days: number;
+  leave_days: number;
+  unreported_days: number;
+  total_working_days: number;
+  attendance_percentage: number;
+  profiles?: { full_name: string; email: string };
+  schools?: { name: string; school_code: string };
 }
 
 interface Stats {
@@ -157,20 +178,27 @@ export default function TeachersManagement() {
   const [allLeaveRequests, setAllLeaveRequests] = useState<LeaveRequest[]>([]);
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<'all' | 'Pending' | 'Approved' | 'Rejected'>('all');
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
+  const [monthlyAttendance, setMonthlyAttendance] = useState<MonthlyAttendanceData[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [markingMissingAttendance, setMarkingMissingAttendance] = useState(false);
   const [activeTab, setActiveTab] = useState<'teachers' | 'attendance' | 'leaves'>('teachers');
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [schoolFilter, setSchoolFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [_lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const [showProfileView, setShowProfileView] = useState(false);
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
   const [profileRefreshTrigger, setProfileRefreshTrigger] = useState(0);
-  const [leaveRefreshTrigger, setLeaveRefreshTrigger] = useState(0);
+  const [leaveRefreshTrigger, _setLeaveRefreshTrigger] = useState(0);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -258,7 +286,7 @@ export default function TeachersManagement() {
     markDirty: true,
   });
 
-  const [showPassword, setShowPassword] = useState(false);
+  const [_showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [customSubjectInputs, setCustomSubjectInputs] = useState<Record<string, string>>({});
@@ -273,8 +301,8 @@ export default function TeachersManagement() {
   // Update statistics
   // IMPORTANT: Use allLeaveRequests (not filtered leaveRequests) for accurate pending count
   const updateStats = useCallback((teachersData: Teacher[], leavesData: LeaveRequest[] = allLeaveRequests, attendanceData: AttendanceSummary | null = attendanceSummary) => {
-    const active = teachersData.filter((t: any) => t.status === 'Active').length;
-    const pendingLeaves = leavesData.filter((leave: any) => leave.status === 'Pending').length;
+    const active = teachersData.filter((t: Teacher) => t.status === 'Active').length;
+    const pendingLeaves = leavesData.filter((leave: LeaveRequest) => leave.status === 'Pending').length;
     
     setStats({
       totalTeachers: teachersData.length,
@@ -289,7 +317,7 @@ export default function TeachersManagement() {
     if (leaveStatusFilter === 'all') {
       setLeaveRequests(allLeaveRequests);
     } else {
-      setLeaveRequests(allLeaveRequests.filter((leave: any) => leave.status === leaveStatusFilter));
+      setLeaveRequests(allLeaveRequests.filter((leave: LeaveRequest) => leave.status === leaveStatusFilter));
     }
   }, [allLeaveRequests, leaveStatusFilter]);
 
@@ -300,7 +328,7 @@ export default function TeachersManagement() {
       if (leaveStatusFilter === 'all') {
         setLeaveRequests(allLeaveRequests);
     } else {
-        setLeaveRequests(allLeaveRequests.filter((leave: any) => leave.status === leaveStatusFilter));
+        setLeaveRequests(allLeaveRequests.filter((leave: LeaveRequest) => leave.status === leaveStatusFilter));
       }
     }
   }, [leaveRefreshTrigger, allLeaveRequests, leaveStatusFilter]);
@@ -314,7 +342,7 @@ export default function TeachersManagement() {
   };
 
   // Helper function for fetch with timeout (using frontendLogger)
-  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 10000) => {
+  const _fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 10000) => {
     frontendLogger.debug('API request initiated', {
       component: 'TeachersManagement',
       url,
@@ -408,7 +436,7 @@ export default function TeachersManagement() {
         });
       }
     } catch (error) {
-      const errorInfo = handleApiErrorResponse(error, {
+      const _errorInfo = handleApiErrorResponse(error, {
         component: 'TeachersManagement',
         action: 'loadTeachers',
       }, 'Failed to load teachers');
@@ -448,7 +476,7 @@ export default function TeachersManagement() {
       
       setSchools(schoolsArray);
     } catch (error) {
-      const errorInfo = handleApiErrorResponse(error, {
+      const _errorInfo = handleApiErrorResponse(error, {
         component: 'TeachersManagement',
         action: 'loadSchools',
       }, 'Failed to load schools');
@@ -497,7 +525,7 @@ export default function TeachersManagement() {
       
       console.log('✅ [loadLeaveRequests] Leave requests loaded:', {
         count: allLeaves.length,
-        leaves: allLeaves.map((l: any) => ({
+        leaves: allLeaves.map((l: LeaveRequest) => ({
           id: l.id,
           teacher: l.profiles?.full_name,
           status: l.status,
@@ -521,7 +549,7 @@ export default function TeachersManagement() {
         setLeaveRequests(allLeaves.filter((leave: LeaveRequest) => leave.status === leaveStatusFilter));
       }
     } catch (error) {
-      const errorInfo = handleApiErrorResponse(error, {
+      const _errorInfo = handleApiErrorResponse(error, {
         component: 'TeachersManagement',
         action: 'loadLeaveRequests',
       }, 'Failed to load leave requests');
@@ -543,9 +571,78 @@ export default function TeachersManagement() {
     if (status === 'all') {
       setLeaveRequests(allLeaveRequests);
     } else {
-      setLeaveRequests(allLeaveRequests.filter((leave: any) => leave.status === status));
+      interface LeaveRequest {
+        id?: string;
+        status?: string;
+      }
+      
+      setLeaveRequests(allLeaveRequests.filter((leave: LeaveRequest) => leave.status === status));
     }
   };
+
+  // Load monthly attendance data
+  const loadMonthlyAttendance = useCallback(async (month?: string) => {
+    try {
+      setMonthlyLoading(true);
+      const monthToLoad = month || selectedMonth;
+      const response = await fetchWithCsrf(`/api/admin/teacher-attendance/monthly?yearMonth=${monthToLoad}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch monthly attendance');
+      }
+
+      const data = await response.json();
+      setMonthlyAttendance(data.monthlyData || []);
+    } catch (error) {
+      console.error('Error loading monthly attendance:', error);
+      setMonthlyAttendance([]);
+    } finally {
+      setMonthlyLoading(false);
+    }
+  }, [selectedMonth]);
+
+  // Mark missing attendance
+  const markMissingAttendance = useCallback(async () => {
+    try {
+      setMarkingMissingAttendance(true);
+      
+      // Get date range for the selected month
+      const monthDate = new Date(`${selectedMonth}-01`);
+      const monthStart = monthDate.toISOString().split('T')[0];
+      const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).toISOString().split('T')[0];
+
+      const response = await fetchWithCsrf('/api/admin/teacher-attendance/mark-missing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          start_date: monthStart,
+          end_date: monthEnd,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to mark missing attendance');
+      }
+
+      const data = await response.json();
+      
+      // Show success message
+      alert(`Successfully marked missing attendance!\n\nRecords created: ${data.summary?.records_created || 0}\nTeachers affected: ${data.summary?.teachers_affected || 0}\nDates affected: ${data.summary?.dates_affected || 0}`);
+      
+      // Reload monthly attendance to show updated data
+      await loadMonthlyAttendance();
+    } catch (error) {
+      console.error('Error marking missing attendance:', error);
+      alert(`Failed to mark missing attendance: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setMarkingMissingAttendance(false);
+    }
+  }, [selectedMonth, loadMonthlyAttendance]);
 
   // Load attendance data
   const loadAttendanceData = useCallback(async () => {
@@ -562,7 +659,7 @@ export default function TeachersManagement() {
       });
       
       if (!response.ok) {
-        let errorData: any = {};
+        let errorData: { error?: string; details?: string } = {};
         const contentType = response.headers.get('content-type');
         try {
           const responseText = await response.text();
@@ -577,13 +674,12 @@ export default function TeachersManagement() {
               errorData = { error: responseText || `HTTP ${response.status}`, details: responseText || 'Unknown error' };
             }
           } else {
-            errorData = { error: `HTTP ${response.status}`, details: response.statusText || 'Empty response from server', status: response.status };
+            errorData = { error: `HTTP ${response.status}`, details: response.statusText || 'Empty response from server' };
           }
         } catch (readError) {
           errorData = { 
             error: `HTTP ${response.status}`,
-            details: `Failed to read error response: ${readError instanceof Error ? readError.message : String(readError)}`,
-            status: response.status
+            details: `Failed to read error response: ${readError instanceof Error ? readError.message : String(readError)}`
           };
         }
         
@@ -595,7 +691,7 @@ export default function TeachersManagement() {
           contentType
         });
         
-        const errorMessage = errorData.details || errorData.error || errorData.message || `Failed to fetch attendance data (HTTP ${response.status}: ${response.statusText})`;
+        const errorMessage = errorData.details || errorData.error || `Failed to fetch attendance data (HTTP ${response.status}: ${response.statusText})`;
         throw new Error(errorMessage);
       }
       
@@ -628,7 +724,7 @@ export default function TeachersManagement() {
         teacherTodayStatus: {}
       });
     } catch (error) {
-      const errorInfo = handleApiErrorResponse(error, {
+      const _errorInfo = handleApiErrorResponse(error, {
         component: 'TeachersManagement',
         action: 'loadAttendanceData',
       }, 'Failed to load attendance data');
@@ -655,6 +751,7 @@ export default function TeachersManagement() {
         teacherTodayStatus: {}
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- teachers.length intentionally excluded to avoid unnecessary recalc
   }, []);
 
 
@@ -687,7 +784,7 @@ export default function TeachersManagement() {
       ]);
       
       // Check if all succeeded
-      const allSucceeded = results.every((result: any) => result.status === 'fulfilled');
+      const allSucceeded = results.every((result: PromiseSettledResult<unknown>) => result.status === 'fulfilled');
       
       if (allSucceeded) {
         frontendLogger.info('All data loaded successfully', {
@@ -695,7 +792,7 @@ export default function TeachersManagement() {
           action: 'loadAllData',
         });
       } else {
-        const failed = results.filter((r: any) => r.status === 'rejected');
+        const failed = results.filter((r: PromiseSettledResult<unknown>) => r.status === 'rejected');
         frontendLogger.warn('Some data failed to load', {
           component: 'TeachersManagement',
           action: 'loadAllData',
@@ -742,6 +839,7 @@ export default function TeachersManagement() {
   // Load all data on mount (only once)
   useEffect(() => {
     loadAllData(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
 
   // Use smart refresh for tab switching
@@ -761,28 +859,41 @@ export default function TeachersManagement() {
     updateStats(teachers, allLeaveRequests, attendanceSummary);
   }, [teachers, allLeaveRequests, attendanceSummary, updateStats]);
 
+  // Load monthly attendance when attendance tab is active
+  useEffect(() => {
+    if (activeTab === 'attendance') {
+      loadMonthlyAttendance();
+    }
+  }, [activeTab, loadMonthlyAttendance]);
+
   // Filter teachers based on search and filters
   useEffect(() => {
     let filtered = teachers;
 
     // Search filter
     if (searchTerm) {
-      filtered = filtered.filter((teacher: any) =>
-        teacher.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        teacher.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        teacher.phone?.toLowerCase().includes(searchTerm.toLowerCase())
+      interface Teacher {
+        full_name?: string;
+        email?: string;
+        phone?: string;
+      }
+      
+      filtered = filtered.filter((teacher: Teacher) =>
+        (teacher.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+        (teacher.email?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+        (teacher.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
       );
     }
 
     // Status filter
     if (statusFilter !== "all") {
-      filtered = filtered.filter((teacher: any) => teacher.status === statusFilter);
+      filtered = filtered.filter((teacher: Teacher) => teacher.status === statusFilter);
     }
 
     // School filter
     if (schoolFilter !== "all") {
-      filtered = filtered.filter((teacher: any) => 
-        teacher.teacher_schools?.some((school: any) => school.school_id === schoolFilter)
+      filtered = filtered.filter((teacher: Teacher) => 
+        teacher.teacher_schools?.some((school: { school_id?: string }) => school.school_id === schoolFilter)
       );
     }
 
@@ -805,11 +916,18 @@ export default function TeachersManagement() {
     // Transform teacher_schools to match form data structure
     // The API returns teacher_schools with nested schools object, but form expects flat structure
      
-    const schoolAssignments = (teacher.teacher_schools || []).map((assignment: any) => ({
+    const schoolAssignments = (teacher.teacher_schools || []).map((assignment: TeacherSchool) => ({
       id: assignment.id || `assignment-${Date.now()}-${Math.random()}`,
       teacher_id: assignment.teacher_id || teacher.id || '',
       school_id: assignment.school_id || '',
       grades_assigned: Array.isArray(assignment.grades_assigned) ? assignment.grades_assigned : [],
+      grade_sections_assigned: assignment.grade_sections_assigned 
+        ? (typeof assignment.grade_sections_assigned === 'string' 
+            ? JSON.parse(assignment.grade_sections_assigned) 
+            : Array.isArray(assignment.grade_sections_assigned)
+              ? assignment.grade_sections_assigned
+              : [])
+        : [],
       subjects: Array.isArray(assignment.subjects) ? assignment.subjects : [],
       working_days_per_week: assignment.working_days_per_week || 5,
       max_students_per_session: assignment.max_students_per_session || 30,
@@ -918,8 +1036,13 @@ export default function TeachersManagement() {
     if (!editingTeacher) return;
 
     // Validation: Check if at least one school and one grade are assigned
-    const hasValidAssignments = formData.school_assignments.some((assignment: any) => 
-      assignment.school_id && assignment.grades_assigned.length > 0
+    interface SchoolAssignment {
+      school_id?: string;
+      grades_assigned?: string[];
+    }
+    
+    const hasValidAssignments = formData.school_assignments.some((assignment: SchoolAssignment) => 
+      assignment.school_id && (assignment.grades_assigned?.length ?? 0) > 0
     );
 
     if (!hasValidAssignments) {
@@ -930,7 +1053,7 @@ export default function TeachersManagement() {
     try {
       setActionLoading('edit');
       // Don't include temp_password in regular update (only use it for password change)
-      const { temp_password, ...updateData } = formData;
+      const { temp_password: _temp_password, ...updateData } = formData;
       const response = await fetchWithCsrf('/api/admin/teachers', {
         method: 'PUT',
         headers: {
@@ -983,7 +1106,14 @@ export default function TeachersManagement() {
       console.log('📋 Teacher ID type:', typeof teacherId);
       
       // Find the teacher in the current list to verify
-      const teacherToDelete = teachers.find((t: any) => t.id === teacherId);
+      interface TeacherWithId {
+        id?: string;
+        teacher_id?: string;
+        email?: string;
+        full_name?: string;
+      }
+      
+      const teacherToDelete = teachers.find((t: TeacherWithId) => t.id === teacherId);
       console.log('📋 Teacher to delete:', teacherToDelete ? {
         id: teacherToDelete.id,
         teacher_id: teacherToDelete.teacher_id,
@@ -1005,7 +1135,7 @@ export default function TeachersManagement() {
         console.log('✅ Teacher deleted successfully:', data.message);
         
         // Immediately remove from local state
-        setTeachers(prev => prev.filter((t: any) => t.id !== teacherId));
+        setTeachers(prev => prev.filter((t: TeacherWithId) => t.id !== teacherId));
         
         // Refresh all data
         await loadAllData();
@@ -1045,7 +1175,7 @@ export default function TeachersManagement() {
 
       if (response.ok) {
         // Find the leave request to get teacher name and complete object
-        const leaveRequest = allLeaveRequests.find((l: any) => l.id === leaveId) || leaveRequests.find((l: any) => l.id === leaveId);
+        const leaveRequest = allLeaveRequests.find((l: LeaveRequest) => l.id === leaveId) || leaveRequests.find((l: LeaveRequest) => l.id === leaveId);
         const teacherName = leaveRequest?.profiles?.full_name || 'Teacher';
         
         // Add notification
@@ -1055,66 +1185,8 @@ export default function TeachersManagement() {
           message: `${teacherName}'s leave request has been ${action === 'approve' ? 'approved' : 'rejected'}.`
         });
 
-        // For demo leaves, update the state immediately
-        if (leaveId.startsWith('demo-leave-') && leaveRequest) {
-          const newStatus: 'Approved' | 'Rejected' = action === 'approve' ? 'Approved' : 'Rejected';
-          const now = new Date().toISOString();
-          
-          // Create updated leave object
-          const updatedLeave = {
-            ...leaveRequest,
-            status: newStatus,
-            approved_at: action === 'approve' ? now : leaveRequest.approved_at,
-            rejected_at: action === 'reject' ? now : leaveRequest.rejected_at,
-            approved_by: action === 'approve' ? 'admin@example.com' : leaveRequest.approved_by,
-            admin_remarks: leaveFormData.admin_remarks || leaveRequest.admin_remarks || ''
-          };
-          
-          // Update allLeaveRequests
-          const updatedAllLeaves = allLeaveRequests.map((leave: any) => 
-            leave.id === leaveId ? updatedLeave : leave
-          );
-          setAllLeaveRequests(updatedAllLeaves);
-          
-          // Immediately remove from current view if not matching current filter
-          console.log('🔄 Leave action:', { leaveId, action, newStatus, leaveStatusFilter });
-          
-          if (leaveStatusFilter !== 'all' && leaveStatusFilter !== newStatus) {
-            console.log('🚫 Removing leave from current view (filter mismatch)');
-            setLeaveRequests(prev => {
-              const filtered = prev.filter((leave: any) => leave.id !== leaveId);
-              console.log('📋 Updated leaveRequests after removal:', filtered.length);
-              return filtered;
-            });
-          } else if (leaveStatusFilter === 'all') {
-            console.log('🔄 Updating leave in place (showing all)');
-            // If showing all, update the leave in place
-            setLeaveRequests(prev => prev.map((leave: any) => 
-              leave.id === leaveId ? updatedLeave : leave
-            ));
-          } else if (leaveStatusFilter === newStatus) {
-            console.log('➕ Adding/updating leave (filter matches new status)');
-            // If filter matches new status, add to view
-            setLeaveRequests(prev => {
-              const exists = prev.some((l: any) => l.id === leaveId);
-              if (exists) {
-                return prev.map((leave: any) => leave.id === leaveId ? updatedLeave : leave);
-              } else {
-                return [...prev, updatedLeave];
-              }
-            });
-          }
-          
-          // Force a refresh by updating the last refresh time and trigger
-          setLastRefresh(new Date());
-          setLeaveRefreshTrigger(prev => prev + 1);
-          
-          // Update stats with the updated leave data
-          updateStats(teachers, updatedAllLeaves, attendanceSummary);
-        } else {
-          // For real data, reload from API
-          await loadLeaveRequests();
-        }
+        // Reload from API to get updated data
+        await loadLeaveRequests();
 
         setShowLeaveDialog(false);
         setSelectedLeave(null);
@@ -1165,7 +1237,7 @@ export default function TeachersManagement() {
   };
 
   // Generate password
-  const generatePassword = () => {
+  const _generatePassword = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
     let password = '';
     for (let i = 0; i < 12; i++) {
@@ -1215,7 +1287,7 @@ export default function TeachersManagement() {
   };
 
   // Copy password
-  const copyPassword = () => {
+  const _copyPassword = () => {
     navigator.clipboard.writeText(formData.temp_password);
     alert('Password copied to clipboard!');
   };
@@ -1450,16 +1522,36 @@ export default function TeachersManagement() {
                       <TableCell>
                         {teacher.teacher_schools && teacher.teacher_schools.length > 0 ? (
                           <div className="space-y-1">
-                            {teacher.teacher_schools.map((school, index) => (
-                              <div key={index} className="text-sm">
-                                <span className="font-medium">{school.schools?.name}</span>
-                                <span className="text-muted-foreground ml-1">
-                                  ({school.grades_assigned && Array.isArray(school.grades_assigned) 
+                            {teacher.teacher_schools.map((school, index) => {
+                              const gradeSections: Array<{ grade?: string; sections?: string[] }> = school.grade_sections_assigned 
+                                ? (typeof school.grade_sections_assigned === 'string' 
+                                    ? JSON.parse(school.grade_sections_assigned) 
+                                    : Array.isArray(school.grade_sections_assigned)
+                                      ? school.grade_sections_assigned
+                                      : [])
+                                : [];
+                              
+                              // Format: "Grade 4 (A, B), Grade 5 (A)"
+                              const gradeSectionDisplay = gradeSections.length > 0
+                                ? gradeSections.map((gs) => {
+                                    const sectionsStr = gs.sections && gs.sections.length > 0 
+                                      ? ` (${gs.sections.join(', ')})` 
+                                      : '';
+                                    return `${gs.grade ?? ''}${sectionsStr}`;
+                                  }).join(', ')
+                                : (school.grades_assigned && Array.isArray(school.grades_assigned) 
                                     ? school.grades_assigned.join(', ') 
-                                    : 'No grades'})
-                                </span>
-                              </div>
-                            ))}
+                                    : 'No grades');
+                              
+                              return (
+                                <div key={index} className="text-sm">
+                                  <span className="font-medium">{school.schools?.name}</span>
+                                  <span className="text-muted-foreground ml-1">
+                                    ({gradeSectionDisplay})
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : (
                           <span className="text-muted-foreground">No schools assigned</span>
@@ -1586,8 +1678,11 @@ export default function TeachersManagement() {
                   </Card>
                 </div>
 
-                {/* Attendance Table */}
+                {/* Today's Attendance Table */}
                 <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-3 border-b">
+                    <h3 className="text-sm font-semibold text-gray-900">Today&apos;s Attendance</h3>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead className="bg-gray-50">
@@ -1599,7 +1694,7 @@ export default function TeachersManagement() {
                             Email
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Today's Status
+                            Today&apos;s Status
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Account Status
@@ -1651,7 +1746,7 @@ export default function TeachersManagement() {
                                   </Badge>
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                                  {attendanceSummary.attendanceRate || 0}%
+                                  {todayStatus.attendanceRate !== undefined ? todayStatus.attendanceRate : (attendanceSummary.attendanceRate || 0)}%
                                 </td>
                               </tr>
                             );
@@ -1659,6 +1754,208 @@ export default function TeachersManagement() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+
+                {/* Monthly Attendance Table - Below Today's Attendance */}
+                <div className="border rounded-lg overflow-hidden mt-6">
+                  <div className="bg-gray-50 px-4 py-3 border-b">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-900">
+                        Monthly Attendance
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="month"
+                          value={selectedMonth}
+                          onChange={(e) => {
+                            setSelectedMonth(e.target.value);
+                            loadMonthlyAttendance(e.target.value);
+                          }}
+                          className="w-40"
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => loadMonthlyAttendance()}
+                          disabled={monthlyLoading}
+                          title="Refresh monthly attendance data"
+                        >
+                          <RefreshCw className={`h-4 w-4 ${monthlyLoading ? 'animate-spin' : ''}`} />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={markMissingAttendance}
+                          disabled={markingMissingAttendance || monthlyLoading}
+                          title="Mark missing attendance for teachers with scheduled periods but no reports"
+                          className="text-orange-600 hover:text-orange-700 border-orange-300 hover:border-orange-400"
+                        >
+                          {markingMissingAttendance ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Clock className="h-4 w-4" />
+                          )}
+                          <span className="ml-1 hidden sm:inline">Mark Missing</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    {monthlyAttendance.length > 0 ? (
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Teacher Name
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              School
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Total Working Days
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Present Days
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Absent Days
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Leave Days
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Unreported Days
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Attendance %
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {monthlyAttendance.map((monthly) => {
+                            return (
+                              <tr key={monthly.id} className="hover:bg-gray-50">
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="text-sm font-medium text-gray-900">
+                                    {monthly.profiles?.full_name || 'N/A'}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {monthly.profiles?.email || ''}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                                  {monthly.schools?.name || 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                  {monthly.total_working_days}
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="flex items-center">
+                                    <span className="text-sm font-medium text-green-600">
+                                      {monthly.present_days}
+                                    </span>
+                                    {monthly.total_working_days > 0 && (
+                                      <span className="ml-2 text-xs text-gray-500">
+                                        ({((monthly.present_days / monthly.total_working_days) * 100).toFixed(1)}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="flex items-center">
+                                    <span className="text-sm font-medium text-red-600">
+                                      {monthly.absent_days}
+                                    </span>
+                                    {monthly.total_working_days > 0 && (
+                                      <span className="ml-2 text-xs text-gray-500">
+                                        ({((monthly.absent_days / monthly.total_working_days) * 100).toFixed(1)}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="flex items-center">
+                                    <span className="text-sm font-medium text-blue-600">
+                                      {monthly.leave_days}
+                                    </span>
+                                    {monthly.total_working_days > 0 && (
+                                      <span className="ml-2 text-xs text-gray-500">
+                                        ({((monthly.leave_days / monthly.total_working_days) * 100).toFixed(1)}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="flex items-center">
+                                    <span className="text-sm font-medium text-orange-600">
+                                      {monthly.unreported_days}
+                                    </span>
+                                    {monthly.total_working_days > 0 && monthly.unreported_days > 0 && (
+                                      <span className="ml-2 text-xs text-gray-500">
+                                        ({((monthly.unreported_days / monthly.total_working_days) * 100).toFixed(1)}%)
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <Badge className={
+                                    monthly.attendance_percentage >= 90 ? 'bg-green-500 text-white' :
+                                    monthly.attendance_percentage >= 75 ? 'bg-yellow-500 text-white' :
+                                    monthly.attendance_percentage >= 50 ? 'bg-orange-500 text-white' :
+                                    'bg-red-500 text-white'
+                                  }>
+                                    {monthly.attendance_percentage.toFixed(1)}%
+                                  </Badge>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="bg-gray-50">
+                          <tr>
+                            <td colSpan={2} className="px-4 py-3 text-sm font-semibold text-gray-900">
+                              Totals
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                              {monthlyAttendance.reduce((sum, m) => sum + m.total_working_days, 0)}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-green-600">
+                              {monthlyAttendance.reduce((sum, m) => sum + m.present_days, 0)}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-red-600">
+                              {monthlyAttendance.reduce((sum, m) => sum + m.absent_days, 0)}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-blue-600">
+                              {monthlyAttendance.reduce((sum, m) => sum + m.leave_days, 0)}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-orange-600">
+                              {monthlyAttendance.reduce((sum, m) => sum + m.unreported_days, 0)}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                              {monthlyAttendance.length > 0
+                                ? (monthlyAttendance.reduce((sum, m) => sum + m.attendance_percentage, 0) / monthlyAttendance.length).toFixed(1)
+                                : '0.0'}%
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    ) : (
+                      <div className="px-4 py-8 text-center text-sm text-gray-500">
+                        {monthlyLoading ? (
+                          <div className="flex items-center justify-center">
+                            <RefreshCw className="h-5 w-5 animate-spin text-gray-400 mr-2" />
+                            Loading monthly attendance data...
+                          </div>
+                        ) : (
+                          <div>
+                            <Calendar className="mx-auto h-12 w-12 text-gray-400 mb-2" />
+                            <p>No monthly attendance data available for {new Date(`${selectedMonth}-01`).toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
+                            <p className="text-xs text-gray-400 mt-1">Select a different month or mark attendance to see data</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1689,13 +1986,13 @@ export default function TeachersManagement() {
             <div className="flex gap-4 mb-6">
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-                  Active ({allLeaveRequests.filter((leave: any) => leave.status === 'Pending').length})
+                  Active ({allLeaveRequests.filter((leave: LeaveRequest) => leave.status === 'Pending').length})
                 </Badge>
                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                  Approved ({allLeaveRequests.filter((leave: any) => leave.status === 'Approved').length})
+                  Approved ({allLeaveRequests.filter((leave: LeaveRequest) => leave.status === 'Approved').length})
                 </Badge>
                 <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                  Rejected ({allLeaveRequests.filter((leave: any) => leave.status === 'Rejected').length})
+                  Rejected ({allLeaveRequests.filter((leave: LeaveRequest) => leave.status === 'Rejected').length})
                 </Badge>
               </div>
             </div>
@@ -2143,29 +2440,164 @@ export default function TeachersManagement() {
                       {assignment.school_id && (
                         <>
                           <div>
-                            <Label>Grades</Label>
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'].map((grade) => (
-                                <Label key={grade} className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={assignment.grades_assigned.includes(grade)}
-                                    onChange={(e) => {
-                                      const updatedAssignments = [...formData.school_assignments];
-                                      if (e.target.checked) {
-                                        updatedAssignments[index].grades_assigned = [...updatedAssignments[index].grades_assigned, grade];
-                                      } else {
-                                        updatedAssignments[index].grades_assigned = updatedAssignments[index].grades_assigned.filter((g: any) => g !== grade);
-                                      }
-                                      setFormData(prev => ({
-                                        ...prev,
-                                        school_assignments: updatedAssignments
-                                      }));
-                                    }}
-                                  />
-                                  <span className="text-sm">{grade}</span>
-                                </Label>
-                              ))}
+                            <Label>Grades and Sections <span className="text-red-500">*</span></Label>
+                            <div className="mt-2 space-y-3 max-h-96 overflow-y-auto border rounded-md p-3">
+                              {(() => {
+                                interface School {
+                                  id?: string;
+                                  grades_offered?: string[];
+                                  number_of_sections?: number;
+                                }
+                                
+                                const school = schools.find((s: School) => s.id === assignment.school_id);
+                                const schoolGrades = school?.grades_offered || [];
+                                const numberOfSections = school?.number_of_sections || 0;
+                                const sectionOptions = numberOfSections > 0
+                                  ? Array.from({ length: Math.min(numberOfSections, 26) }, (_, i) => 
+                                      String.fromCharCode(65 + i)
+                                    )
+                                  : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+                                
+                                // All possible grades
+                                const allAvailableGrades = ['Pre-K', 'Kindergarten', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'];
+                                
+                                // Helper function to normalize grade format for comparison
+                                const normalizeGradeForComparison = (grade: string): string => {
+                                  if (!grade) return '';
+                                  const normalized = grade.replace(/^Grade\s+/i, '').trim();
+                                  const lower = normalized.toLowerCase();
+                                  if (lower === 'pre-k' || lower === 'prek' || lower === 'pre-kg') {
+                                    return 'pre-k';
+                                  }
+                                  if (lower === 'k' || lower === 'kindergarten' || lower === 'kg') {
+                                    return 'kindergarten';
+                                  }
+                                  if (/^\d+$/.test(normalized)) {
+                                    return normalized;
+                                  }
+                                  return normalized.toLowerCase();
+                                };
+                                
+                                // Filter grades to only show those offered by the school
+                                let gradesToShow: string[] = [];
+                                if (schoolGrades && schoolGrades.length > 0) {
+                                  gradesToShow = allAvailableGrades.filter((grade: string) => {
+                                    const normalizedAvailableGrade = normalizeGradeForComparison(grade);
+                                    return schoolGrades.some((schoolGrade: string) => {
+                                      const normalizedSchoolGrade = normalizeGradeForComparison(schoolGrade);
+                                      return normalizedSchoolGrade === normalizedAvailableGrade;
+                                    });
+                                  });
+                                }
+                                
+                                // If no school selected or no matching grades, show message
+                                if (!assignment.school_id) {
+                                  return (
+                                    <div className="text-center py-4 text-sm text-muted-foreground">
+                                      Please select a school first
+                                    </div>
+                                  );
+                                }
+                                
+                                if (gradesToShow.length === 0 && schoolGrades && schoolGrades.length > 0) {
+                                  return (
+                                    <div className="text-center py-4 text-sm text-muted-foreground">
+                                      No matching grades found. Please check the school&apos;s grade configuration.
+                                    </div>
+                                  );
+                                }
+                                
+                                if (gradesToShow.length === 0) {
+                                  return (
+                                    <div className="text-center py-4 text-sm text-muted-foreground">
+                                      This school has no grades configured. Please configure grades for this school.
+                                    </div>
+                                  );
+                                }
+                                
+                                const gradeSections: Array<{ grade?: string; sections?: string[] }> = assignment.grade_sections_assigned || [];
+                                
+                                return gradesToShow.map((grade) => {
+                                  const isGradeSelected = assignment.grades_assigned.includes(grade);
+                                  const gradeSectionData = gradeSections.find((gs) => gs.grade === grade);
+                                  const _selectedSections = gradeSectionData?.sections || [];
+                                  
+                                  return (
+                                    <div key={grade} className="border rounded-lg p-3 space-y-2">
+                                      <div className="flex items-center space-x-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={isGradeSelected}
+                                          onChange={(e) => {
+                                            const updatedAssignments = [...formData.school_assignments];
+                                            const gradeSections = updatedAssignments[index].grade_sections_assigned || [];
+                                            if (e.target.checked) {
+                                              updatedAssignments[index].grades_assigned = [...updatedAssignments[index].grades_assigned, grade];
+                                              updatedAssignments[index].grade_sections_assigned = [...gradeSections, { grade, sections: [] }];
+                                            } else {
+                                              updatedAssignments[index].grades_assigned = updatedAssignments[index].grades_assigned.filter((g: string) => g !== grade);
+                                              updatedAssignments[index].grade_sections_assigned = gradeSections.filter((gs) => gs.grade !== grade);
+                                            }
+                                            setFormData(prev => ({
+                                              ...prev,
+                                              school_assignments: updatedAssignments
+                                            }));
+                                          }}
+                                        />
+                                        <Label className="text-sm font-medium">{grade}</Label>
+                                      </div>
+                                      
+                                      {isGradeSelected && (
+                                        <div className="ml-6 space-y-2">
+                                          <Label className="text-xs text-gray-600">Select Sections:</Label>
+                                          <div className="flex flex-wrap gap-2">
+                                            {sectionOptions.map((section) => {
+                                              const currentGradeSectionData = gradeSections.find((gs) => gs.grade === grade);
+                                              const currentSelectedSections = currentGradeSectionData?.sections || [];
+                                              return (
+                                                <div key={section} className="flex items-center space-x-1">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={currentSelectedSections.includes(section)}
+                                                    onChange={(e) => {
+                                                      const updatedAssignments = [...formData.school_assignments];
+                                                      const gradeSections = updatedAssignments[index].grade_sections_assigned || [];
+                                                      const gradeSectionIndex = gradeSections.findIndex((gs) => gs.grade === grade);
+                                                      
+                                                      if (gradeSectionIndex >= 0) {
+                                                        const updatedGradeSections = [...gradeSections];
+                                                        if (e.target.checked) {
+                                                          if (!updatedGradeSections[gradeSectionIndex].sections.includes(section)) {
+                                                            updatedGradeSections[gradeSectionIndex] = {
+                                                              ...updatedGradeSections[gradeSectionIndex],
+                                                              sections: [...updatedGradeSections[gradeSectionIndex].sections, section]
+                                                            };
+                                                          }
+                                                        } else {
+                                                          updatedGradeSections[gradeSectionIndex] = {
+                                                            ...updatedGradeSections[gradeSectionIndex],
+                                                            sections: updatedGradeSections[gradeSectionIndex].sections.filter((s: string) => s !== section)
+                                                          };
+                                                        }
+                                                        updatedAssignments[index].grade_sections_assigned = updatedGradeSections;
+                                                      }
+                                                      setFormData(prev => ({
+                                                        ...prev,
+                                                        school_assignments: updatedAssignments
+                                                      }));
+                                                    }}
+                                                  />
+                                                  <Label className="text-xs">Section {section}</Label>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                });
+                              })()}
                             </div>
                           </div>
                           
@@ -2182,7 +2614,7 @@ export default function TeachersManagement() {
                                       if (e.target.checked) {
                                         updatedAssignments[index].subjects = [...updatedAssignments[index].subjects, subject];
                                       } else {
-                                        updatedAssignments[index].subjects = updatedAssignments[index].subjects.filter((s: any) => s !== subject);
+                                        updatedAssignments[index].subjects = updatedAssignments[index].subjects.filter((s: string) => s !== subject);
                                       }
                                       setFormData(prev => ({
                                         ...prev,
@@ -2195,7 +2627,7 @@ export default function TeachersManagement() {
                               ))}
                               {/* Display custom subjects */}
                               {assignment.subjects
-                                .filter((subject: any) => !availableSubjects.includes(subject))
+                                .filter((subject: string) => !availableSubjects.includes(subject))
                                 .map((subject) => (
                                   <Label key={subject} className="flex items-center gap-2">
                                     <input
@@ -2206,7 +2638,7 @@ export default function TeachersManagement() {
                                         if (e.target.checked) {
                                           updatedAssignments[index].subjects = [...updatedAssignments[index].subjects, subject];
                                         } else {
-                                          updatedAssignments[index].subjects = updatedAssignments[index].subjects.filter((s: any) => s !== subject);
+                                          updatedAssignments[index].subjects = updatedAssignments[index].subjects.filter((s: string) => s !== subject);
                                         }
                                         setFormData(prev => ({
                                           ...prev,

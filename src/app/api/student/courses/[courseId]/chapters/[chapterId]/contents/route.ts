@@ -4,6 +4,10 @@ import { supabaseAdmin } from '../../../../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../../../lib/rate-limit';
 import { ensureCsrfToken } from '../../../../../../../../lib/csrf-middleware';
 
+type ChapterRow = { id?: string; course_id?: string | null; name?: string | null; title?: string | null; is_published?: boolean | null };
+type CourseRow = { id?: string; name?: string | null; course_name?: string | null; is_published?: boolean | null; status?: string | null };
+type StudentSchoolRow = { school_id?: string | null; grade?: string | null };
+
 // GET - Get contents for a chapter (with access verification)
 export async function GET(
   request: NextRequest,
@@ -74,12 +78,13 @@ export async function GET(
     }
 
     // Verify chapter exists and belongs to the course
-    const { data: chapter, error: chapterError } = await supabaseAdmin
+    const { data: chapterData, error: chapterError } = await supabaseAdmin
       .from('chapters')
       .select('id, course_id, name, title, is_published')
       .eq('id', chapterId)
       .single();
 
+    const chapter = chapterData as ChapterRow | null;
     if (chapterError || !chapter) {
       logger.warn('Chapter not found', {
         endpoint: '/api/student/courses/[courseId]/chapters/[chapterId]/contents',
@@ -121,12 +126,13 @@ export async function GET(
     }
 
     // Verify course exists and is published
-    const { data: course, error: courseError } = await supabaseAdmin
+    const { data: courseData, error: courseError } = await supabaseAdmin
       .from('courses')
       .select('id, name, course_name, is_published, status')
       .eq('id', courseId)
       .single();
 
+    const course = courseData as CourseRow | null;
     if (courseError || !course) {
       logger.warn('Course not found', {
         endpoint: '/api/student/courses/[courseId]/chapters/[chapterId]/contents',
@@ -164,20 +170,23 @@ export async function GET(
     let hasAccess = !!enrollment;
     
     if (!hasAccess) {
-      const { data: studentSchool } = await supabaseAdmin
+      const { data: studentSchoolData } = await supabaseAdmin
         .from('student_schools')
         .select('school_id, grade')
         .eq('student_id', user.id)
         .eq('is_active', true)
         .maybeSingle();
 
-      if (studentSchool?.school_id && studentSchool?.grade) {
+      const studentSchool = studentSchoolData as StudentSchoolRow | null;
+      const schoolId = studentSchool?.school_id ?? '';
+      const gradeVal = studentSchool?.grade ?? '';
+      if (schoolId && gradeVal) {
         const { data: courseAccess } = await supabaseAdmin
           .from('course_access')
           .select('id')
           .eq('course_id', courseId)
-          .eq('school_id', studentSchool.school_id)
-          .eq('grade', studentSchool.grade)
+          .eq('school_id', schoolId)
+          .eq('grade', gradeVal)
           .maybeSingle();
 
         hasAccess = !!courseAccess;
@@ -188,16 +197,16 @@ export async function GET(
             .from('course_access')
             .select('id, grade')
             .eq('course_id', courseId)
-            .eq('school_id', studentSchool.school_id);
+            .eq('school_id', schoolId);
 
           if (allCourseAccess && allCourseAccess.length > 0) {
             // Normalize grades for comparison
             const normalizeGrade = (g: string) => 
               g.toLowerCase().trim().replace(/^grade\s*/i, '').replace(/grade/i, '');
             
-            const studentGradeNormalized = normalizeGrade(studentSchool.grade);
-            hasAccess = allCourseAccess.some((ca: { id: string; grade: string }) => 
-              normalizeGrade(ca.grade) === studentGradeNormalized
+            const studentGradeNormalized = normalizeGrade(gradeVal);
+            hasAccess = (allCourseAccess as { id?: string; grade?: string }[]).some((ca) => 
+              normalizeGrade(ca.grade ?? '') === studentGradeNormalized
             );
           }
         }
@@ -223,7 +232,8 @@ export async function GET(
     }
 
     // Fetch from ALL sources: chapter_contents, videos, materials, and assignments
-    const allContents: any[] = [];
+    type ContentItem = { id: string; chapter_id?: string; content_type: string; title: string; content_url?: string; content_text?: string; order_index: number; source: string; created_at?: string; updated_at?: string; is_completed?: boolean; duration_minutes?: number; file_type?: string; max_score?: number; auto_grading_enabled?: boolean };
+    const allContents: ContentItem[] = [];
 
     // 1. Fetch from chapter_contents table
     const { data: contents, error: contentsError } = await supabaseAdmin
@@ -241,7 +251,8 @@ export async function GET(
         userId: user.id,
       }, contentsError instanceof Error ? contentsError : new Error(String(contentsError)));
     } else if (contents) {
-      const normalizedContents = contents.map((content: any) => ({
+      type DBContent = { id: string; chapter_id?: string; content_type?: string; title?: string; name?: string; content_url?: string; url?: string; content_text?: string; text?: string; description?: string; order_index?: number; order_number?: number; created_at?: string; updated_at?: string };
+      const normalizedContents = contents.map((content: DBContent) => ({
         ...content,
         content_type: (content.content_type || '').toLowerCase(),
         title: content.title || content.name || 'Untitled',
@@ -262,7 +273,8 @@ export async function GET(
       .order('order_index', { ascending: true });
 
     if (!videosError && videos) {
-      const normalizedVideos = videos.map((video: any) => ({
+      type DBVideo = { id: string; chapter_id?: string; title?: string; video_url?: string; content_url?: string; order_index?: number; duration?: number; duration_minutes?: number; created_at?: string; updated_at?: string };
+      const normalizedVideos = videos.map((video: DBVideo) => ({
         id: video.id,
         chapter_id: video.chapter_id,
         content_type: 'video',
@@ -286,7 +298,8 @@ export async function GET(
       .order('order_index', { ascending: true });
 
     if (!materialsError && materials) {
-      const normalizedMaterials = materials.map((material: any) => ({
+      type DBMaterial = { id: string; chapter_id?: string; title?: string; file_url?: string; content_url?: string; file_type?: string; order_index?: number; created_at?: string; updated_at?: string };
+      const normalizedMaterials = materials.map((material: DBMaterial) => ({
         id: material.id,
         chapter_id: material.chapter_id,
         content_type: material.file_type === 'pdf' ? 'pdf' : 'file',
@@ -310,7 +323,8 @@ export async function GET(
       .order('created_at', { ascending: true });
 
     if (!assignmentsError && assignments) {
-      const normalizedAssignments = assignments.map((assignment: any, index: number) => ({
+      type DBAssignment = { id: string; chapter_id?: string; title?: string; description?: string; order_index?: number; max_score?: number; auto_grading_enabled?: boolean; created_at?: string };
+      const normalizedAssignments = assignments.map((assignment: DBAssignment, index: number) => ({
         id: assignment.id,
         chapter_id: assignment.chapter_id,
         content_type: 'assignment',
@@ -326,7 +340,7 @@ export async function GET(
     }
 
     // Sort all contents by order_index
-    allContents.sort((a: any, b: any) => {
+    allContents.sort((a: ContentItem, b: ContentItem) => {
       const orderA = a.order_index || 0;
       const orderB = b.order_index || 0;
       if (orderA !== orderB) return orderA - orderB;
@@ -342,13 +356,14 @@ export async function GET(
       .eq('student_id', user.id)
       .eq('chapter_id', chapterId);
 
-    const progressMap = new Map<string, { content_id: string; is_completed: boolean }>(
-      (progress || []).map((p: any) => [p.content_id, p])
+    type ProgressRow = { content_id: string; is_completed: boolean };
+    const progressMap = new Map<string, ProgressRow>(
+      (progress || []).map((p: ProgressRow) => [p.content_id, p])
     );
 
     // Enhance all contents with progress
-    const contentsWithProgress = allContents.map((content: any) => {
-      const contentProgress: { content_id: string; is_completed: boolean } | undefined = progressMap.get(content.id);
+    const contentsWithProgress = allContents.map((content: ContentItem) => {
+      const contentProgress: ProgressRow | undefined = progressMap.get(content.id);
       return {
         ...content,
         is_completed: contentProgress?.is_completed || false,
@@ -361,7 +376,7 @@ export async function GET(
       chapterId,
       courseId,
       totalContents: contentsWithProgress.length,
-      contentTypes: contentsWithProgress.map((c: any) => ({
+      contentTypes: contentsWithProgress.map((c: ContentItem) => ({
         id: c.id,
         title: c.title,
         type: c.content_type,

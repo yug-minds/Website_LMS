@@ -4,9 +4,9 @@
  * Provides real-time updates for course content changes
  */
 
-import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { createCourseSyncChannel, debounce, CourseSyncConfig } from '../lib/course-sync';
+import { createCourseSyncChannel, CourseSyncConfig } from '../lib/course-sync';
 import { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 export interface UseCourseRealtimeSyncOptions {
@@ -24,14 +24,21 @@ export function useCourseRealtimeSync({
   const channelRef = useRef<ReturnType<typeof createCourseSyncChannel> | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  const invalidateQueries = useMemo(
-    () => debounce((queryKeys: string[][]) => {
-      queryKeys.forEach((key) => {
-        queryClient.invalidateQueries({ queryKey: key });
-      });
-    }, debounceMs),
-    [queryClient, debounceMs]
-  );
+  const invalidateQueriesHandler = useCallback((queryKeys: string[][]): void => {
+    queryKeys.forEach((key) => {
+      queryClient.invalidateQueries({ queryKey: key });
+    });
+  }, [queryClient]);
+
+  const invalidateQueriesRef = useRef<NodeJS.Timeout | null>(null);
+  const invalidateQueries = useCallback((queryKeys: string[][]) => {
+    if (invalidateQueriesRef.current) {
+      clearTimeout(invalidateQueriesRef.current);
+    }
+    invalidateQueriesRef.current = setTimeout(() => {
+      invalidateQueriesHandler(queryKeys);
+    }, debounceMs);
+  }, [invalidateQueriesHandler, debounceMs]);
 
   useEffect(() => {
     // Don't create channel if disabled or courseId is invalid
@@ -46,21 +53,21 @@ export function useCourseRealtimeSync({
 
     const config: CourseSyncConfig = {
       courseId,
-      onCourseUpdate: (payload: RealtimePostgresChangesPayload<any>) => {
+      onCourseUpdate: (_payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
         console.log('🔄 Course data changed, invalidating queries');
         invalidateQueries([
           ['studentCourse', courseId],
           ['studentCourses'],
         ]);
       },
-      onChapterUpdate: (payload: RealtimePostgresChangesPayload<any>) => {
+      onChapterUpdate: (_payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
         console.log('🔄 Chapter data changed, invalidating queries');
         invalidateQueries([
           ['courseChapters', courseId],
           ['studentCourse', courseId],
         ]);
       },
-      onContentUpdate: (payload: RealtimePostgresChangesPayload<any>) => {
+      onContentUpdate: (_payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
         // Check if content belongs to this course's chapters
         console.log('🔄 Content data changed, invalidating queries');
         invalidateQueries([
@@ -68,13 +75,13 @@ export function useCourseRealtimeSync({
           ['chapterContents'],
         ]);
       },
-      onMaterialUpdate: (payload: RealtimePostgresChangesPayload<any>) => {
+      onMaterialUpdate: (_payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
         console.log('🔄 Material data changed, invalidating queries');
         invalidateQueries([
           ['courseMaterials', courseId],
         ]);
       },
-      onAssignmentUpdate: (payload: RealtimePostgresChangesPayload<any>) => {
+      onAssignmentUpdate: (_payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
         console.log('🔄 Assignment data changed, invalidating queries');
         invalidateQueries([
           ['studentAssignments'],

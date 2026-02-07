@@ -7,6 +7,8 @@ import { verifyAdmin } from '../../../../../lib/auth-utils';
 import { CacheKeys, invalidateCache } from '../../../../../lib/cache';
 import { updateLogoSchema, deleteLogoSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 
+type LogoRow = { storage_path?: string };
+
 function getPngDimensions(buffer: Buffer): { width: number; height: number } | null {
   if (buffer.length < 24) return null;
   const signature = buffer.slice(0, 8).toString('hex');
@@ -83,7 +85,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const school_name = formData.get('school_name');
     const description = formData.get('description');
 
-    const update: any = {};
+    type LogoUpdate = { school_name?: string; description?: string | null; image_url?: string | null; storage_path?: string };
+    const update: LogoUpdate = {};
     if (school_name) update.school_name = String(school_name);
     if (description) update.description = String(description) || null;
 
@@ -128,6 +131,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         .eq('id', id)
         .single();
 
+      const existingTyped = existing as LogoRow | null;
       const ext = mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'svg';
       const filePath = `logos/${auth.userId}/${Date.now()}.${ext}`;
       const { error: uploadError } = await supabaseAdmin.storage
@@ -136,8 +140,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       if (uploadError) throw uploadError;
 
       // Delete old file if present
-      if (existing?.storage_path) {
-        await supabaseAdmin.storage.from('school-logos').remove([existing.storage_path]).catch(() => {});
+      if (existingTyped?.storage_path) {
+        await supabaseAdmin.storage.from('school-logos').remove([existingTyped.storage_path]).catch(() => {});
       }
 
       const { data: publicUrlData } = await supabaseAdmin.storage
@@ -151,6 +155,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('school_logos')
+      // @ts-expect-error - school_logos table update type not in schema
       .update(update)
       .eq('id', id)
       .select('id, school_name, description, image_url, storage_path, upload_date, uploaded_by, is_deleted')
@@ -196,14 +201,16 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
         .select('storage_path')
         .eq('id', id)
         .single();
-      if (existing?.storage_path) {
-        await supabaseAdmin.storage.from('school-logos').remove([existing.storage_path]).catch(() => {});
+      const existingTyped = existing as LogoRow | null;
+      if (existingTyped?.storage_path) {
+        await supabaseAdmin.storage.from('school-logos').remove([existingTyped.storage_path]).catch(() => {});
       }
       const { error } = await supabaseAdmin.from('school_logos').delete().eq('id', id);
       if (error) throw error;
     } else {
       const { error } = await supabaseAdmin
         .from('school_logos')
+        // @ts-expect-error - school_logos table update type not in schema
         .update({ is_deleted: true, deleted_at: new Date().toISOString() })
         .eq('id', id);
       if (error) throw error;

@@ -5,15 +5,15 @@
  */
 
 import { supabase } from './supabase';
-import { RealtimeChannel } from '@supabase/supabase-js';
+import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 export interface CourseSyncConfig {
   courseId: string;
-  onCourseUpdate?: (payload: any) => void;
-  onChapterUpdate?: (payload: any) => void;
-  onContentUpdate?: (payload: any) => void;
-  onMaterialUpdate?: (payload: any) => void;
-  onAssignmentUpdate?: (payload: any) => void;
+  onCourseUpdate?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+  onChapterUpdate?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+  onContentUpdate?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+  onMaterialUpdate?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+  onAssignmentUpdate?: (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
 }
 
 export interface SyncChannel {
@@ -29,8 +29,8 @@ export function createCourseSyncChannel(config: CourseSyncConfig): SyncChannel {
   if (!config.courseId || config.courseId.trim() === '') {
     console.warn('⚠️ [createCourseSyncChannel] Invalid courseId, skipping channel creation');
     // Return a dummy channel that does nothing
-    const dummyChannel = {
-      channel: null as any,
+    const dummyChannel: SyncChannel = {
+      channel: null,
       unsubscribe: () => {},
     };
     return dummyChannel;
@@ -146,16 +146,16 @@ export function createCourseSyncChannel(config: CourseSyncConfig): SyncChannel {
     });
     // Return a dummy channel that does nothing
     return {
-      channel: null as any,
+      channel: null,
       unsubscribe: () => {},
-    };
+    } as SyncChannel;
   }
 }
 
 /**
  * Debounce function for rapid updates
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
@@ -183,7 +183,7 @@ export interface OptimisticUpdate<T> {
   commit: () => void;
 }
 
-export function createOptimisticUpdate<T extends Record<string, any>>(
+export function createOptimisticUpdate<T extends Record<string, unknown>>(
   currentData: T,
   updateFn: (data: T) => T
 ): OptimisticUpdate<T> {

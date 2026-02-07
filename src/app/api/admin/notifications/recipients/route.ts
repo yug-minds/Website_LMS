@@ -27,8 +27,13 @@ try {
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get('filter') || 'all'; // all, roles, schools, users
 
+    type RecipientResult = {
+      roles: Array<{ id: string; name: string; count: number }>;
+      schools: Array<{ id: string; name: string | null; isActive: boolean | null }>;
+      users: Array<{ id: string; name: string | null; email: string | null; role: string | null; schoolId: string | null }>;
+    };
      
-    const results: any = {
+    const results: RecipientResult = {
       roles: [],
       schools: [],
       users: []
@@ -39,17 +44,16 @@ try {
       const { data: rolesData, error: rolesError } = await supabaseAdmin
         .from('profiles')
         .select('role')
-         
-        .not('role', 'is', null) as any;
+        .not('role', 'is', null);
 
       if (!rolesError && rolesData) {
-         
-        const uniqueRoles: string[] = [...new Set((rolesData as any[]).map((p: any) => p.role).filter(Boolean))];
+        type ProfileWithRole = { role: string };
+        const typedRolesData = rolesData as ProfileWithRole[];
+        const uniqueRoles: string[] = [...new Set(typedRolesData.map((p) => p.role).filter(Boolean))];
         results.roles = uniqueRoles.map((role: string) => ({
           id: role,
           name: role.charAt(0).toUpperCase() + role.slice(1).replace('_', ' '),
-           
-          count: (rolesData as any[]).filter((p: any) => p.role === role).length
+          count: typedRolesData.filter((p) => p.role === role).length
         }));
       }
     }
@@ -59,12 +63,11 @@ try {
       const { data: schoolsData, error: schoolsError } = await supabaseAdmin
         .from('schools')
         .select('id, name, is_active')
-         
-        .order('name', { ascending: true }) as any;
+        .order('name', { ascending: true });
 
       if (!schoolsError && schoolsData) {
-         
-        results.schools = (schoolsData as any[]).map((school: any) => ({
+        type SchoolData = { id: string; name: string | null; is_active: boolean | null };
+        results.schools = (schoolsData as SchoolData[]).map((school) => ({
           id: school.id,
           name: school.name,
           isActive: school.is_active
@@ -78,12 +81,11 @@ try {
         .from('profiles')
         .select('id, full_name, email, role, school_id')
         .limit(100)
-         
-        .order('full_name', { ascending: true }) as any;
+        .order('full_name', { ascending: true });
 
       if (!usersError && usersData) {
-         
-        results.users = (usersData as any[]).map((user: any) => ({
+        type UserData = { id: string; full_name: string | null; email: string | null; role: string | null; school_id: string | null };
+        results.users = (usersData as UserData[]).map((user) => ({
           id: user.id,
           name: user.full_name || user.email,
           email: user.email,

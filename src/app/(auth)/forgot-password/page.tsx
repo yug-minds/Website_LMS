@@ -53,7 +53,7 @@ export default function ForgotPasswordPage() {
       setMessage(data.message || 'Password reset request submitted successfully.');
       setSubmitted(true);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error submitting password reset request:', error);
       setError('An unexpected error occurred. Please try again.');
     } finally {

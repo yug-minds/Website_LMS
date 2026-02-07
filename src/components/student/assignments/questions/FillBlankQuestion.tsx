@@ -104,9 +104,9 @@ function FillBlankQuestion({
     
     if (Array.isArray(question.correct_answer)) {
       return question.correct_answer
-        .filter((ans: any) => ans != null)
-        .map((ans: any) => String(ans).toLowerCase().trim())
-        .filter((ans: any) => ans.length > 0)
+        .filter((ans: unknown) => ans != null)
+        .map((ans: unknown) => String(ans).toLowerCase().trim())
+        .filter((ans: string) => ans.length > 0)
     }
     
     // If single answer, split by comma or semicolon for multiple correct answers
@@ -117,8 +117,8 @@ function FillBlankQuestion({
     
     return answerStr
       .split(/[,;]/)
-      .map((ans: any) => ans.toLowerCase().trim())
-      .filter((ans: any) => ans.length > 0)
+      .map((ans: string) => ans.toLowerCase().trim())
+      .filter((ans: string) => ans.length > 0)
   }, [question.correct_answer])
 
   const checkAnswer = (blankIndex: number, answer: string): boolean | undefined => {
@@ -127,7 +127,7 @@ function FillBlankQuestion({
     // For multiple blanks, check against corresponding correct answer
     const correctAnswerForBlank = correctAnswers[blankIndex] || correctAnswers[0]
     return correctAnswerForBlank === normalizedAnswer || 
-           correctAnswers.some((ca: any) => ca === normalizedAnswer)
+           correctAnswers.some((ca: string) => ca === normalizedAnswer)
   }
 
   return (

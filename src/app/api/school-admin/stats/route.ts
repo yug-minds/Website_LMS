@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSchoolAdminSchoolId } from '../../../../lib/school-admin-auth';
 import { supabaseAdmin, createAuthenticatedClient } from '../../../../lib/supabase';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { logger, handleApiError } from '../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 import { getOrSetCache, CacheTTL } from '../../../../lib/cache';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 export async function GET(request: NextRequest) {
@@ -79,7 +77,16 @@ try {
           .single();
         const mvDuration = Date.now() - mvStartTime;
         
-        if (!mvError && mvData) {
+        type MvStatsRow = {
+          total_students?: number | null;
+          total_teachers?: number | null;
+          active_courses?: number | null;
+          pending_reports?: number | null;
+          pending_leaves?: number | null;
+          average_attendance?: number | null;
+        };
+        const mvRow = mvData as MvStatsRow | null;
+        if (!mvError && mvRow) {
           logger.info('School admin stats fetched from materialized view', {
             endpoint: '/api/school-admin/stats',
             schoolId,
@@ -87,12 +94,12 @@ try {
             usingMaterializedView: true
           });
           return {
-            totalStudents: mvData.total_students || 0,
-            totalTeachers: mvData.total_teachers || 0,
-            activeCourses: mvData.active_courses || 0,
-            pendingReports: mvData.pending_reports || 0,
-            pendingLeaves: mvData.pending_leaves || 0,
-            averageAttendance: mvData.average_attendance || 0
+            totalStudents: mvRow.total_students ?? 0,
+            totalTeachers: mvRow.total_teachers ?? 0,
+            activeCourses: mvRow.active_courses ?? 0,
+            pendingReports: mvRow.pending_reports ?? 0,
+            pendingLeaves: mvRow.pending_leaves ?? 0,
+            averageAttendance: mvRow.average_attendance ?? 0
           };
         }
 
@@ -111,7 +118,7 @@ try {
         // Direct RPC call reduces overhead compared to multiple queries
         const functionStartTime = Date.now();
         const { data: statsData, error: functionError } = await supabase
-          .rpc('get_school_admin_stats', { p_school_id: schoolId });
+          .rpc('get_school_admin_stats', { p_school_id: schoolId } as never);
         const functionDuration = Date.now() - functionStartTime;
 
         if (!functionError && statsData) {
@@ -184,11 +191,11 @@ try {
           .select('id, teacher_id, date')
           .eq('school_id', schoolId)
           .gte('date', thirtyDaysAgo.toISOString().split('T')[0])
-          .limit(1000) as any; // Add limit for safety
+          .limit(1000);
         
         let averageAttendance = 0;
         if (!reportsError && recentReports && recentReports.length > 0) {
-          const uniqueTeachers = new Set(recentReports.map((r: any) => r.teacher_id));
+          const _uniqueTeachers = new Set(recentReports.map((r: { teacher_id?: string }) => r.teacher_id));
           const totalTeachers = teachersResult.count || 0;
           
           if (totalTeachers > 0) {

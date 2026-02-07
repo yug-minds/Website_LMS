@@ -4,7 +4,6 @@
  */
 
 import { NextResponse } from 'next/server';
-import { recordHttpCacheOperation } from './http-cache-monitor';
 
 export interface CacheOptions {
   maxAge?: number; // Max age in seconds
@@ -60,7 +59,7 @@ export function createCacheControlHeader(options: CacheOptions = {}): string {
 /**
  * Generate ETag from data
  */
-export function generateETag(data: any): string {
+export function generateETag(data: unknown): string {
   const str = typeof data === 'string' ? data : JSON.stringify(data);
   // Simple hash function
   let hash = 0;
@@ -77,7 +76,7 @@ export function generateETag(data: any): string {
  */
 export function addCacheHeaders(
   response: NextResponse,
-  data: any,
+  data: unknown,
   options: CacheOptions & {
     lastModified?: Date | string;
     etag?: string;
@@ -125,6 +124,7 @@ export function create304Response(
   
   // Track the 304 response
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- optional sync import for monitor
     const { recordHttpCacheOperation } = require('./http-cache-monitor');
     recordHttpCacheOperation({
       endpoint,

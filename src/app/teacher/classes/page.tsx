@@ -22,6 +22,9 @@ import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
  */
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+type ScheduleRow = { day_of_week?: string; grade?: string; school_id?: string };
+type ClassRow = { grade?: string; school_id?: string; is_active?: boolean; max_students?: number };
+
 export default function ClassesPage() {
   const { selectedSchool, schools } = useTeacherSchool();
   const queryClient = useQueryClient();
@@ -82,19 +85,13 @@ export default function ClassesPage() {
     if (schedules && schedules.length > 0) {
       const schedulesByDay = {
          
-        Sunday: schedules.filter((s: any) => s.day_of_week === 'Sunday').length,
-         
-        Monday: schedules.filter((s: any) => s.day_of_week === 'Monday').length,
-         
-        Tuesday: schedules.filter((s: any) => s.day_of_week === 'Tuesday').length,
-         
-        Wednesday: schedules.filter((s: any) => s.day_of_week === 'Wednesday').length,
-         
-        Thursday: schedules.filter((s: any) => s.day_of_week === 'Thursday').length,
-         
-        Friday: schedules.filter((s: any) => s.day_of_week === 'Friday').length,
-         
-        Saturday: schedules.filter((s: any) => s.day_of_week === 'Saturday').length,
+        Sunday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Sunday').length,
+        Monday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Monday').length,
+        Tuesday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Tuesday').length,
+        Wednesday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Wednesday').length,
+        Thursday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Thursday').length,
+        Friday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Friday').length,
+        Saturday: schedules.filter((s: ScheduleRow) => s.day_of_week === 'Saturday').length,
       };
       frontendLogger.debug('Schedules data loaded', {
         component: 'ClassesPage',
@@ -109,13 +106,12 @@ export default function ClassesPage() {
     const gradeSet = new Set<string>();
     if (schedules) {
        
-      schedules.forEach((s: any) => {
+      schedules.forEach((s: ScheduleRow) => {
         if (s.grade) gradeSet.add(s.grade);
       });
     }
     if (classes) {
-       
-      classes.forEach((c: any) => {
+      classes.forEach((c: ClassRow) => {
         if (c.grade) gradeSet.add(c.grade);
       });
     }
@@ -139,20 +135,17 @@ export default function ClassesPage() {
     let filtered = [...schedules];
 
     if (selectedDay !== 'all') {
-       
-      filtered = filtered.filter((s: any) => s.day_of_week === selectedDay);
+      filtered = filtered.filter((s: ScheduleRow) => s.day_of_week === selectedDay);
       console.log(`📅 Filtered by day "${selectedDay}": ${filtered.length} schedules`);
     }
 
     if (selectedGrade !== 'all') {
-       
-      filtered = filtered.filter((s: any) => s.grade === selectedGrade);
+      filtered = filtered.filter((s: ScheduleRow) => s.grade === selectedGrade);
       console.log(`📅 Filtered by grade "${selectedGrade}": ${filtered.length} schedules`);
     }
 
     if (selectedSchoolFilter !== 'all') {
-       
-      filtered = filtered.filter((s: any) => s.school_id === selectedSchoolFilter);
+      filtered = filtered.filter((s: ScheduleRow) => s.school_id === selectedSchoolFilter);
       console.log(`📅 Filtered by school "${selectedSchoolFilter}": ${filtered.length} schedules`);
     }
 
@@ -166,13 +159,11 @@ export default function ClassesPage() {
     let filtered = [...classes];
 
     if (selectedGrade !== 'all') {
-       
-      filtered = filtered.filter((c: any) => c.grade === selectedGrade);
+      filtered = filtered.filter((c: ClassRow) => c.grade === selectedGrade);
     }
 
     if (selectedSchoolFilter !== 'all') {
-       
-      filtered = filtered.filter((c: any) => c.school_id === selectedSchoolFilter);
+      filtered = filtered.filter((c: ClassRow) => c.school_id === selectedSchoolFilter);
     }
 
     return filtered;
@@ -390,7 +381,7 @@ export default function ClassesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSchedules.map((schedule: any) => {
+                  {filteredSchedules.map((schedule: ScheduleRow) => {
                     const formatTime = (time: string) => {
                       if (!time) return '';
                       const [hours, minutes] = time.split(':');
@@ -500,7 +491,7 @@ export default function ClassesPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredClasses.map((classItem: any) => (
+              {filteredClasses.map((classItem: ClassRow) => (
             <Card key={classItem.id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -600,7 +591,7 @@ export default function ClassesPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {filteredClasses.filter((c: any) => c.is_active).length}
+                {filteredClasses.filter((c: ClassRow) => c.is_active).length}
               </div>
               <p className="text-xs text-muted-foreground">Currently active</p>
             </CardContent>
@@ -613,7 +604,7 @@ export default function ClassesPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {filteredClasses.reduce((sum: number, c: any) => sum + (c.max_students || 0), 0)}
+                {filteredClasses.reduce((sum: number, c: ClassRow) => sum + (c.max_students || 0), 0)}
               </div>
               <p className="text-xs text-muted-foreground">Total students capacity</p>
             </CardContent>

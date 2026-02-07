@@ -4,10 +4,9 @@ import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { periodSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 // PUT /api/school-admin/periods/[id]
@@ -16,7 +15,15 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
-  const { ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
   if (!rateLimitResult.success) {
@@ -49,8 +56,7 @@ export async function PUT(
       .from('periods')
       .select('id, school_id')
       .eq('id', periodId)
-       
-      .single() as any;
+      .single();
 
     if (!existingPeriod) {
       return NextResponse.json(
@@ -72,7 +78,8 @@ export async function PUT(
     const validation = validateRequestBody(periodSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -86,7 +93,7 @@ export async function PUT(
 
     // Update period
      
-    const updateData: any = {
+    const updateData: { period_number?: number; start_time?: string; end_time?: string; is_active?: boolean } = {
       period_number,
       start_time,
       end_time
@@ -97,14 +104,12 @@ export async function PUT(
     }
 
      
-    const { data: period, error } = await ((supabaseAdmin as any)
+    const { data: period, error } = await supabaseAdmin
       .from('periods')
-       
-      .update(updateData as any)
+      .update(updateData as never)
       .eq('id', periodId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (error) {
       return NextResponse.json(
@@ -177,8 +182,7 @@ export async function DELETE(
       .from('periods')
       .select('id, school_id')
       .eq('id', periodId)
-       
-      .single() as any;
+      .single();
 
     if (!existingPeriod) {
       return NextResponse.json(
@@ -201,7 +205,7 @@ export async function DELETE(
       .eq('period_id', periodId)
       .eq('is_active', true)
        
-      .limit(1) as any;
+      .limit(1);
 
     if (schedules && schedules.length > 0) {
       return NextResponse.json(

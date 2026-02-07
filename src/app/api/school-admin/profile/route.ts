@@ -66,7 +66,7 @@ try {
     const validation = validateRequestBody(schoolAdminProfileUpdateSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school admin profile update', {
         endpoint: '/api/school-admin/profile',
         errors: errorMessages,
@@ -84,19 +84,17 @@ try {
     const { full_name, email } = validation.data;
 
     // Update profile (bypasses RLS using admin client)
-     
-    const { data: profile, error: profileError } = await ((supabaseAdmin as any)
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
+      // @ts-expect-error - Supabase generated types use never for untyped schema
       .update({
         full_name: full_name !== undefined ? full_name : undefined,
         email: email !== undefined ? email : undefined,
         updated_at: new Date().toISOString()
-       
-      } as any)
+      })
       .eq('id', userId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (profileError) {
       logger.error('Failed to update school admin profile', {

@@ -24,13 +24,13 @@ interface SessionBackup {
     sidebarCollapsed: boolean;
   };
   dashboardState: {
-    filters: Record<string, any>;
+    filters: Record<string, unknown>;
     searchTerms: Record<string, string>;
     activeTabs: Record<string, string>;
     pagination: Record<string, { page: number; pageSize: number }>;
   };
   formState: {
-    formData: Record<string, any>;
+    formData: Record<string, unknown>;
     isDirty: Record<string, boolean>;
   };
 }
@@ -152,7 +152,7 @@ export function restoreSessionBackup(backup: SessionBackup): void {
       const dashboardStore = useDashboardStore.getState();
       if (backup.dashboardState.filters) {
         Object.keys(backup.dashboardState.filters).forEach((dashboardId) => {
-          dashboardStore.setFilter(dashboardId, backup.dashboardState.filters[dashboardId]);
+          dashboardStore.setFilter(dashboardId, backup.dashboardState.filters[dashboardId] as Record<string, unknown>);
         });
       }
       if (backup.dashboardState.searchTerms) {

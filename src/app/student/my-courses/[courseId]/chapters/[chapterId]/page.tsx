@@ -10,7 +10,7 @@ type PageProps = {
 
 export default function ChapterPage(props: PageProps) {
   const params = React.use(props.params)
-  React.use(props.searchParams)
+  const _searchParams = React.use(props.searchParams) || {}
   const courseId = params?.courseId
 
   if (!courseId) {

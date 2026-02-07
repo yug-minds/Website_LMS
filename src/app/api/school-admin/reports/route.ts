@@ -83,8 +83,15 @@ try {
     }
 
     // Add status based on approval
-     
-    const reportsWithStatus = (reportsData || []).map((report: any) => ({
+    type TeacherReport = {
+      id?: string;
+      teacher_id?: string | null;
+      school_id?: string | null;
+      date?: string | null;
+      approved_by?: string | null;
+      [key: string]: unknown;
+    };
+    const reportsWithStatus = ((reportsData || []) as TeacherReport[]).map((report) => ({
       ...report,
       status: report.approved_by ? 'Approved' : 'Pending' as 'Pending' | 'Approved' | 'Rejected'
     }));

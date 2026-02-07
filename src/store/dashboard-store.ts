@@ -29,16 +29,23 @@ const getSafeStorage = (storageType: 'localStorage' | 'sessionStorage') => {
 
 interface DashboardState {
   // Filter states per dashboard
-  filters: Record<string, any>;
+  filters: Record<string, unknown>;
   
   // Search terms per dashboard
   searchTerms: Record<string, string>;
   
   // Tab states per dashboard
   activeTabs: Record<string, string>;
+  currentTab?: string; // For backward compatibility
   
   // Pagination states per dashboard
   pagination: Record<string, { page: number; pageSize: number }>;
+  
+  // Search term (singular, for backward compatibility)
+  searchTerm?: string;
+  
+  // Version for state migration
+  version?: number;
   
   // Expanded/collapsed states
   expandedItems: Record<string, Set<string>>;
@@ -47,7 +54,7 @@ interface DashboardState {
   selectedItems: Record<string, Set<string>>;
   
   // Actions
-  setFilter: (dashboardId: string, filter: any) => void;
+  setFilter: (dashboardId: string, filter: Record<string, unknown>) => void;
   clearFilter: (dashboardId: string) => void;
   setSearchTerm: (dashboardId: string, term: string) => void;
   clearSearchTerm: (dashboardId: string) => void;
@@ -61,9 +68,19 @@ interface DashboardState {
   clearDashboardState: (dashboardId: string) => void;
 }
 
+interface PartializedState {
+  currentTab?: string;
+  filters?: Record<string, unknown>;
+  searchTerm?: string;
+  pagination?: Record<string, { page: number; pageSize: number }>;
+  version?: number;
+  expandedItems?: Record<string, string[]>;
+  selectedItems?: Record<string, string[]>;
+}
+
 export const useDashboardStore = create<DashboardState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       // Initial state
       filters: {},
       searchTerms: {},
@@ -73,7 +90,7 @@ export const useDashboardStore = create<DashboardState>()(
       selectedItems: {},
 
       // Actions
-      setFilter: (dashboardId: string, filter: any) => {
+      setFilter: (dashboardId: string, filter: Record<string, unknown>) => {
         set((state: DashboardState) => ({
           filters: {
             ...state.filters,
@@ -249,7 +266,17 @@ export const useDashboardStore = create<DashboardState>()(
       storage: createJSONStorage(() => getSafeStorage('sessionStorage')),
       partialize: (state) => {
         // Convert Sets to Arrays for serialization
-        const partialized: any = {
+        interface PartializedState {
+          currentTab?: string;
+          filters?: Record<string, unknown>;
+          searchTerm?: string;
+          pagination?: Record<string, { page: number; pageSize: number }>;
+          version?: number;
+          expandedItems?: Record<string, string[]>;
+          selectedItems?: Record<string, string[]>;
+        }
+        
+        const partialized: PartializedState = {
           currentTab: state.currentTab,
           filters: state.filters,
           searchTerm: state.searchTerm,
@@ -259,14 +286,14 @@ export const useDashboardStore = create<DashboardState>()(
         
         // Convert Sets to Arrays
         if (state.expandedItems) {
-          partialized.expandedItems = Object.keys(state.expandedItems).reduce((acc: any, key: string) => {
+          partialized.expandedItems = Object.keys(state.expandedItems).reduce((acc: Record<string, string[]>, key: string) => {
             acc[key] = Array.from(state.expandedItems[key]);
             return acc;
           }, {});
         }
         
         if (state.selectedItems) {
-          partialized.selectedItems = Object.keys(state.selectedItems).reduce((acc: any, key: string) => {
+          partialized.selectedItems = Object.keys(state.selectedItems).reduce((acc: Record<string, string[]>, key: string) => {
             acc[key] = Array.from(state.selectedItems[key]);
             return acc;
           }, {});
@@ -274,20 +301,30 @@ export const useDashboardStore = create<DashboardState>()(
         
         return partialized;
       },
-      merge: (persistedState: any, currentState: any) => {
+      merge: (persistedState: unknown, currentState: DashboardState): DashboardState => {
         // Convert Arrays back to Sets
-        const merged = { ...currentState, ...persistedState };
+        const persisted = persistedState as PartializedState;
+        const merged: DashboardState = { ...currentState };
         
-        if (persistedState?.expandedItems) {
-          merged.expandedItems = Object.keys(persistedState.expandedItems).reduce((acc: any, key: string) => {
-            acc[key] = new Set(persistedState.expandedItems[key]);
+        // Merge simple properties
+        if (persisted.filters) merged.filters = persisted.filters as Record<string, unknown>;
+        if (persisted.searchTerm) merged.searchTerm = persisted.searchTerm;
+        if (persisted.currentTab) merged.currentTab = persisted.currentTab;
+        if (persisted.version) merged.version = persisted.version;
+        if (persisted.pagination) merged.pagination = persisted.pagination;
+        
+        // Convert expandedItems arrays back to Sets
+        if (persisted?.expandedItems) {
+          merged.expandedItems = Object.keys(persisted.expandedItems).reduce((acc: Record<string, Set<string>>, key: string) => {
+            acc[key] = new Set(persisted.expandedItems![key]);
             return acc;
           }, {});
         }
         
-        if (persistedState?.selectedItems) {
-          merged.selectedItems = Object.keys(persistedState.selectedItems).reduce((acc: any, key: string) => {
-            acc[key] = new Set(persistedState.selectedItems[key]);
+        // Convert selectedItems arrays back to Sets
+        if (persisted?.selectedItems) {
+          merged.selectedItems = Object.keys(persisted.selectedItems).reduce((acc: Record<string, Set<string>>, key: string) => {
+            acc[key] = new Set(persisted.selectedItems![key]);
             return acc;
           }, {});
         }

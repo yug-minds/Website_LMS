@@ -10,6 +10,27 @@ import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 
+interface Teacher {
+  id: string;
+  email?: string;
+  temp_password?: string;
+  teacher_id?: string;
+  full_name?: string;
+  phone?: string;
+  qualification?: string;
+  experience_years?: number;
+  specialization?: string;
+  address?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface Profile {
+  id: string;
+  email?: string;
+}
+
 // GET - Fetch all teachers
 export async function GET(request: NextRequest) {
   // Verify admin access
@@ -62,11 +83,10 @@ export async function GET(request: NextRequest) {
     });
     
     // Test basic connection first using authenticated client with RLS
-    const { data: testData, error: testError } = await supabase
+    const { error: testError } = await supabase
       .from('teachers')
       .select('id, full_name, email')
-       
-      .limit(1) as any;
+      .limit(1);
 
     if (testError) {
       logger.error('Database connection test failed', {
@@ -99,15 +119,15 @@ export async function GET(request: NextRequest) {
     // First, try a simple query to get all teachers without joins
     console.log('🔍 Fetching teachers from database...');
     let teachers;
-    let error;
     
     // Try with joins first using authenticated client with RLS
-    // Note: teachers table doesn't have profile_id column
+    // Include profile_id if it exists in the teachers table
     let query = supabase
       .from('teachers')
       .select(`
         id,
         teacher_id,
+        profile_id,
         full_name,
         email,
         phone,
@@ -142,7 +162,7 @@ export async function GET(request: NextRequest) {
         .select('id, teacher_id, full_name, email, phone, qualification, experience_years, specialization, address, status, created_at, updated_at')
         .order('created_at', { ascending: false })
          
-        .range(pagination.offset, pagination.offset + pagination.limit - 1) as any;
+        .range(pagination.offset, pagination.offset + pagination.limit - 1);
       
       if (simpleError) {
         console.error('❌ Error fetching teachers (simple query):', simpleError);
@@ -156,12 +176,13 @@ export async function GET(request: NextRequest) {
       teachers = teachersWithJoins;
     }
 
+    const teachersList = (teachers || []) as Array<{ id: string; email?: string | null; full_name?: string | null }>;
     console.log('📊 Teachers query result:', { 
-      teachers: teachers?.length || 0, 
-      sample: teachers?.[0] ? {
-        id: teachers[0].id,
-        email: teachers[0].email,
-        full_name: teachers[0].full_name
+      teachers: teachersList.length, 
+      sample: teachersList[0] ? {
+        id: teachersList[0].id,
+        email: teachersList[0].email,
+        full_name: teachersList[0].full_name
       } : null
     });
 
@@ -190,33 +211,141 @@ export async function GET(request: NextRequest) {
 
     // Fetch school assignments separately for each teacher
     // Since teacher_schools.teacher_id references profiles(id), we need to find profile_id from profiles table
+    type Teacher = {
+      id: string;
+      teacher_id?: string | null;
+      profile_id?: string | null;
+      full_name?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      qualification?: string | null;
+      experience_years?: number | null;
+      specialization?: string | null;
+      address?: string | null;
+      status?: string | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+      temp_password?: string | null;
+    };
+    
+    type TeacherSchool = {
+      id: string;
+      school_id: string;
+      grades_assigned?: string[] | null;
+      grade_sections_assigned?: string[] | null;
+      subjects?: string[] | null;
+      working_days_per_week?: number | null;
+      max_students_per_session?: number | null;
+      is_primary?: boolean | null;
+      schools?: {
+        id: string;
+        name: string | null;
+        school_code: string | null;
+      } | null;
+    };
+    
     const teachersWithAssignments = await Promise.all(
-       
-      (teachers || []).map(async (teacher: any) => {
-         
-        let teacher_schools: any[] = [];
+      ((teachers || []) as Teacher[]).map(async (teacher) => {
+        let teacher_schools: TeacherSchool[] = [];
         
-        // Find profile_id from profiles table using email
-        if (teacher.email) {
+        // Get profile_id - use teacher.profile_id if available, otherwise look up by email
+        let profileId: string | null = null;
+        
+        if (teacher.profile_id) {
+          // Use profile_id directly from teachers table if available
+          profileId = teacher.profile_id;
+          console.log(`Using profile_id from teachers table: ${profileId} for teacher ${teacher.email || teacher.id}`);
+        } else if (teacher.email) {
+          // Fallback: find profile_id from profiles table using email
+          console.log(`profile_id not found in teachers table, looking up by email: ${teacher.email}`);
           try {
-            // First, find the profile_id from profiles table
             const { data: profile, error: profileError } = await supabaseAdmin
               .from('profiles')
               .select('id')
               .eq('email', teacher.email)
-               
-              .maybeSingle() as any;
+              .maybeSingle();
             
             if (!profileError && profile) {
-              const profileId = (profile as { id: string }).id;
-              
-              // Now fetch school assignments using profile_id
-              const { data: assignments, error: assignmentError } = await supabaseAdmin
+              profileId = (profile as { id: string }).id;
+              console.log(`Found profile_id by email lookup: ${profileId}`);
+            } else {
+              console.warn(`No profile found for email ${teacher.email}:`, profileError);
+            }
+          } catch (err) {
+            logger.warn('Error finding profile for teacher (non-critical)', {
+              endpoint: '/api/admin/teachers',
+              teacherId: teacher.id,
+            }, err instanceof Error ? err : new Error(String(err)));
+          }
+        }
+        
+        // If still no profileId, try to find it from teacher_schools table directly
+        if (!profileId && teacher.email) {
+          console.log(`Trying alternative: checking teacher_schools for any assignments with email pattern...`);
+          // This is a last resort - shouldn't normally be needed
+        }
+        
+        // Fetch school assignments using profile_id
+        if (profileId) {
+          try {
+            const { data: assignments, error: assignmentError } = await supabaseAdmin
+              .from('teacher_schools')
+              .select(`
+                id,
+                school_id,
+                grades_assigned,
+                grade_sections_assigned,
+                subjects,
+                working_days_per_week,
+                max_students_per_session,
+                is_primary,
+                schools (
+                  id,
+                  name,
+                  school_code
+                )
+              `)
+              .eq('teacher_id', profileId);
+            
+            if (!assignmentError && assignments) {
+              if (assignments.length > 0) {
+                teacher_schools = assignments as TeacherSchool[];
+                console.log(`✅ Found ${assignments.length} school assignment(s) for teacher ${teacher.email || teacher.id} (profile_id: ${profileId})`);
+                console.log('Assignments data:', JSON.stringify(assignments, null, 2));
+              } else {
+                console.log(`ℹ️ No school assignments found for teacher ${teacher.email || teacher.id} (profile_id: ${profileId})`);
+                // Debug: Check if there are any assignments with this teacher_id at all
+                const { data: allAssignments, error: debugError } = await supabaseAdmin
+                  .from('teacher_schools')
+                  .select('teacher_id, school_id')
+                  .eq('teacher_id', profileId)
+                  .limit(5);
+                console.log(`Debug: Checking teacher_schools table for profile_id ${profileId}:`, allAssignments, 'Error:', debugError);
+              }
+            } else if (assignmentError) {
+              console.error(`❌ Error fetching assignments for teacher ${teacher.email || teacher.id}:`, assignmentError);
+              console.error('Profile ID used:', profileId, 'Teacher email:', teacher.email);
+            }
+          } catch (err) {
+            logger.warn('Error fetching assignments for teacher (non-critical)', {
+              endpoint: '/api/admin/teachers',
+              teacherId: teacher.id,
+            }, err instanceof Error ? err : new Error(String(err)));
+          }
+        } else {
+          console.log(`⚠️ No profile_id found for teacher ${teacher.email || teacher.id}, trying alternative lookup...`);
+          // Last resort: Try to find assignments by querying teacher_schools and matching with schools
+          // This shouldn't normally be needed, but helps with edge cases
+          if (teacher.email) {
+            try {
+              // Try to find any teacher_schools that might be linked through a different path
+              const { data: allTeacherSchools, error: altError } = await supabaseAdmin
                 .from('teacher_schools')
                 .select(`
                   id,
                   school_id,
                   grades_assigned,
+                  grade_sections_assigned,
                   subjects,
                   working_days_per_week,
                   max_students_per_session,
@@ -225,25 +354,22 @@ export async function GET(request: NextRequest) {
                     id,
                     name,
                     school_code
+                  ),
+                  profiles!teacher_schools_teacher_id_fkey (
+                    id,
+                    email
                   )
                 `)
-                 
-                .eq('teacher_id', profileId) as any;
+                .eq('profiles.email', teacher.email)
+                .limit(10);
               
-              if (!assignmentError && assignments) {
-                teacher_schools = assignments;
-                console.log(`✅ Found ${assignments.length} school assignment(s) for teacher ${teacher.email}`);
-              } else if (assignmentError) {
-                console.warn(`⚠️ Error fetching assignments for teacher ${teacher.email}:`, assignmentError);
+              if (!altError && allTeacherSchools && allTeacherSchools.length > 0) {
+                teacher_schools = allTeacherSchools;
+                console.log(`✅ Found ${allTeacherSchools.length} assignment(s) using alternative lookup for ${teacher.email}`);
               }
-            } else {
-              console.log(`⚠️ No profile found for teacher ${teacher.email}, skipping school assignments`);
+            } catch (altErr) {
+              console.warn('Alternative lookup also failed:', altErr);
             }
-          } catch (err) {
-            logger.warn('Error fetching assignments for teacher (non-critical)', {
-              endpoint: '/api/admin/teachers',
-              teacherId: teacher.id,
-            }, err instanceof Error ? err : new Error(String(err)));
           }
         }
         
@@ -274,7 +400,7 @@ export async function GET(request: NextRequest) {
     });
     
     // Create paginated response
-    let responseData: any;
+    let responseData: { teachers?: unknown[]; pagination?: unknown; nextCursor?: string; prevCursor?: string; hasMore?: boolean } | { data?: unknown[]; nextCursor?: string; prevCursor?: string; hasMore?: boolean };
     if (useCursor) {
       const cursorLimit = cursorParams.limit ?? PaginationLimits.MEDIUM;
       const cursorResponse = createCursorResponse(
@@ -430,7 +556,7 @@ export async function POST(request: NextRequest) {
     // Validate request body
     const validation = validateRequestBody(createTeacherSchema, body);
     if (!validation.success) {
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher creation', {
         endpoint: '/api/admin/teachers',
         errors: errorMessages,
@@ -462,6 +588,9 @@ export async function POST(request: NextRequest) {
       temp_password,
       school_assignments
     } = validation.data;
+    
+    console.log('📋 Extracted school_assignments:', JSON.stringify(school_assignments, null, 2));
+    console.log('📋 school_assignments type:', typeof school_assignments, 'isArray:', Array.isArray(school_assignments), 'length:', school_assignments?.length);
 
     // Validate password strength (8+ chars, uppercase, lowercase, number)
     if (!temp_password) {
@@ -487,8 +616,7 @@ export async function POST(request: NextRequest) {
       .from('teachers')
       .select('id, user_id')
       .eq('email', email)
-       
-      .single() as any;
+      .maybeSingle();
 
     if (existingTeacher) {
       console.log('❌ Teacher already exists in teachers table');
@@ -512,7 +640,7 @@ export async function POST(request: NextRequest) {
         // Continue - we'll try to create the user anyway
       } else {
          
-        const existingAuthUser = authUsers?.users?.find((user: any) => user.email === email);
+        const existingAuthUser = authUsers?.users?.find((user: { email?: string }) => user.email === email);
         if (existingAuthUser) {
           console.log('✅ Found existing user in Auth:', existingAuthUser.id);
           userId = existingAuthUser.id;
@@ -601,8 +729,8 @@ export async function POST(request: NextRequest) {
           p_specialization: specialization || null,
           p_teacher_id: null,
           p_school_assignments: school_assignments ? JSON.stringify(school_assignments) : '[]'
-        } as any);
-      const { data: transactionResult, error: transactionError } = rpcResult as { data: { success?: boolean; error?: string } | null; error: any };
+        } as never);
+      const { data: transactionResult, error: transactionError } = rpcResult as { data: { success?: boolean; error?: string } | null; error: unknown };
       const result = transactionResult as { success?: boolean; error?: string } | null;
       if (transactionError || !result?.success) {
         logger.warn('RPC failed, falling back to direct creation', { endpoint: '/api/admin/teachers', method: 'POST' }, transactionError instanceof Error ? transactionError : new Error(String(transactionError || result?.error)));
@@ -614,6 +742,13 @@ export async function POST(request: NextRequest) {
     // Direct creation path
     const generatedTeacherCode = `TCH-${(userId || randomUUID()).toString().slice(0, 8).toUpperCase()}`;
 
+    // Determine primary school_id from assignments (if any)
+    const primarySchoolId = school_assignments && school_assignments.length > 0
+      ? school_assignments.find((a: { is_primary?: boolean; school_id?: string }) => a.is_primary)?.school_id 
+        || school_assignments[0]?.school_id 
+        || null
+      : null;
+    
     const { error: profileErr } = await supabaseAdmin
       .from('profiles')
       .upsert({
@@ -623,8 +758,9 @@ export async function POST(request: NextRequest) {
         role: 'teacher',
         phone: phone || null,
         address: address || null,
+        school_id: primarySchoolId,
         force_password_change: true,
-      } as any) as any;
+      } as never);
 
     if (profileErr) {
       logger.error('Profile upsert failed', { endpoint: '/api/admin/teachers', method: 'POST' }, profileErr);
@@ -633,9 +769,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
+    // Generate UUID for teachers table id (fallback if default doesn't work)
+    const teacherId = randomUUID();
+    
     const { data: teacherRec, error: teacherErr } = await supabaseAdmin
       .from('teachers')
       .upsert({
+        id: teacherId,
         profile_id: userId,
         teacher_id: generatedTeacherCode,
         full_name,
@@ -646,7 +786,10 @@ export async function POST(request: NextRequest) {
         specialization: specialization || null,
         address: address || null,
         status: 'Active',
-      } as any, { onConflict: 'email' } as any) as any;
+      } as never, {
+        onConflict: 'email',
+        ignoreDuplicates: false
+      });
 
     if (teacherErr) {
       logger.error('Teacher upsert failed', { endpoint: '/api/admin/teachers', method: 'POST' }, teacherErr);
@@ -666,26 +809,86 @@ export async function POST(request: NextRequest) {
           .from('schools')
           .select('id')
           .eq('id', schoolId)
-          .maybeSingle() as any;
+          .maybeSingle();
         if (!schoolExists) {
           missingSchools.push(String(schoolId));
           continue;
         }
         validAssignments++;
-        const { error: assignErr } = await supabaseAdmin
+        // Convert grade_sections_assigned to JSONB format
+        const gradeSectionsJsonb = a?.grade_sections_assigned 
+          ? JSON.stringify(a.grade_sections_assigned)
+          : null;
+        
+        // Generate an ID to avoid NOT NULL violations if DB default is missing
+        const assignmentId = randomUUID();
+
+        console.log(`📝 Creating teacher_schools assignment for teacher ${userId} to school ${schoolId}:`, {
+          teacher_id: userId,
+          school_id: schoolId,
+          is_primary: a?.is_primary ?? false,
+          grades_assigned: a?.grades_assigned,
+          grade_sections_assigned: a?.grade_sections_assigned,
+          gradeSectionsJsonb: gradeSectionsJsonb
+        });
+        
+        // Use insert with explicit conflict handling to ensure data is saved
+        const { data: assignmentData, error: assignErr } = await supabaseAdmin
           .from('teacher_schools')
           .upsert({
+            id: assignmentId,
             teacher_id: userId,
             school_id: schoolId,
-            grades_assigned: (a?.grades_assigned as any) || [],
-            subjects: (a?.subjects as any) || [],
+            grades_assigned: (a?.grades_assigned as string[]) || [],
+            grade_sections_assigned: gradeSectionsJsonb || null,
+            subjects: (a?.subjects as string[]) || [],
             working_days_per_week: a?.working_days_per_week ?? 5,
             max_students_per_session: a?.max_students_per_session ?? 30,
             is_primary: a?.is_primary ?? false,
             assigned_at: new Date().toISOString(),
-          } as any, { onConflict: 'teacher_id,school_id' } as any) as any;
+          } as never, {
+            onConflict: 'teacher_id,school_id',
+            ignoreDuplicates: false
+          });
+          
         if (assignErr) {
-          logger.warn('Assignment upsert failed (non-critical)', { endpoint: '/api/admin/teachers', method: 'POST', schoolId: schoolId || undefined }, assignErr);
+          logger.error('Assignment upsert failed', { 
+            endpoint: '/api/admin/teachers', 
+            method: 'POST', 
+            schoolId: schoolId || undefined,
+            teacher_id: userId,
+            error: assignErr,
+            errorDetails: assignErr.message || assignErr
+          }, assignErr);
+          console.error(`❌ Failed to create assignment:`, assignErr);
+        } else {
+          console.log(`✅ Successfully assigned teacher ${userId} to school ${schoolId}`);
+          if (assignmentData) {
+            console.log('Assignment data returned:', JSON.stringify(assignmentData, null, 2));
+          }
+          
+          // Verify the assignment was actually saved by querying it back immediately
+          const { data: verifyAssignment, error: verifyError } = await supabaseAdmin
+            .from('teacher_schools')
+            .select('id, teacher_id, school_id, grades_assigned, grade_sections_assigned, is_primary')
+            .eq('teacher_id', userId)
+            .eq('school_id', schoolId)
+            .maybeSingle();
+          
+          if (verifyError) {
+            console.error(`❌ Verification query failed:`, verifyError);
+          } else if (verifyAssignment) {
+            console.log(`✅ Verified assignment exists in database:`, JSON.stringify(verifyAssignment, null, 2));
+          } else {
+            console.error(`❌ CRITICAL: Assignment not found after creation! teacher_id: ${userId}, school_id: ${schoolId}`);
+            // Try to find any assignments for this teacher
+            const { data: allTeacherAssignments } = await supabaseAdmin
+              .from('teacher_schools')
+              .select('teacher_id, school_id')
+              .eq('teacher_id', userId)
+              .limit(5);
+            console.log(`All assignments for teacher_id ${userId}:`, allTeacherAssignments);
+          }
         }
       }
     }
@@ -697,6 +900,29 @@ export async function POST(request: NextRequest) {
         message: 'No valid school assignments. Check school IDs.',
         details: missingSchools,
       }, { status: 400 });
+    }
+    
+    // After all assignments are created, ensure profiles.school_id is set to the primary school
+    if (validAssignments > 0) {
+      // Find the primary school assignment, or use the first one
+      const primaryAssignment = school_assignments?.find((a: { is_primary?: boolean }) => a.is_primary) || school_assignments?.[0];
+      const finalSchoolId = primaryAssignment?.school_id;
+      
+      if (finalSchoolId) {
+        // Update profiles.school_id to ensure it's set correctly
+        const { error: profileUpdateErr } = await supabaseAdmin
+          .from('profiles')
+          // @ts-expect-error - Supabase generated types use never for untyped schema
+          .update({ school_id: finalSchoolId })
+          .eq('id', userId)
+          .eq('role', 'teacher');
+        
+        if (profileUpdateErr) {
+          console.warn(`⚠️ Failed to update profiles.school_id for teacher ${userId}:`, profileUpdateErr);
+        } else {
+          console.log(`✅ Updated profiles.school_id to ${finalSchoolId} for teacher ${userId}`);
+        }
+      }
     }
 
     logger.info('Teacher created successfully', {
@@ -762,7 +988,7 @@ export async function PUT(request: NextRequest) {
     const validation = validateRequestBody(updateTeacherSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -794,8 +1020,7 @@ export async function PUT(request: NextRequest) {
       .from('teachers')
       .select('email, temp_password')
       .eq('id', id)
-       
-      .single() as any;
+      .single();
 
     if (fetchError || !currentTeacher) {
       console.error('Error fetching teacher:', fetchError);
@@ -805,7 +1030,10 @@ export async function PUT(request: NextRequest) {
       }, { status: 404 });
     }
 
-    const teacherData = currentTeacher as { email?: string; temp_password?: string };
+    const teacherData = currentTeacher as Teacher | null;
+    if (!teacherData) {
+      return NextResponse.json({ error: 'Teacher not found' }, { status: 404 });
+    }
     // If password change is requested, find profile_id from profiles table and update it in Supabase Auth
     if (change_password && temp_password) {
       console.log('🔐 Changing password for teacher:', teacherData.email);
@@ -818,11 +1046,10 @@ export async function PUT(request: NextRequest) {
           .from('profiles')
           .select('id')
           .eq('email', teacherData.email)
-           
-          .maybeSingle() as any;
+          .maybeSingle();
         
         if (!profileError && profile) {
-          profileId = (profile as { id: string }).id;
+          profileId = (profile as Profile).id;
           console.log('✅ Found profile_id:', profileId);
         } else {
           console.log('⚠️ No profile found for email:', teacherData.email);
@@ -883,7 +1110,12 @@ export async function PUT(request: NextRequest) {
         
         if (!listError && authUsers?.users) {
            
-          const authUser = authUsers.users.find((user: any) => user.email === teacherData.email);
+          interface User {
+            id?: string;
+            email?: string;
+          }
+          
+          const authUser = authUsers.users.find((user: User) => user.email === teacherData.email);
           
           if (authUser) {
             const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(
@@ -918,10 +1150,9 @@ export async function PUT(request: NextRequest) {
         .from('profiles')
         .select('id')
         .eq('email', teacherData.email)
-         
-        .maybeSingle() as any;
+        .maybeSingle();
       
-      teacherProfileId = (profile as { id?: string } | null)?.id || null;
+      teacherProfileId = (profile as Profile | null)?.id || null;
     }
     
     if (!teacherProfileId) {
@@ -946,10 +1177,9 @@ export async function PUT(request: NextRequest) {
         p_experience_years: experience_years,
         p_specialization: specialization,
         p_school_assignments: school_assignments ? JSON.stringify(school_assignments) : null
-       
-      } as any);
+      } as never);
      
-    const { data: transactionResult, error: transactionError } = rpcUpdateResult as { data: { success?: boolean; error?: string } | null; error: any };
+    const { data: transactionResult, error: transactionError } = rpcUpdateResult as { data: { success?: boolean; error?: string } | null; error: unknown };
 
     const updateResult = transactionResult as { success?: boolean; error?: string } | null;
     if (transactionError || !updateResult?.success) {
@@ -970,13 +1200,11 @@ export async function PUT(request: NextRequest) {
 
     // Update temp_password in teachers table if provided (separate from transaction)
     if (change_password && temp_password) {
-       
-      const { error: passwordUpdateError } = await ((supabaseAdmin as any)
+      const { error: passwordUpdateError } = await supabaseAdmin
         .from('teachers')
-         
-        .update({ temp_password } as any)
-         
-        .eq('id', id)) as any;
+        // @ts-expect-error - Supabase generated types use never for untyped schema
+        .update({ temp_password })
+        .eq('id', id);
       
       if (passwordUpdateError) {
         console.warn('⚠️ Could not update temp_password:', passwordUpdateError);
@@ -989,8 +1217,7 @@ export async function PUT(request: NextRequest) {
       .from('teachers')
       .select('id, teacher_id, full_name, email, phone, qualification, experience_years, specialization, address, temp_password, status, created_at, updated_at')
       .eq('email', emailToSearch)
-       
-      .single() as any;
+      .single();
 
     if (fetchTeacherError) {
       console.warn('⚠️ Could not fetch updated teacher:', fetchTeacherError);
@@ -1070,7 +1297,15 @@ export async function PUT(request: NextRequest) {
     // Step 1: Get teacher data to find profile_id and user_id
     // Try multiple ways to find the teacher
      
-    let teacher: any = null;
+    interface Teacher {
+      id?: string;
+      email?: string;
+      teacher_id?: string;
+      full_name?: string;
+      profile_id?: string;
+    }
+    
+    let teacher: Teacher | null = null;
     
     // First, try by id (primary key) - use .maybeSingle() to avoid errors
     console.log('🔍 Searching by id (primary key)...');
@@ -1083,7 +1318,7 @@ export async function PUT(request: NextRequest) {
       .from('teachers')
       .select('id, email, teacher_id, full_name')
        
-      .limit(100) as any;
+      .limit(100);
     
     if (testError) {
       console.error('❌ Error querying teachers table:', testError);
@@ -1117,26 +1352,24 @@ export async function PUT(request: NextRequest) {
         .from('teachers')
         .select('id, email, teacher_id, full_name')
         .eq('id', normalizedId)
-         
-        .maybeSingle() as any;
+        .maybeSingle();
 
       if (errorById) {
         console.error('❌ Error querying by id:', errorById);
       } else if (teacherById) {
-        teacher = teacherById as { id: string; email?: string; teacher_id?: string; full_name?: string };
+        teacher = teacherById as Teacher;
         console.log('✅ Found teacher by id query:', { id: teacher.id, email: teacher.email, name: teacher.full_name });
       } else {
         console.log('⚠️ Teacher not found by id query, trying direct list query...');
         const { data: teachersListData, error: listError } = await supabaseAdmin
           .from('teachers')
           .select('id, email, teacher_id, full_name')
-           
-          .eq('id', normalizedId) as any;
+          .eq('id', normalizedId);
         
         if (listError) {
           console.error('❌ Error in direct query:', listError);
         } else if (teachersListData && teachersListData.length > 0) {
-          teacher = teachersListData[0] as { id: string; email?: string; teacher_id?: string; full_name?: string };
+          teacher = teachersListData[0] as Teacher;
           console.log('✅ Found teacher via direct query:', teacher);
         } else {
           console.log('⚠️ No teachers found with id:', normalizedId);
@@ -1153,13 +1386,12 @@ export async function PUT(request: NextRequest) {
         .from('teachers')
         .select('id, email, teacher_id, full_name')
         .eq('teacher_id', normalizedId)
-         
-        .maybeSingle() as any;
+        .maybeSingle();
 
       if (errorByTeacherId) {
         console.error('❌ Error querying by teacher_id:', errorByTeacherId);
       } else if (teacherByTeacherId) {
-        teacher = teacherByTeacherId as { id: string; email?: string; teacher_id?: string; full_name?: string };
+        teacher = teacherByTeacherId as Teacher;
         console.log('✅ Found teacher by teacher_id:', { id: teacher.id, teacher_id: teacher.teacher_id, email: teacher.email, name: teacher.full_name });
       } else {
         // If the id looks like an email, try searching by email as a last resort
@@ -1169,13 +1401,12 @@ export async function PUT(request: NextRequest) {
             .from('teachers')
             .select('id, email, teacher_id, full_name')
             .eq('email', normalizedId)
-             
-            .maybeSingle() as any;
+            .maybeSingle();
           
           if (emailError) {
             console.error('❌ Error querying by email:', emailError);
           } else if (teacherByEmail) {
-            teacher = teacherByEmail as { id: string; email?: string; teacher_id?: string; full_name?: string };
+            teacher = teacherByEmail as Teacher;
             console.log('✅ Found teacher by email:', { id: teacher.id, email: teacher.email, name: teacher.full_name });
           }
         }
@@ -1190,7 +1421,7 @@ export async function PUT(request: NextRequest) {
         .from('teachers')
         .select('id, teacher_id, email, full_name')
          
-        .limit(10) as any;
+        .limit(10);
       
       if (listError) {
         console.error('❌ Error listing teachers:', listError);
@@ -1231,11 +1462,10 @@ export async function PUT(request: NextRequest) {
         .from('profiles')
         .select('id')
         .eq('email', teacher.email)
-         
-        .maybeSingle() as any;
+        .maybeSingle();
       
       if (!profileError && profile) {
-        profileId = (profile as { id: string }).id;
+        profileId = (profile as Profile).id;
         console.log('✅ Found profile_id:', profileId);
       } else {
         console.log('⚠️ No profile found for email:', teacher.email);
@@ -1262,6 +1492,9 @@ export async function PUT(request: NextRequest) {
     }
 
     // Step 4: Delete from teachers table using the actual teacher ID from database
+    if (actualTeacherId == null) {
+      return NextResponse.json({ error: 'Teacher ID not found' }, { status: 400 });
+    }
     console.log('👤 Deleting from teachers table with ID:', actualTeacherId);
     const { error: teacherDeleteError } = await supabaseAdmin
       .from('teachers')
@@ -1302,7 +1535,12 @@ export async function PUT(request: NextRequest) {
         
         if (!listError && authUsers?.users) {
            
-          const authUser = authUsers.users.find((user: any) => user.email === teacher.email);
+          interface User {
+            id?: string;
+            email?: string;
+          }
+          
+          const authUser = authUsers.users.find((user: User) => user.email === teacher.email);
           
           if (authUser) {
             console.log('🔍 Found auth user:', authUser.id);

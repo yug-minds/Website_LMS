@@ -11,6 +11,13 @@ import { supabaseAdmin } from '../../../../lib/supabase';
  * Manually refreshes materialized views for dashboard statistics
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -43,7 +50,7 @@ export async function POST(request: NextRequest) {
     
     // Refresh materialized views (incremental or full)
     const { data, error } = await supabaseAdmin
-      .rpc('refresh_dashboard_views', { p_incremental: incremental });
+      .rpc('refresh_dashboard_views', { p_incremental: incremental } as never);
 
     const duration = Date.now() - startTime;
 

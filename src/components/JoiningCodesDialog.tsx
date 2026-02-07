@@ -16,24 +16,14 @@ import {
   Key,
   Copy,
   RefreshCw,
-  Eye,
-  EyeOff,
   X,
   AlertCircle,
   CheckCircle,
   Plus,
   Edit,
   Save,
-  Trash2,
   Loader2
 } from "lucide-react";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue 
-} from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Checkbox } from "./ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -101,6 +91,7 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
       setEditingCode(null);
       setEditedCodes({});
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- fetch on open/schoolId only */
   }, [isOpen, schoolId]);
 
   const showNotification = (type: 'success' | 'error', message: string) => {
@@ -132,7 +123,7 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
       if (response.ok) {
         const data = await response.json();
          
-        const school = data.schools?.find((s: any) => s.id === schoolId);
+        const school = data.schools?.find((s: { id: string }) => s.id === schoolId);
         if (school && school.grades_offered) {
           setSchoolGrades(school.grades_offered);
         }
@@ -144,14 +135,14 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
 
   // Get available grades (grades without active codes)
   const getAvailableGrades = () => {
-    const gradesWithCodes = codes.filter((c: any) => c.is_active).map((c: any) => c.grade);
-    return schoolGrades.filter((grade: any) => !gradesWithCodes.includes(grade));
+    const gradesWithCodes = codes.filter((c: JoiningCode) => c.is_active).map((c: JoiningCode) => c.grade);
+    return schoolGrades.filter((grade: string) => !gradesWithCodes.includes(grade));
   };
 
   const handleGradeToggle = (grade: string) => {
     setSelectedGrades(prev => {
       if (prev.includes(grade)) {
-        return prev.filter((g: any) => g !== grade);
+        return prev.filter((g: string) => g !== grade);
       } else {
         return [...prev, grade];
       }
@@ -165,8 +156,8 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
     }
 
     // Warn if any selected grade already has an active code, but allow generation
-    const gradesWithCodes = selectedGrades.filter((grade: any) => {
-      const existingCode = codes.find((c: any) => c.grade === grade && c.is_active);
+    const gradesWithCodes = selectedGrades.filter((grade: string) => {
+      const existingCode = codes.find((c: JoiningCode) => c.grade === grade && c.is_active);
       return existingCode !== undefined;
     });
 
@@ -270,7 +261,7 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
   };
 
    
-  const handleCodeEdit = (codeId: string, field: keyof JoiningCode, value: any) => {
+  const handleCodeEdit = (codeId: string, field: keyof JoiningCode, value: JoiningCode[keyof JoiningCode]) => {
     setEditingCode(codeId);
     setEditedCodes(prev => ({
       ...prev,
@@ -532,7 +523,7 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
                       <div className="p-4 border rounded-lg bg-gray-50 max-h-[400px] overflow-y-auto">
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {availableGrades.map((grade) => {
-                            const hasActiveCode = codes.some((c: any) => c.grade === grade && c.is_active);
+                            const hasActiveCode = codes.some((c: JoiningCode) => c.grade === grade && c.is_active);
                             const isSchoolGrade = schoolGrades.includes(grade);
                             return (
                               <div key={grade} className="flex items-center space-x-2">
@@ -567,7 +558,7 @@ export default function JoiningCodesDialog({ isOpen, onClose, schoolId, schoolNa
                           <p className="text-sm text-blue-800 font-medium">
                             ✓ {selectedGrades.length} grade(s) selected: {selectedGrades.join(', ')}
                           </p>
-                          {selectedGrades.some((g: any) => !schoolGrades.includes(g)) && (
+                          {selectedGrades.some((g: string) => !schoolGrades.includes(g)) && (
                             <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
                               <AlertCircle className="h-3 w-3" />
                               Some selected grades are not configured for this school. Codes will still be generated.

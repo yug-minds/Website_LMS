@@ -34,7 +34,16 @@ export default function TeacherAnalyticsTab({ selectedSchoolId }: TeacherAnalyti
   const { data: monthlyAttendance, isLoading: attendanceLoading } = useTeacherMonthlyAttendance(selectedSchoolId, 6);
 
   const attendanceAreaData = useMemo(() => {
-    return monthlyAttendance?.map((m: TeacherMonthlyAttendanceRecord) => {
+    type MonthlyAttendanceData = {
+      month: string | Date;
+      present_count?: number;
+      present?: number;
+      total_days?: number;
+      absent_count?: number;
+      leave_count?: number;
+      unreported_count?: number;
+    };
+    return (monthlyAttendance as MonthlyAttendanceData[] | undefined)?.map((m: MonthlyAttendanceData) => {
       const present = m.present_count ?? m.present ?? 0;
       const fallbackTotal =
         (m.present_count ?? 0) +

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Bell, 
@@ -15,7 +15,7 @@ import {
   Award,
   Users
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 // import { ScrollArea } from '../ui/scroll-area'; // Component doesn't exist
@@ -44,7 +44,7 @@ interface Notification {
     assignment_id?: string;
     due_date?: string;
     achievement_type?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -63,7 +63,7 @@ export default function NotificationCenter({ isOpen, onClose, userId }: Notifica
   useStudentRealtimeNotifications(userId);
 
   // Fetch notifications
-  const { data: notifications, isLoading, refetch } = useQuery({
+  const { data: notifications, isLoading, refetch: _refetch } = useQuery({
     queryKey: ['studentNotifications'],
     queryFn: async () => {
       try {
@@ -92,7 +92,7 @@ export default function NotificationCenter({ isOpen, onClose, userId }: Notifica
     mutationFn: async (notificationId: string) => {
       const { error } = await supabase
         .from('notifications')
-        .update({ is_read: true })
+        .update({ is_read: true } as never)
         .eq('id', notificationId);
 
       if (error) throw error;
@@ -113,7 +113,7 @@ export default function NotificationCenter({ isOpen, onClose, userId }: Notifica
 
       const { error } = await supabase
         .from('notifications')
-        .update({ is_read: true })
+        .update({ is_read: true } as never)
         .eq('user_id', user.id)
         .eq('is_read', false);
 
@@ -146,7 +146,7 @@ export default function NotificationCenter({ isOpen, onClose, userId }: Notifica
   });
 
   // Filter notifications
-  const filteredNotifications = notifications?.filter((notification: any) => {
+  const filteredNotifications = notifications?.filter((notification: Notification) => {
     switch (filter) {
       case 'unread':
         return !notification.is_read;
@@ -157,7 +157,7 @@ export default function NotificationCenter({ isOpen, onClose, userId }: Notifica
     }
   }) || [];
 
-  const unreadCount = notifications?.filter((n: any) => !n.is_read).length || 0;
+  const unreadCount = notifications?.filter((n: Notification) => !n.is_read).length || 0;
 
   const getNotificationIcon = (type: string) => {
     switch (type) {

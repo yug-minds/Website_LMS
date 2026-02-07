@@ -46,15 +46,16 @@ try {
           const payloadJson = Buffer.from(base64, 'base64').toString('utf-8');
           const payload = JSON.parse(payloadJson);
           if (payload && payload.sub) {
+            type ProfileRow = { role?: string | null; school_id?: string | null };
             const { data: profile } = await supabaseAdmin
               .from('profiles')
               .select('role, school_id')
               .eq('id', payload.sub)
-               
-              .single() as any;
+              .single();
             
-            if (profile && profile.role === 'school_admin' && profile.school_id) {
-              schoolId = profile.school_id;
+            const profileRow = profile as ProfileRow | null;
+            if (profileRow?.role === 'school_admin' && profileRow?.school_id) {
+              schoolId = profileRow.school_id;
             }
           }
         }
@@ -169,6 +170,13 @@ try {
 
 // PATCH: Update password reset request status (approve/reject)
 export async function PATCH(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -216,7 +224,7 @@ try {
                 .select('role, school_id')
                 .eq('id', payload.sub)
                  
-                .single() as any;
+                .single();
               
               if (profile && profile.role === 'school_admin' && profile.school_id) {
                 schoolId = profile.school_id;
@@ -233,7 +241,7 @@ try {
           }
         }
        
-      } catch (e: any) {
+      } catch (e: unknown) {
         logger.warn('JWT decode failed (non-critical)', {
           endpoint: '/api/school-admin/password-reset-requests',
         }, e instanceof Error ? e : new Error(String(e)));
@@ -284,7 +292,7 @@ try {
       );
     }
 
-    let body: any;
+    let body: Record<string, unknown>;
     try {
       body = await request.json();
     } catch (parseError) {
@@ -311,7 +319,14 @@ try {
     // Validate request body
     const validation = validateRequestBody(passwordResetRequestUpdateSchema, body);
     if (!validation.success) {
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type _ZodIssue = {
+        path: (string | number)[];
+        message: string;
+        code?: string;
+        input?: unknown;
+      };
+      
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       
       // Log detailed validation errors
       console.error('❌ Validation failed for school admin password reset request update');
@@ -319,11 +334,12 @@ try {
       console.error('  Validation error count:', validation.details?.issues?.length || 0);
       console.error('  Validation issues:');
       if (validation.details?.issues) {
-        validation.details.issues.forEach((issue: any, index: number) => {
-          console.error(`    ${index + 1}. Path: [${issue.path.join('.')}]`);
+        validation.details.issues.forEach((issue, index: number) => {
+          const path = (issue.path as (string | number)[]).join('.');
+          console.error(`    ${index + 1}. Path: [${path}]`);
           console.error(`       Message: ${issue.message}`);
-          console.error(`       Code: ${issue.code}`);
-          console.error(`       Input: ${JSON.stringify(issue.input)}`);
+          console.error(`       Code: ${(issue as { code?: string }).code}`);
+          console.error(`       Input: ${JSON.stringify((issue as { input?: unknown }).input)}`);
         });
       }
       console.error('  Combined error messages:', errorMessages);
@@ -339,10 +355,10 @@ try {
         { 
           error: 'Validation failed',
           details: errorMessages,
-          validationIssues: validation.details?.issues?.map((issue: any) => ({
-            path: issue.path.join('.'),
+          validationIssues: validation.details?.issues?.map((issue) => ({
+            path: (issue.path as (string | number)[]).join('.'),
             message: issue.message,
-            code: issue.code
+            code: (issue as { code?: string }).code
           }))
         },
         { status: 400 }
@@ -378,13 +394,23 @@ try {
     // Get the request first and verify it belongs to the school admin's school
     console.log('🔍 Looking for password reset request with ID:', id, '(type:', typeof id, ')', 'for school:', schoolId);
     
+    type PasswordResetRequestRow = {
+      id?: string;
+      user_id?: string;
+      email?: string | null;
+      status?: string | null;
+      school_id?: string | null;
+      user_role?: string | null;
+      [key: string]: unknown;
+    };
     const { data: resetRequest, error: fetchError } = await supabaseAdmin
       .from('password_reset_requests')
       .select('id, user_id, email, status, requested_at, approved_at, approved_by, school_id, user_role, notes, created_at, updated_at')
       .eq('id', id)
       .eq('school_id', schoolId)
-      .maybeSingle() as any;
+      .maybeSingle();
 
+    const requestRow = resetRequest as PasswordResetRequestRow | null;
     if (fetchError) {
       console.error('❌ Error fetching password reset request:', fetchError);
       logger.error('Error fetching password reset request', {
@@ -402,19 +428,26 @@ try {
       );
     }
 
-    if (!resetRequest) {
+    if (!requestRow) {
       console.error('❌ Password reset request not found with ID:', id, 'for school:', schoolId);
       
       // Debug: Check if any requests exist for this school
-      const { data: schoolRequests, error: debugError } = await supabaseAdmin
+      const { data: schoolRequests, error: _debugError } = await supabaseAdmin
         .from('password_reset_requests')
         .select('id, email, status, school_id')
         .eq('school_id', schoolId)
-        .limit(5) as any;
+        .limit(5);
       
       console.log('🔍 Debug: Found', schoolRequests?.length || 0, 'password reset requests for school', schoolId);
       if (schoolRequests && schoolRequests.length > 0) {
-        console.log('🔍 Debug: Sample request IDs for this school:', schoolRequests.map((r: any) => r.id));
+        interface PasswordResetRequest {
+          id?: string;
+          email?: string;
+          status?: string;
+          school_id?: string;
+        }
+        
+        console.log('🔍 Debug: Sample request IDs for this school:', schoolRequests.map((r: PasswordResetRequest) => r.id));
       }
       
       // Check if the ID format is correct
@@ -439,14 +472,14 @@ try {
     }
 
     console.log('✅ Found password reset request:', {
-      id: resetRequest.id,
-      email: resetRequest.email,
-      status: resetRequest.status,
-      school_id: resetRequest.school_id
+      id: requestRow.id,
+      email: requestRow.email,
+      status: requestRow.status,
+      school_id: requestRow.school_id
     });
 
     // Verify it's not a school admin request (school admins can't approve other school admins)
-    if (resetRequest.user_role === 'school_admin') {
+    if (requestRow.user_role === 'school_admin') {
       return NextResponse.json(
         { error: 'School admins cannot approve password reset requests for other school admins' },
         { status: 403 }
@@ -455,7 +488,15 @@ try {
 
     // Update the request
      
-    const updateData: any = {
+    interface PasswordResetRequestUpdate {
+      status?: string;
+      updated_at?: string;
+      approved_at?: string;
+      approved_by?: string;
+      notes?: string;
+    }
+    
+    const updateData: PasswordResetRequestUpdate = {
       status,
       updated_at: new Date().toISOString()
     };
@@ -469,14 +510,13 @@ try {
       updateData.notes = notes;
     }
 
-    const { data: updatedRequest, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedRequest, error: updateError } = await supabaseAdmin
       .from('password_reset_requests')
-       
-      .update(updateData as any)
+      // @ts-expect-error - Supabase generated types use never for untyped schema
+      .update(updateData)
       .eq('id', id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (updateError) {
       logger.error('Error updating password reset request', {
@@ -493,14 +533,14 @@ try {
 
     // If approved, reset the password
     let tempPassword: string | null = null;
-    if (status === 'approved' && resetRequest.user_id) {
+    if (status === 'approved' && requestRow.user_id) {
       try {
         // Generate a temporary password
         tempPassword = `TempPass${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
         
         // Update password in Supabase Auth
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
-          resetRequest.user_id,
+          requestRow.user_id,
           { password: tempPassword }
         );
 
@@ -518,39 +558,35 @@ try {
         }
 
         // Set force_password_change flag on profile
-         
-        await ((supabaseAdmin as any)
+        await supabaseAdmin
           .from('profiles')
-           
-          .update({ force_password_change: true } as any)
-           
-          .eq('id', resetRequest.user_id)) as any;
+          // @ts-expect-error - Supabase generated types use never for untyped schema
+          .update({ force_password_change: true })
+          .eq('id', requestRow.user_id);
 
         // Update the request with the temp password in notes
-         
-        await ((supabaseAdmin as any)
+        await supabaseAdmin
           .from('password_reset_requests')
+          // @ts-expect-error - Supabase generated types use never for untyped schema
           .update({ 
             notes: `Password reset completed. Temporary password: ${tempPassword}`,
             status: 'completed'
-           
-          } as any)
-           
-          .eq('id', id)) as any;
+          })
+          .eq('id', id);
 
         // Send notification to the user
-        await (supabaseAdmin
+        await supabaseAdmin
           .from('notifications')
+          // @ts-expect-error - Supabase generated types use never for untyped schema
           .insert({
-            user_id: resetRequest.user_id,
+            user_id: requestRow.user_id,
             title: 'Password Reset Approved',
             message: `Your password reset request has been approved. Your temporary password is: ${tempPassword}. Please log in and change your password immediately.`,
             type: 'success',
-            is_read: false
-           
-          } as any) as any);
+            is_read: false,
+          });
        
-      } catch (authError: any) {
+      } catch (authError: unknown) {
         logger.error('Error in password reset', {
           endpoint: '/api/school-admin/password-reset-requests',
         }, authError instanceof Error ? authError : new Error(String(authError)));

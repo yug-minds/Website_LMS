@@ -49,47 +49,69 @@ try {
       );
     }
 
-    const results: any = {
+    type RoleResult = {
+      id: string;
+      name: string;
+      count: number;
+    };
+    type UserResult = {
+      id: string;
+      name: string | null;
+      email: string | null;
+      role: string | null;
+      schoolId: string | null;
+    };
+    type RecipientsResult = {
+      roles: RoleResult[];
+      users: UserResult[];
+    };
+    const results: RecipientsResult = {
       roles: [],
       users: []
     };
 
     // Get distinct roles within this school
+    type ProfileRole = {
+      role?: string | null;
+    };
     const { data: rolesData, error: rolesError } = await supabaseAdmin
       .from('profiles')
       .select('role')
       .eq('school_id', finalSchoolId)
-       
-      .not('role', 'is', null) as any;
+      .not('role', 'is', null);
 
     if (!rolesError && rolesData) {
-       
-      const uniqueRoles: string[] = [...new Set((rolesData as any[]).map((p: any) => p.role).filter(Boolean))];
+      const typedRolesData = (rolesData || []) as ProfileRole[];
+      const uniqueRoles: string[] = [...new Set(typedRolesData.map((p) => p.role).filter((r): r is string => Boolean(r)))];
       results.roles = uniqueRoles.map((role: string) => ({
         id: role,
         name: role.charAt(0).toUpperCase() + role.slice(1).replace('_', ' '),
-         
-        count: (rolesData as any[]).filter((p: any) => p.role === role).length
+        count: typedRolesData.filter((p) => p.role === role).length
       }));
     }
 
     // Get users in this school
+    type ProfileUser = {
+      id: string;
+      full_name?: string | null;
+      email?: string | null;
+      role?: string | null;
+      school_id?: string | null;
+    };
     const { data: usersData, error: usersError } = await supabaseAdmin
       .from('profiles')
       .select('id, full_name, email, role, school_id')
       .eq('school_id', finalSchoolId)
       .limit(200)
-       
-      .order('full_name', { ascending: true }) as any;
+      .order('full_name', { ascending: true });
 
     if (!usersError && usersData) {
-       
-      results.users = (usersData as any[]).map((user: any) => ({
+      results.users = ((usersData || []) as ProfileUser[]).map((user): UserResult => ({
         id: user.id,
-        name: user.full_name || user.email,
-        email: user.email,
-        role: user.role,
-        schoolId: user.school_id
+        name: (user.full_name ?? user.email) ?? null,
+        email: user.email ?? null,
+        role: user.role ?? null,
+        schoolId: user.school_id ?? null
       }));
     }
 

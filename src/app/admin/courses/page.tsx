@@ -3,7 +3,6 @@
 "use client"
 
 import { useState, useEffect } from "react";
-import { supabase } from "../../../lib/supabase";
 import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
@@ -17,8 +16,7 @@ import {
   DialogDescription, 
   DialogFooter, 
   DialogHeader, 
-  DialogTitle, 
-  DialogTrigger 
+  DialogTitle
 } from "../../../components/ui/dialog";
 import {
   Select,
@@ -35,24 +33,13 @@ import {
   TableHeader, 
   TableRow 
 } from "../../../components/ui/table";
-import { 
-  Tabs, 
-  TabsContent, 
-  TabsList, 
-  TabsTrigger 
-} from "../../../components/ui/tabs";
 import { fetchWithCsrf } from '../../../lib/csrf-client';
 import {
-  saveCourseFormState,
-  loadCourseFormState,
   clearCourseFormState,
   hasCourseFormState,
-  showRecoveryDialog,
-  useCourseFormAutoSave,
-  type CourseFormState
 } from '../../../lib/course-form-persistence';
 import { CourseCreationWizard } from '../../../components/admin/CourseCreationWizard';
-import { CourseEditor } from '../../../components/admin/CourseEditor';
+import { CourseEditor, type Chapter as EditorChapter, type AssignmentFromAPI as EditorAssignmentFromAPI } from '../../../components/admin/CourseEditor';
 import { CoursePublishDialog } from '../../../components/admin/CoursePublishDialog';
 import { CourseVersionHistory } from '../../../components/admin/CourseVersionHistory';
 import { 
@@ -60,39 +47,23 @@ import {
   Edit, 
   Trash2, 
   Eye, 
-  BookOpen,
   Search,
-  Filter,
   School,
-  Users,
-  Calendar,
   Play,
   Pause,
-  Archive,
   FileText,
   Video,
   FileImage,
   CheckSquare,
-  ArrowRight,
-  ArrowLeft,
   Save,
   Upload,
-  Link,
-  Clock,
-  Target,
   PlusCircle,
   X,
-  CheckCircle,
-  AlertCircle,
   File,
-  Download,
   Image,
   FileVideo,
-   
   FileAudio,
-  FolderOpen,
   Loader2,
-  Trash2 as Trash2Icon,
   History
 } from "lucide-react";
 
@@ -112,9 +83,13 @@ interface Course {
   total_materials: number;
   total_assignments: number;
   release_type: 'Daily' | 'Weekly' | 'Bi-weekly';
-   
-   
-  content_summary?: any;
+  duration_weeks?: number;
+  prerequisites_course_ids?: string[];
+  prerequisites_text?: string;
+  thumbnail_url?: string;
+  difficulty_level?: string;
+  assignments?: Assignment[];
+  content_summary?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   course_access?: CourseAccess[];
@@ -157,10 +132,11 @@ interface Video {
   content_id?: string;
   content_order?: number;
    
-  content_metadata?: Record<string, any>;
+  content_metadata?: Record<string, unknown>;
 }
 
  
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future use
 interface Material {
   id?: string;
   chapter_id: string;
@@ -174,9 +150,10 @@ interface Material {
   content_id?: string;
   content_order?: number;
    
-  content_metadata?: Record<string, any>;
+  content_metadata?: Record<string, unknown>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for content type checks
 type ChapterContentType =
   | 'text'
   | 'video'
@@ -197,7 +174,7 @@ interface ChapterTextContent {
    
   order_index?: number;
    
-  content_metadata?: Record<string, any>;
+  content_metadata?: Record<string, unknown>;
 }
 
 interface Assignment {
@@ -235,6 +212,7 @@ interface Resource {
   uploaded_at?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for form typing
 interface CourseFormData {
   id?: string;
   name: string;
@@ -250,8 +228,20 @@ interface CourseFormData {
   status: 'Draft' | 'Published';
 }
 
+interface School {
+  id: string;
+  name: string;
+  address?: string;
+  grades_offered?: string[];
+}
+
+interface GradeOption {
+  value: string;
+  label: string;
+}
+
 export default function CoursesManagement() {
-  const generateClientUuid = () => {
+  const _generateClientUuid = () => {
     try {
        
       if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -267,17 +257,17 @@ export default function CoursesManagement() {
   const [courses, setCourses] = useState<Course[]>([]);
    
    
-  const [schools, setSchools] = useState<any[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
    
-  const [loadingSchools, setLoadingSchools] = useState(false);
+  const [_loadingSchools, setLoadingSchools] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
    
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<'All' | 'Draft' | 'Published' | 'Archived'>('All');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
    
-  const [isChapterDialogOpen, setIsChapterDialogOpen] = useState(false);
-  const [isResourceDialogOpen, setIsResourceDialogOpen] = useState(false);
+  const [_isChapterDialogOpen, _setIsChapterDialogOpen] = useState(false);
+  const [_isResourceDialogOpen, _setIsResourceDialogOpen] = useState(false);
    
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -291,15 +281,15 @@ export default function CoursesManagement() {
   const [viewingCourse, setViewingCourse] = useState<Course | null>(null);
   const [deletingCourse, setDeletingCourse] = useState<Course | null>(null);
    
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
+  const [selectedCourse, _setSelectedCourse] = useState<Course | null>(null);
+  const [selectedChapter, _setSelectedChapter] = useState<Chapter | null>(null);
   
   // NOTE: Old form state variables removed - CourseCreationWizard and CourseEditor manage their own state
   // Removed: currentStep, formData, chapters, chapterData, newOutcome, scheduling, videos, materials, assignments, chapterTextContents
   // These were only used by the old form implementation which has been replaced
   
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const [resourceData, setResourceData] = useState<Resource>({
+  const [_uploadingFile, setUploadingFile] = useState(false);
+  const [_resourceData, setResourceData] = useState<Resource>({
     name: "",
     type: "video",
     url: ""
@@ -308,8 +298,8 @@ export default function CoursesManagement() {
   // NOTE: selectedSchools and selectedGrades are still used for the old dialogs that may still be rendered
   // These can be removed once we confirm all old dialogs are no longer needed
   const [selectedSchools, setSelectedSchools] = useState<string[]>([]);
-  const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
-  const [currentAssignment, setCurrentAssignment] = useState<Assignment>({
+  const [_selectedGrades, setSelectedGrades] = useState<string[]>([]);
+  const [_currentAssignment, _setCurrentAssignment] = useState<Assignment>({
     chapter_id: '',
     title: '',
     description: '',
@@ -320,9 +310,9 @@ export default function CoursesManagement() {
   const [isVideoUploadOpen, setIsVideoUploadOpen] = useState(false);
   const [isVideoLinkDialogOpen, setIsVideoLinkDialogOpen] = useState(false);
   const [isMaterialUploadOpen, setIsMaterialUploadOpen] = useState(false);
-  const [isTextContentDialogOpen, setIsTextContentDialogOpen] = useState(false);
+  const [_isTextContentDialogOpen, setIsTextContentDialogOpen] = useState(false);
   const [isAssignmentBuilderOpen, setIsAssignmentBuilderOpen] = useState(false);
-  const [currentChapterIndex, setCurrentChapterIndex] = useState<number>(-1);
+  const [currentChapterIndex, _setCurrentChapterIndex] = useState<number>(-1);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [currentVideoFile, setCurrentVideoFile] = useState<File | null>(null);
@@ -332,14 +322,14 @@ export default function CoursesManagement() {
     youtube_url: ''
    
   });
-  const [textContentData, setTextContentData] = useState({
+  const [_textContentData, setTextContentData] = useState({
     title: '',
     content_text: ''
   });
-  const [textContentChapterId, setTextContentChapterId] = useState<string | null>(null);
+  const [_textContentChapterId, setTextContentChapterId] = useState<string | null>(null);
    
-  const [editingTextContentId, setEditingTextContentId] = useState<string | null>(null);
-  const [editingTextContentIndex, setEditingTextContentIndex] = useState<number | null>(null);
+  const [_editingTextContentId, setEditingTextContentId] = useState<string | null>(null);
+  const [_editingTextContentIndex, setEditingTextContentIndex] = useState<number | null>(null);
   const [assignmentBuilderData, setAssignmentBuilderData] = useState<{
     title: string;
     description: string;
@@ -424,6 +414,7 @@ export default function CoursesManagement() {
 
   useEffect(() => {
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
 
   // NOTE: Old form persistence/recovery useEffect hooks removed
@@ -440,8 +431,7 @@ export default function CoursesManagement() {
   useEffect(() => {
     if (editingCourse && schools.length > 0 && isCreateDialogOpen) {
       // Get schools and grades from the course
-       
-      const course = editingCourse as any;
+      const course = editingCourse;
       let schoolIds: string[] = [];
       let gradesList: string[] = [];
       
@@ -461,7 +451,7 @@ export default function CoursesManagement() {
           gradesList, 
           entries: course.course_access.length,
            
-          allGrades: course.course_access.map((ca: any) => ca.grade)
+          allGrades: course.course_access.map((ca: CourseAccess) => ca.grade)
         });
       }
       
@@ -512,7 +502,7 @@ export default function CoursesManagement() {
         console.log('✅ Loaded schools:', schoolsData.schools.length);
          
          
-        console.log('📋 School names:', schoolsData.schools.map((s: any) => s.name));
+        console.log('📋 School names:', schoolsData.schools.map((s: School) => s.name));
         setSchools(schoolsData.schools || []);
       } else {
         console.warn('⚠️ No schools array in response:', schoolsData);
@@ -587,7 +577,7 @@ export default function CoursesManagement() {
           setCourses([]);
         } else if (coursesData) {
           console.log('✅ [loadData] Loaded courses:', coursesData.length, 'courses');
-          console.log('📋 [loadData] Courses data:', coursesData.map((c: any) => ({
+          console.log('📋 [loadData] Courses data:', coursesData.map((c: Course) => ({
             id: c.id,
             name: c.name || c.course_name || c.title,
             status: c.status
@@ -596,7 +586,7 @@ export default function CoursesManagement() {
           
           // Force a re-render by updating state
           if (coursesData.length > 0) {
-            console.log('✅ [loadData] Courses will be displayed:', coursesData.map((c: any) => c.name || c.course_name));
+            console.log('✅ [loadData] Courses will be displayed:', coursesData.map((c: Course) => c.name || c.course_name));
           } else {
             console.log('ℹ️ [loadData] No courses in database - this is normal for a new system');
           }
@@ -604,12 +594,12 @@ export default function CoursesManagement() {
           console.warn('⚠️ [loadData] No courses data in response:', responseData);
           setCourses([]);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const err = error instanceof Error ? error : new Error(String(error));
         console.error('❌ [loadData] Exception fetching courses:', error);
-        console.error('   Error message:', error.message);
-        console.error('   Error stack:', error.stack);
-        // Don't show error to user if it's just that no courses exist
-        if (error.message?.includes('not found') || error.message?.includes('does not exist')) {
+        console.error('   Error message:', err.message);
+        console.error('   Error stack:', err.stack);
+        if (err.message?.includes('not found') || err.message?.includes('does not exist')) {
           console.log('ℹ️ [loadData] No courses exist - initializing empty list');
         }
         setCourses([]);
@@ -619,7 +609,7 @@ export default function CoursesManagement() {
 
       // Load schools via API route (bypasses RLS)
       await loadSchools();
-    } catch (error) {
+    } catch {
       console.log('Courses data not available');
       setCourses([]);
       setSchools([]);
@@ -674,14 +664,14 @@ export default function CoursesManagement() {
       loadData();
       alert('✅ Course deleted successfully!');
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error deleting course:', error);
-       
-      alert(error.message || 'Failed to delete course. Please try again.');
+      const msg = error instanceof Error ? error.message : 'Failed to delete course. Please try again.';
+      alert(msg);
     }
   };
 
-  const handleUpdateCourseStatus = async (courseId: string, status: 'Draft' | 'Published') => {
+  const _handleUpdateCourseStatus = async (courseId: string, status: 'Draft' | 'Published') => {
     try {
       const response = await fetchWithCsrf(`/api/admin/courses/${courseId}`, {
         method: 'PATCH',
@@ -704,9 +694,10 @@ export default function CoursesManagement() {
       loadData();
       alert(`Course ${status === 'Published' ? 'published' : 'unpublished'} successfully!`);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating course status:', error);
-      alert(error.message || 'Failed to update course status. Please try again.');
+      const msg = error instanceof Error ? error.message : 'Failed to update course status. Please try again.';
+      alert(msg);
     }
   };
 
@@ -738,8 +729,8 @@ export default function CoursesManagement() {
 
   // NOTE: handleGradeToggle removed - not used with new CourseCreationWizard component
 
-  // Get available grades based on selected schools
-  const getAvailableGrades = () => {
+  // Get available grades based on selected schools (reserved for future use)
+  const _getAvailableGrades = () => {
     if (selectedSchools.length === 0) {
       return gradeOptions; // Show all grades if no schools selected
     }
@@ -748,7 +739,7 @@ export default function CoursesManagement() {
     const allGrades = new Set<string>();
     
     selectedSchools.forEach(schoolId => {
-      const school = schools.find((s: any) => s.id === schoolId);
+      const school = schools.find((s: School) => s.id === schoolId);
       if (school && school.grades_offered && Array.isArray(school.grades_offered)) {
         school.grades_offered.forEach((grade: string) => {
           // Normalize grade format: "Grade 4" -> "grade4", "4" -> "grade4"
@@ -761,19 +752,19 @@ export default function CoursesManagement() {
     });
 
     // Filter gradeOptions to only include grades from selected schools
-    return gradeOptions.filter((grade: any) => allGrades.has(grade.value));
+    return gradeOptions.filter((grade: GradeOption) => allGrades.has(grade.value));
   };
 
-  // Helper to get available grade values for given school IDs
-  const getAvailableGradesForSchools = (schoolIds: string[]): string[] => {
+  // Helper to get available grade values for given school IDs (reserved for future use)
+  const _getAvailableGradesForSchools = (schoolIds: string[]): string[] => {
     if (schoolIds.length === 0) {
-      return gradeOptions.map((g: any) => g.value);
+      return gradeOptions.map((g: GradeOption) => g.value);
     }
 
     const allGrades = new Set<string>();
     
     schoolIds.forEach(schoolId => {
-      const school = schools.find((s: any) => s.id === schoolId);
+      const school = schools.find((s: School) => s.id === schoolId);
       if (school && school.grades_offered && Array.isArray(school.grades_offered)) {
         school.grades_offered.forEach((grade: string) => {
           const normalized = normalizeGradeToValue(grade);
@@ -798,7 +789,7 @@ export default function CoursesManagement() {
   // NOTE: handleAddChapter removed - it referenced removed state variables and is no longer used
   // Chapter management is now handled by CourseEditor component
 
-  const handleFileUpload = async (file: File) => {
+  const _handleFileUpload = async (file: File) => {
     setUploadingFile(true);
     try {
       // Use API route for file uploads to ensure proper RLS handling
@@ -835,9 +826,10 @@ export default function CoursesManagement() {
 
       return result.file.url;
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error uploading file:', error);
-      alert(`Error uploading file: ${error.message || 'Please try again.'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error uploading file: ${msg}`);
       throw error;
     } finally {
       setUploadingFile(false);
@@ -892,7 +884,7 @@ export default function CoursesManagement() {
   };
 
   // Helper function to convert YouTube URL to embed URL (for storage)
-  const getYouTubeEmbedUrl = (url: string): string => {
+  const _getYouTubeEmbedUrl = (url: string): string => {
     const videoId = extractYouTubeVideoId(url);
     if (videoId) {
       // Store as embed URL for consistency with database schema
@@ -905,7 +897,7 @@ export default function CoursesManagement() {
 
   // Helper function to convert any YouTube URL to watch URL
    
-  const getYouTubeWatchUrl = (url: string): string => {
+  const _getYouTubeWatchUrl = (url: string): string => {
     const videoId = extractYouTubeVideoId(url);
     if (videoId) {
       return `https://www.youtube.com/watch?v=${videoId}`;
@@ -925,7 +917,7 @@ export default function CoursesManagement() {
   };
 
   // NOTE: handleVideoUpload is deprecated - CourseEditor now handles video uploads
-  const handleVideoUpload = async (file: File, chapterIndex: number) => {
+  const handleVideoUpload = async (_file: File, _chapterIndex: number) => {
     console.warn('⚠️ handleVideoUpload is deprecated. Please use CourseEditor to upload videos.');
     alert('This feature has been moved to the Course Editor. Please edit the course to upload videos.');
     setIsVideoUploadOpen(false);
@@ -934,7 +926,7 @@ export default function CoursesManagement() {
   };
 
   // NOTE: handleMaterialUpload is deprecated - CourseEditor now handles material uploads
-  const handleMaterialUpload = async (file: File, chapterIndex: number) => {
+  const handleMaterialUpload = async (_file: File, _chapterIndex: number) => {
     console.warn('⚠️ handleMaterialUpload is deprecated. Please use CourseEditor to upload materials.');
     alert('This feature has been moved to the Course Editor. Please edit the course to upload materials.');
     setIsMaterialUploadOpen(false);
@@ -945,7 +937,7 @@ export default function CoursesManagement() {
 
   // NOTE: getTextContentsForChapter removed - not used with new components
 
-  const handleOpenTextContentDialog = (chapterId: string, content?: ChapterTextContent, index?: number) => {
+  const _handleOpenTextContentDialog = (chapterId: string, content?: ChapterTextContent, index?: number) => {
     setTextContentChapterId(chapterId);
     if (content) {
       setTextContentData({
@@ -966,7 +958,7 @@ export default function CoursesManagement() {
   };
 
   // NOTE: handleSaveTextContentBlock is deprecated - CourseEditor now handles text content
-  const handleSaveTextContentBlock = () => {
+  const _handleSaveTextContentBlock = () => {
     console.warn('⚠️ handleSaveTextContentBlock is deprecated. Please use CourseEditor to manage text content.');
     alert('This feature has been moved to the Course Editor. Please edit the course to add text content.');
     setIsTextContentDialogOpen(false);
@@ -976,7 +968,7 @@ export default function CoursesManagement() {
   };
 
   // NOTE: handleDeleteTextContent is deprecated - CourseEditor now handles text content
-  const handleDeleteTextContent = (chapterId: string, index: number) => {
+  const _handleDeleteTextContent = (_chapterId: string, _index: number) => {
     console.warn('⚠️ handleDeleteTextContent is deprecated. Please use CourseEditor to manage text content.');
   };
 
@@ -989,7 +981,7 @@ export default function CoursesManagement() {
       return;
     }
 
-    if (currentQuestion.question_type === 'MCQ' && currentQuestion.options.filter((o: any) => o.trim()).length < 2) {
+    if (currentQuestion.question_type === 'MCQ' && currentQuestion.options.filter((o: string) => o.trim()).length < 2) {
       alert('Please provide at least 2 options for MCQ');
       return;
     }
@@ -1003,7 +995,7 @@ export default function CoursesManagement() {
       assignment_id: '',
       question_type: currentQuestion.question_type,
       question_text: currentQuestion.question_text,
-      options: currentQuestion.question_type === 'MCQ' ? currentQuestion.options.filter((o: any) => o.trim()) : undefined,
+      options: currentQuestion.question_type === 'MCQ' ? currentQuestion.options.filter((o: string) => o.trim()) : undefined,
       correct_answer: currentQuestion.correct_answer,
       marks: currentQuestion.marks || 1
     };
@@ -1022,7 +1014,7 @@ export default function CoursesManagement() {
   };
 
   // NOTE: saveAssignment is deprecated - CourseEditor now handles assignments
-  const saveAssignment = (chapterIndex: number) => {
+  const saveAssignment = (_chapterIndex: number) => {
     console.warn('⚠️ saveAssignment is deprecated. Please use CourseEditor to manage assignments.');
     alert('This feature has been moved to the Course Editor. Please edit the course to add assignments.');
     setIsAssignmentBuilderOpen(false);
@@ -1041,7 +1033,7 @@ export default function CoursesManagement() {
     });
   };
 
-  const filteredCourses = courses.filter((course: any) => {
+  const filteredCourses = courses.filter((course: Course) => {
     // Status filter
     if (statusFilter !== 'All' && course.status !== statusFilter) {
       return false;
@@ -1055,7 +1047,7 @@ export default function CoursesManagement() {
     const matches = (
       courseName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       courseDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      course.course_access?.some((access: any) => 
+      course.course_access?.some((access: CourseAccess) => 
         access.schools?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         access.grade?.toLowerCase().includes(searchTerm.toLowerCase())
       )
@@ -1072,8 +1064,8 @@ export default function CoursesManagement() {
     }
   };
 
-  const getResourceIcon = (type: string) => {
-    const resourceType = resourceTypes.find((rt: any) => rt.value === type);
+  const _getResourceIcon = (type: string) => {
+    const resourceType = resourceTypes.find((rt: { value: string }) => rt.value === type);
     return resourceType ? resourceType.icon : File;
   };
 
@@ -1523,7 +1515,7 @@ export default function CoursesManagement() {
                         </SelectTrigger>
                         <SelectContent>
                           {assignmentBuilderData.currentQuestion.options
-                            .filter((opt: any) => opt.trim())
+                            .filter((opt: string) => opt.trim())
                             .map((option, idx) => (
                               <SelectItem key={idx} value={option}>
                                 {option}
@@ -1622,7 +1614,7 @@ export default function CoursesManagement() {
                   </div>
                   <div className="p-3 bg-blue-50 rounded-lg">
                     <p className="text-sm font-medium text-blue-900">
-                      Total Score: {assignmentBuilderData.questions.reduce((sum: number, q: any) => sum + q.marks, 0)} marks
+                      Total Score: {assignmentBuilderData.questions.reduce((sum: number, q: AssignmentQuestion) => sum + q.marks, 0)} marks
                     </p>
                   </div>
                 </div>
@@ -1706,15 +1698,13 @@ export default function CoursesManagement() {
                 filteredCourses.map((course) => {
                   // Get school names from course_access
                   const schoolNames = course.course_access
-                     
-                    ?.map((access: any) => access.schools?.name)
+                    ?.map((access: CourseAccess) => access.schools?.name)
                     .filter(Boolean) || [];
                   const uniqueSchoolNames = [...new Set(schoolNames)];
                   
                   // Get unique grades from course_access
                   const grades = course.course_access
-                     
-                    ?.map((access: any) => access.grade)
+                    ?.map((access: CourseAccess) => access.grade)
                     .filter(Boolean) || [];
                   const uniqueGrades = [...new Set(grades)];
                   
@@ -1727,7 +1717,7 @@ export default function CoursesManagement() {
                       {uniqueSchoolNames.length > 0 ? (
                         uniqueSchoolNames.join(', ')
                       ) : (
-                        <span className="text-gray-400">N/A</span>
+                        <span className="text-gray-400">—</span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -1735,15 +1725,15 @@ export default function CoursesManagement() {
                         <div className="flex flex-wrap gap-1">
                           {uniqueGrades.map((grade: string, idx: number) => (
                             <Badge key={`${course.id}-${grade}-${idx}`} variant="secondary" className="text-xs">
-                              {gradeOptions.find((go: any) => go.value === grade)?.label || grade}
+                              {gradeOptions.find((go: GradeOption) => go.value === grade)?.label || grade}
                             </Badge>
                           ))}
                         </div>
                       ) : (
-                        <span className="text-gray-400 text-sm">N/A</span>
+                        <span className="text-gray-400 text-sm">—</span>
                       )}
                     </TableCell>
-                  <TableCell>{course.total_chapters || 0}</TableCell>
+                  <TableCell>{course.total_chapters ?? course.num_chapters ?? 0}</TableCell>
                   <TableCell>
                     <div className="flex items-center space-x-4 text-sm">
                       <span className="flex items-center">
@@ -1818,16 +1808,16 @@ export default function CoursesManagement() {
                               chapters: fullCourse.chapters?.length || 0,
                               chapter_contents: fullCourse.chapter_contents?.length || 0,
                               assignments: fullCourse.assignments?.length || 0,
-                              chaptersWithContents: fullCourse.chapters?.map((ch: any) => ({
+                              chaptersWithContents: fullCourse.chapters?.map((ch: Chapter) => ({
                                 id: ch.id,
-                                name: ch.name || ch.title,
-                                contentsCount: ch.contents?.length || 0
+                                name: ch.name || (ch as { title?: string }).title,
+                                contentsCount: ((ch as { contents?: unknown[] }).contents?.length) ?? 0
                               })),
-                              assignmentsDetails: fullCourse.assignments?.map((a: any) => ({
+                              assignmentsDetails: fullCourse.assignments?.map((a: Assignment) => ({
                                 id: a.id,
                                 title: a.title,
                                 chapter_id: a.chapter_id,
-                                hasConfig: !!a.config
+                                hasConfig: !!(a as { config?: unknown }).config
                               })) || []
                             });
                             
@@ -1845,11 +1835,9 @@ export default function CoursesManagement() {
                               name: fullCourse.name || fullCourse.course_name || course.name
                             } as Course);
                             setIsEditDialogOpen(true);
-                          } catch (error: any) {
+                          } catch (error: unknown) {
                             console.error('❌ Error opening edit dialog:', error);
-                            const errorMessage = error.message || 'Failed to open edit dialog. Please try again.';
-                            
-                            // Show user-friendly error message
+                            const errorMessage = (error instanceof Error ? error.message : String(error)) || 'Failed to open edit dialog. Please try again.';
                             if (errorMessage.includes('does not exist') || errorMessage.includes('not found')) {
                               alert(`Course not found: ${errorMessage}\n\nThis course may have been deleted or the ID is invalid.`);
                             } else {
@@ -2066,9 +2054,10 @@ export default function CoursesManagement() {
               setStatusFilter('Draft'); // Show Draft courses to see the new one
               loadData();
               alert('✅ Course created successfully!');
-            } catch (error: any) {
+            } catch (error: unknown) {
               console.error('Error creating course:', error);
-              alert(`❌ ${error.message || 'Failed to create course'}`);
+              const errorMessage = error instanceof Error ? error.message : 'Failed to create course';
+              alert(`❌ ${errorMessage}`);
             }
           }}
           onCancel={() => {
@@ -2084,21 +2073,20 @@ export default function CoursesManagement() {
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <CourseEditor
               course={{
+                ...editingCourse,
                 id: editingCourse.id,
                 name: editingCourse.name || editingCourse.course_name || '',
                 description: editingCourse.description || '',
-                duration_weeks: (editingCourse as any).duration_weeks,
-                prerequisites_course_ids: (editingCourse as any).prerequisites_course_ids || [],
-                prerequisites_text: (editingCourse as any).prerequisites_text || '',
-                thumbnail_url: (editingCourse as any).thumbnail_url || '',
-                difficulty_level: (editingCourse as any).difficulty_level || 'Beginner',
-                school_ids: editingCourse.course_access?.map((ca: any) => ca.school_id).filter(Boolean) || [],
-                grades: editingCourse.course_access?.map((ca: any) => ca.grade).filter(Boolean) || [],
+                duration_weeks: editingCourse.duration_weeks,
+                prerequisites_course_ids: editingCourse.prerequisites_course_ids || [],
+                prerequisites_text: editingCourse.prerequisites_text || '',
+                thumbnail_url: editingCourse.thumbnail_url || '',
+                difficulty_level: editingCourse.difficulty_level || 'Beginner',
+                school_ids: editingCourse.course_access?.map((ca: CourseAccess) => ca.school_id).filter(Boolean) || [],
+                grades: editingCourse.course_access?.map((ca: CourseAccess) => ca.grade).filter(Boolean) || [],
                 status: editingCourse.status || 'Draft',
-                chapters: editingCourse.chapters || [],
-                assignments: (editingCourse as any).assignments || [],
-                // Include full course object for chapter_contents access
-                ...(editingCourse as any),
+                chapters: (editingCourse.chapters || []) as unknown as EditorChapter[],
+                assignments: (editingCourse.assignments || []) as unknown as EditorAssignmentFromAPI[],
               }}
               onSave={async (courseData) => {
                 try {
@@ -2108,7 +2096,7 @@ export default function CoursesManagement() {
                     chaptersCount: courseData.chapters?.length || 0,
                     hasAssignments: !!courseData.assignments,
                     assignmentsArray: courseData.assignments || [],
-                    assignmentsDetails: courseData.assignments?.map((a: any) => ({
+                    assignmentsDetails: courseData.assignments?.map((a: EditorAssignmentFromAPI) => ({
                       title: a.title,
                       chapter_id: a.chapter_id,
                       assignment_type: a.assignment_type,
@@ -2175,9 +2163,10 @@ export default function CoursesManagement() {
                   setIsEditDialogOpen(false);
                   setEditingCourse(null);
                   alert('✅ Course updated successfully!');
-                } catch (error: any) {
+                } catch (error: unknown) {
                   console.error('❌ Error updating course:', error);
-                  alert(`❌ ${error.message || 'Failed to update course'}`);
+                  const errMsg = error instanceof Error ? error.message : String(error);
+                  alert(`❌ ${errMsg || 'Failed to update course'}`);
                 }
               }}
               onCancel={() => {
@@ -2201,9 +2190,9 @@ export default function CoursesManagement() {
             id: publishCourse.id,
             name: publishCourse.name || publishCourse.course_name || '',
             status: publishCourse.status || 'Draft',
-            is_published: (publishCourse as any).is_published || false,
-            school_ids: publishCourse.course_access?.map((ca: any) => ca.school_id).filter(Boolean) || [],
-            grades: publishCourse.course_access?.map((ca: any) => ca.grade).filter(Boolean) || [],
+            is_published: (publishCourse as Course & { is_published?: boolean }).is_published || false,
+            school_ids: publishCourse.course_access?.map((ca: CourseAccess) => ca.school_id).filter(Boolean) || [],
+            grades: publishCourse.course_access?.map((ca: CourseAccess) => ca.grade).filter(Boolean) || [],
           }}
           onPublishChange={() => {
             loadData();

@@ -34,7 +34,7 @@ export interface CourseFormState {
     description?: string;
     learning_outcomes?: string[];
     order_number?: number;
-    [key: string]: any; // Allow additional properties
+    [key: string]: unknown; // Allow additional properties
   }>;
   
   // Videos
@@ -46,7 +46,7 @@ export interface CourseFormState {
     video_url?: string;
     type?: string;
     order_number?: number;
-    [key: string]: any; // Allow additional properties
+    [key: string]: unknown; // Allow additional properties
   }>;
   
   // Materials
@@ -58,7 +58,7 @@ export interface CourseFormState {
     url?: string;
     resource_url?: string;
     order_number?: number;
-    [key: string]: any; // Allow additional properties
+    [key: string]: unknown; // Allow additional properties
   }>;
   
   // Assignments
@@ -77,16 +77,16 @@ export interface CourseFormState {
       options?: string[];
       correct_answer: string;
       marks: number;
-      [key: string]: any; // Allow additional properties
+      [key: string]: unknown; // Allow additional properties
     }>;
-    [key: string]: any; // Allow additional properties
+    [key: string]: unknown; // Allow additional properties
   }>;
   
   // Scheduling
   scheduling: {
     release_type: 'Daily' | 'Weekly' | 'Bi-weekly';
     start_date: string;
-    release_schedule: any[];
+    release_schedule: Array<{ date?: string; chapter_id?: string; [key: string]: unknown }>;
   };
   
   // UI State
@@ -210,7 +210,7 @@ export function useCourseFormAutoSave(
     onSave?: (saved: boolean) => void;
   } = {}
 ) {
-  const { enabled = true, interval = AUTO_SAVE_INTERVAL, onSave } = options;
+  const { enabled = true, interval: _interval = AUTO_SAVE_INTERVAL, onSave } = options;
 
   if (typeof window === 'undefined' || !enabled) return;
 

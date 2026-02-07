@@ -5,8 +5,13 @@ import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 import { getOrSetCache, CacheKeys, CacheTTL } from '../../../../lib/cache';
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
+type CourseItem = { id: string; created_at?: string; [key: string]: unknown };
+type EnrollmentRow = { course_id: string; progress_percentage?: number; last_accessed?: string; status?: string };
+type ChapterRow = { id: string; course_id: string; is_published?: boolean };
+type ProgressRow = { chapter_id: string; completed?: boolean };
+type AssignmentRow = { id: string; course_id: string; is_published?: boolean };
+type SubmissionRow = { assignment_id: string; grade?: number | null; status?: string };
 
 // GET - Get courses available to the authenticated student based on their school and grade
 export async function GET(request: NextRequest) {
@@ -65,18 +70,46 @@ export async function GET(request: NextRequest) {
     }
 
     // Get student's school and grade from student_schools table (primary source of truth)
-    let studentSchool: any = null;
-    let studentSchoolError: any = null;
+    type StudentSchoolRow = {
+      school_id?: string | null;
+      grade?: string | null;
+      section?: string | null;
+      is_active?: boolean | null;
+    };
+    interface StudentSchool {
+      school_id?: string;
+      grade?: string;
+      section?: string;
+      is_active?: boolean;
+    }
+    
+    type CourseAccessRow = { course_id?: string; grade?: string; school_id?: string };
+    type CourseRow = {
+      id?: string;
+      course_name?: string;
+      name?: string;
+      description?: string;
+      status?: string;
+      is_published?: boolean;
+      num_chapters?: number;
+      content_summary?: unknown;
+      created_at?: string;
+      updated_at?: string;
+    };
+    
+    let studentSchool: StudentSchool | null = null;
+    let studentSchoolError: unknown = null;
     
     try {
       const result = await supabaseAdmin
         .from('student_schools')
-        .select('school_id, grade, is_active')
+        .select('school_id, grade, section, is_active')
         .eq('student_id', user.id)
         .eq('is_active', true)
         .maybeSingle();
       
-      studentSchool = result.data;
+      const row = result.data as StudentSchoolRow | null;
+      studentSchool = row ? { school_id: row.school_id ?? undefined, grade: row.grade ?? undefined, section: row.section ?? undefined, is_active: row.is_active ?? undefined } : null;
       studentSchoolError = result.error;
     } catch (queryException) {
       logger.error('Exception fetching student school', {
@@ -186,7 +219,25 @@ export async function GET(request: NextRequest) {
     // Only include published courses
     // Strategy: Try exact match first, then case-insensitive, then fetch all and filter with normalized matching
     
-    let courseAccess: any[] = [];
+    interface CourseAccess {
+      course_id?: string;
+      grade?: string;
+      school_id?: string;
+      courses?: {
+        id?: string;
+        course_name?: string;
+        name?: string;
+        description?: string;
+        status?: string;
+        is_published?: boolean;
+        num_chapters?: number;
+        content_summary?: unknown;
+        created_at?: string;
+        updated_at?: string;
+      };
+    }
+    
+    let courseAccess: CourseAccess[] = [];
     
     // Step 1: Try exact match with normalized grade
     // Fetch course_access and courses separately to avoid foreign key relationship issues
@@ -200,18 +251,19 @@ export async function GET(request: NextRequest) {
       console.error('❌ Error fetching course_access (exact match):', exactError);
     } else if (exactMatchAccess && exactMatchAccess.length > 0) {
       // Fetch course details separately
-      const courseIds = exactMatchAccess.map((ca: any) => ca.course_id).filter(Boolean);
+      const exactMatchTyped = exactMatchAccess as CourseAccessRow[];
+      const courseIds = exactMatchTyped.map((ca) => ca.course_id).filter((id): id is string => Boolean(id));
       const { data: coursesData } = await supabaseAdmin
         .from('courses')
         .select('id, course_name, name, description, status, is_published, num_chapters, content_summary, created_at, updated_at')
         .in('id', courseIds);
-      
+      const coursesTyped = (coursesData || []) as CourseRow[];
       // Combine the data
-      courseAccess = exactMatchAccess.map((ca: any) => ({
+      courseAccess = exactMatchTyped.map((ca) => ({
         course_id: ca.course_id,
         grade: ca.grade,
-        courses: coursesData?.find((c: any) => c.id === ca.course_id)
-      })).filter((ca: any) => ca.courses); // Only include entries with valid courses
+        courses: coursesTyped.find((c) => c.id === ca.course_id)
+      })).filter((ca: CourseAccess) => ca.courses); // Only include entries with valid courses
       
       console.log(`✅ Found ${courseAccess.length} course_access entries (exact match) for school ${schoolId || 'undefined'}, grade ${normalizedGrade}`);
     }
@@ -228,18 +280,19 @@ export async function GET(request: NextRequest) {
         console.error('❌ Error fetching course_access (case-insensitive match):', caseError);
       } else if (caseInsensitiveAccess && caseInsensitiveAccess.length > 0) {
         // Fetch course details separately
-        const courseIds = caseInsensitiveAccess.map((ca: any) => ca.course_id).filter(Boolean);
+        const caseTyped = caseInsensitiveAccess as CourseAccessRow[];
+        const courseIds = caseTyped.map((ca) => ca.course_id).filter((id): id is string => Boolean(id));
         const { data: coursesData } = await supabaseAdmin
           .from('courses')
           .select('id, course_name, name, description, status, is_published, num_chapters, content_summary, created_at, updated_at')
           .in('id', courseIds);
-        
+        const coursesTyped = (coursesData || []) as CourseRow[];
         // Combine the data
-        courseAccess = caseInsensitiveAccess.map((ca: any) => ({
+        courseAccess = caseTyped.map((ca) => ({
           course_id: ca.course_id,
           grade: ca.grade,
-          courses: coursesData?.find((c: any) => c.id === ca.course_id)
-        })).filter((ca: any) => ca.courses); // Only include entries with valid courses
+          courses: coursesTyped.find((c) => c.id === ca.course_id)
+        })).filter((ca: CourseAccess) => ca.courses); // Only include entries with valid courses
         
         console.log(`✅ Found ${courseAccess.length} course_access entries (case-insensitive match)`);
       }
@@ -255,44 +308,48 @@ export async function GET(request: NextRequest) {
       const { data: allAccessEntriesForSchoolRaw, error: allAccessError } = await supabaseAdmin
         .from('course_access')
         .select('course_id, grade, school_id')
-        .eq('school_id', schoolId) as any;
+        .eq('school_id', schoolId);
       
       // Fetch course details separately
-      let allAccessEntriesForSchool: any[] = [];
-      if (allAccessEntriesForSchoolRaw && allAccessEntriesForSchoolRaw.length > 0) {
-        const courseIds = allAccessEntriesForSchoolRaw.map((ca: any) => ca.course_id).filter(Boolean);
+      let allAccessEntriesForSchool: CourseAccess[] = [];
+      const allAccessRawTyped = (allAccessEntriesForSchoolRaw || []) as CourseAccessRow[];
+      if (allAccessRawTyped.length > 0) {
+        const courseIds = allAccessRawTyped.map((ca) => ca.course_id).filter((id): id is string => Boolean(id));
         const { data: coursesData } = await supabaseAdmin
           .from('courses')
           .select('id, course_name, name, description, status, is_published, num_chapters, content_summary, created_at, updated_at')
           .in('id', courseIds);
-        
+        const coursesTyped = (coursesData || []) as CourseRow[];
         // Combine the data
-        allAccessEntriesForSchool = allAccessEntriesForSchoolRaw.map((ca: any) => ({
-          ...ca,
-          courses: coursesData?.find((c: any) => c.id === ca.course_id)
+        allAccessEntriesForSchool = allAccessRawTyped.map((ca) => ({
+          course_id: ca.course_id,
+          grade: ca.grade,
+          courses: coursesTyped.find((c) => c.id === ca.course_id)
         }));
       }
       
       // Also get all course_access entries for debugging (not just this school)
       // Fetch separately to avoid foreign key relationship issues
-      const { data: allCoursesAccessRaw, error: allCoursesError } = await supabaseAdmin
+      const { data: allCoursesAccessRaw, error: _allCoursesError } = await supabaseAdmin
         .from('course_access')
         .select('course_id, school_id, grade')
-        .limit(100) as any;
+        .limit(100);
       
       // Fetch course details separately if needed
-      let allCoursesAccess: any[] = [];
-      if (allCoursesAccessRaw && allCoursesAccessRaw.length > 0) {
-        const courseIds = allCoursesAccessRaw.map((ca: any) => ca.course_id).filter(Boolean);
+      let allCoursesAccess: CourseAccess[] = [];
+      const allCoursesRawTyped = (allCoursesAccessRaw || []) as CourseAccessRow[];
+      if (allCoursesRawTyped.length > 0) {
+        const courseIds = allCoursesRawTyped.map((ca) => ca.course_id).filter((id): id is string => Boolean(id));
         const { data: coursesData } = await supabaseAdmin
           .from('courses')
           .select('id, name, course_name, status, is_published')
           .in('id', courseIds);
-        
+        const coursesTyped = (coursesData || []) as CourseRow[];
         // Combine the data
-        allCoursesAccess = allCoursesAccessRaw.map((ca: any) => ({
-          ...ca,
-          courses: coursesData?.find((c: any) => c.id === ca.course_id)
+        allCoursesAccess = allCoursesRawTyped.map((ca) => ({
+          course_id: ca.course_id,
+          grade: ca.grade,
+          courses: coursesTyped.find((c) => c.id === ca.course_id)
         }));
       }
       
@@ -304,7 +361,7 @@ export async function GET(request: NextRequest) {
       
       if (allAccessEntriesForSchool && allAccessEntriesForSchool.length > 0) {
         console.log(`   Available grades in course_access for school ${schoolId || 'undefined'}:`);
-        allAccessEntriesForSchool.forEach((entry: any) => {
+        allAccessEntriesForSchool.forEach((entry: CourseAccess) => {
           const course = entry.courses;
           const isPublished = course?.is_published === true || course?.status === 'Published';
           console.log(`     - Grade: "${entry.grade}" (normalized: ${normalizeGradeForComparison(entry.grade || '')}), Course: ${course?.name || course?.course_name || 'N/A'}, Published: ${isPublished}`);
@@ -315,7 +372,7 @@ export async function GET(request: NextRequest) {
         // Check if there are any course_access entries at all
         if (allCoursesAccess && allCoursesAccess.length > 0) {
           console.log(`   📋 Found ${allCoursesAccess.length} total course_access entries in database (across all schools)`);
-          const publishedCourses = allCoursesAccess.filter((e: any) => {
+          const publishedCourses = allCoursesAccess.filter((e: CourseAccess) => {
             const course = e.courses;
             return course?.is_published === true || course?.status === 'Published';
           });
@@ -324,7 +381,7 @@ export async function GET(request: NextRequest) {
           // Show a sample of what's available
           const sampleEntries = allCoursesAccess.slice(0, 5);
           console.log(`   Sample course_access entries:`);
-          sampleEntries.forEach((entry: any) => {
+          sampleEntries.forEach((entry: CourseAccess) => {
             const course = entry.courses;
             console.log(`     - School: ${entry.school_id}, Grade: "${entry.grade}", Course: ${course?.name || course?.course_name || 'N/A'}`);
           });
@@ -335,7 +392,7 @@ export async function GET(request: NextRequest) {
         console.error('❌ Error fetching all course_access entries:', allAccessError);
       } else if (allAccessEntriesForSchool && allAccessEntriesForSchool.length > 0) {
         // Filter entries where normalized grades match
-        const matchedEntries = allAccessEntriesForSchool.filter((entry: any) => {
+        const matchedEntries = allAccessEntriesForSchool.filter((entry: CourseAccess) => {
           const entryGradeForComparison = normalizeGradeForComparison(entry.grade || '');
           const matches = entryGradeForComparison === studentGradeForComparison;
           
@@ -352,7 +409,7 @@ export async function GET(request: NextRequest) {
         } else {
           console.log(`⚠️ No grade matches found after normalized comparison.`);
           console.log(`   Student grade: "${grade}" (comparison value: "${studentGradeForComparison}")`);
-          console.log(`   Available grades in course_access: ${allAccessEntriesForSchool.map((e: any) => `"${e.grade}" (comparison: "${normalizeGradeForComparison(e.grade || '')}")`).join(', ')}`);
+          console.log(`   Available grades in course_access: ${allAccessEntriesForSchool.map((e: CourseAccess) => `"${e.grade}" (comparison: "${normalizeGradeForComparison(e.grade || '')}")`).join(', ')}`);
         }
       } else {
         console.log(`⚠️ No course_access entries found for school ${schoolId || 'undefined'}`);
@@ -379,12 +436,18 @@ export async function GET(request: NextRequest) {
         console.log(`📋 Enrollment query result: ${studentEnrollments?.length || 0} enrollments found`);
         if (studentEnrollments && studentEnrollments.length > 0) {
           console.log(`✅ Found ${studentEnrollments.length} active enrollments for student ${user.id}`);
-          studentEnrollments.forEach((e: any, idx: number) => {
+          interface Enrollment {
+            course_id?: string;
+            status?: string;
+            progress_percentage?: number;
+          }
+          
+          studentEnrollments.forEach((e: Enrollment, idx: number) => {
             console.log(`   ${idx + 1}. Course ID: ${e.course_id}, Status: ${e.status}, Progress: ${e.progress_percentage}%`);
           });
           
           // Get course IDs from enrollments
-        const enrolledCourseIds = studentEnrollments.map((e: any) => e.course_id).filter(Boolean);
+        const enrolledCourseIds = studentEnrollments.map((e: Enrollment) => e.course_id).filter(Boolean);
         
         if (enrolledCourseIds.length > 0) {
           // Fetch course details for enrolled courses
@@ -408,14 +471,15 @@ export async function GET(request: NextRequest) {
             console.error('❌ Error fetching enrolled courses:', coursesError);
           } else if (enrolledCourses && enrolledCourses.length > 0) {
             // Filter to only published courses
-            const publishedEnrolledCourses = enrolledCourses.filter((course: any) => 
+            const enrolledTyped = (enrolledCourses || []) as CourseRow[];
+            const publishedEnrolledCourses = enrolledTyped.filter((course) => 
               course.is_published === true || course.status === 'Published'
             );
             
-            console.log(`✅ Found ${publishedEnrolledCourses.length} published courses from enrollments (out of ${enrolledCourses.length} total enrolled)`);
+            console.log(`✅ Found ${publishedEnrolledCourses.length} published courses from enrollments (out of ${enrolledTyped.length} total enrolled)`);
             
             // Get grades from course_access for all enrolled courses at once (optimization)
-            const enrolledCourseIdsForAccess = publishedEnrolledCourses.map((c: any) => c.id);
+            const enrolledCourseIdsForAccess = publishedEnrolledCourses.map((c) => c.id).filter((id): id is string => Boolean(id));
             const { data: accessEntries } = await supabaseAdmin
               .from('course_access')
               .select('course_id, grade')
@@ -425,9 +489,15 @@ export async function GET(request: NextRequest) {
             // Create a map of course_id -> grade for quick lookup
             const gradeMap = new Map<string, string>();
             if (accessEntries) {
-              accessEntries.forEach((entry: any) => {
-                if (!gradeMap.has(entry.course_id)) {
-                  gradeMap.set(entry.course_id, entry.grade);
+              interface AccessEntry {
+                course_id?: string;
+                grade?: string;
+              }
+              
+              accessEntries.forEach((entry: AccessEntry) => {
+                const cid = entry.course_id;
+                if (cid != null && !gradeMap.has(cid)) {
+                  gradeMap.set(cid, entry.grade ?? '');
                 }
               });
             }
@@ -435,11 +505,12 @@ export async function GET(request: NextRequest) {
             // Format as course_access entries so they can be processed by existing logic
             for (const course of publishedEnrolledCourses) {
               // Get grade from course_access if available, otherwise use student's grade
-              const gradeForCourse = gradeMap.get(course.id) || grade || 'N/A';
+              const courseId = course.id ?? '';
+              const gradeForCourse = gradeMap.get(courseId) || grade || 'N/A';
               
               // Create a course_access-like entry
               courseAccess.push({
-                course_id: course.id,
+                course_id: courseId,
                 grade: gradeForCourse,
                 courses: course
               });
@@ -456,8 +527,8 @@ export async function GET(request: NextRequest) {
 
     // Filter to only published courses
     const allAvailableCourses = (courseAccess || [])
-      .filter((ca: any) => {
-        const course = ca.courses;
+      .filter((ca: CourseAccess) => {
+        const course = ca.courses as CourseRow | undefined;
         const isPublished = course && (
           course.is_published === true || 
           course.status === 'Published'
@@ -469,26 +540,26 @@ export async function GET(request: NextRequest) {
         
         return isPublished;
       })
-      .map((ca: any) => {
-        const course = ca.courses;
+      .map((ca: CourseAccess) => {
+        const course = ca.courses as CourseRow | undefined;
         return {
-          id: course.id,
-          name: course.course_name || course.name || '',
-          title: course.course_name || course.name || '',
-          description: course.description || '',
+          id: course?.id ?? '',
+          name: course?.course_name || course?.name || '',
+          title: course?.course_name || course?.name || '',
+          description: course?.description || '',
           grade: ca.grade,
-          status: course.is_published ? 'Published' : (course.status || 'Draft'),
-          total_chapters: course.num_chapters || 0,
-          content_summary: course.content_summary || {},
-          created_at: course.created_at,
-          updated_at: course.updated_at
+          status: course?.is_published ? 'Published' : (course?.status || 'Draft'),
+          total_chapters: course?.num_chapters || 0,
+          content_summary: course?.content_summary || {},
+          created_at: course?.created_at,
+          updated_at: course?.updated_at
         };
       });
     
     console.log(`📊 Final results: ${courseAccess.length} course_access entries found, ${allAvailableCourses.length} published courses available`);
 
     // Sort courses by created_at for cursor pagination
-    allAvailableCourses.sort((a: any, b: any) => {
+    allAvailableCourses.sort((a: CourseItem, b: CourseItem) => {
       const dateA = new Date(a.created_at || 0).getTime();
       const dateB = new Date(b.created_at || 0).getTime();
       return dateB - dateA; // Descending order (newest first)
@@ -496,7 +567,7 @@ export async function GET(request: NextRequest) {
 
     // Apply pagination
     const totalCourses = allAvailableCourses.length;
-    let coursesToEnrich: any[];
+    let coursesToEnrich: CourseItem[];
 
     if (useCursor) {
       // For cursor pagination, filter by cursor if provided
@@ -506,13 +577,13 @@ export async function GET(request: NextRequest) {
         if (parsed) {
           const cursorDate = new Date(parsed.timestamp).getTime();
           if (cursorParams.direction === 'next') {
-            filteredCourses = allAvailableCourses.filter((c: any) => {
-              const courseDate = new Date(c.created_at || 0).getTime();
+            filteredCourses = allAvailableCourses.filter((c: CourseItem) => {
+              const courseDate = new Date(c.created_at ?? 0).getTime();
               return courseDate < cursorDate;
             });
           } else {
-            filteredCourses = allAvailableCourses.filter((c: any) => {
-              const courseDate = new Date(c.created_at || 0).getTime();
+            filteredCourses = allAvailableCourses.filter((c: CourseItem) => {
+              const courseDate = new Date(c.created_at ?? 0).getTime();
               return courseDate > cursorDate;
             });
           }
@@ -533,7 +604,7 @@ export async function GET(request: NextRequest) {
     console.log(`✅ Found ${totalCourses} published courses for student ${user.id} (showing ${coursesToEnrich.length} with pagination)`);
 
     // Get course IDs for parallel queries (use paginated courses for data fetching)
-    const courseIds = coursesToEnrich.map((c: any) => c.id);
+    const courseIds = coursesToEnrich.map((c: CourseItem) => c.id);
 
     // Verify and log enrollment status for each course (if schoolId and grade are available)
     // Wrap in try-catch to prevent errors from blocking the response
@@ -575,7 +646,7 @@ export async function GET(request: NextRequest) {
                 courseId,
                 hasEnrollment,
                 hasCourseAccess,
-                enrollmentId: enrollmentCheck.data?.id
+                enrollmentId: (enrollmentCheck.data as { id?: string } | null)?.id
               };
             } catch (checkError) {
               console.warn(`⚠️ Error checking enrollment status for course ${courseId}:`, checkError);
@@ -590,8 +661,8 @@ export async function GET(request: NextRequest) {
         );
 
         // Log summary
-        const coursesWithEnrollment = enrollmentStatusChecks.filter((c: any) => c.hasEnrollment).length;
-        const coursesWithoutEnrollment = enrollmentStatusChecks.filter((c: any) => !c.hasEnrollment && c.hasCourseAccess).length;
+        const coursesWithEnrollment = enrollmentStatusChecks.filter((c: { hasEnrollment: boolean }) => c.hasEnrollment).length;
+        const coursesWithoutEnrollment = enrollmentStatusChecks.filter((c: { hasEnrollment: boolean; hasCourseAccess: boolean }) => !c.hasEnrollment && c.hasCourseAccess).length;
         console.log(`📊 Enrollment status: ${coursesWithEnrollment} courses with enrollment, ${coursesWithoutEnrollment} courses with course_access but no enrollment`);
       } catch (enrollmentCheckError) {
         console.warn('⚠️ Error during enrollment status verification (non-blocking):', enrollmentCheckError);
@@ -692,8 +763,8 @@ export async function GET(request: NextRequest) {
     const assignmentsData = assignments || [];
 
     // Get assignment submissions (depends on assignmentIds)
-    const assignmentIds = assignmentsData.map((a: any) => a.id);
-    let submissions: any[] | null = null;
+    const assignmentIds = assignmentsData.map((a: AssignmentRow) => a.id);
+    let submissions: SubmissionRow[] | null = null;
     
     if (assignmentIds.length > 0) {
       try {
@@ -716,52 +787,30 @@ export async function GET(request: NextRequest) {
     }
 
     // Enrich courses with progress data
-    const enrichedCourses = coursesToEnrich.map((course: any) => {
-       
-      const enrollmentsData = enrollments as any[] | null;
-       
-      const enrollment = enrollmentsData?.find((e: any) => e.course_id === course.id);
-      
-      // Get chapters for this course
-       
-      const courseChapters = (chaptersData as any[]).filter((ch: any) => ch.course_id === course.id);
+    const enrichedCourses = coursesToEnrich.map((course: CourseItem) => {
+      const enrollmentsData = enrollments as EnrollmentRow[] | null;
+      const enrollment = enrollmentsData?.find((e: EnrollmentRow) => e.course_id === course.id);
+      const courseChapters = (chaptersData as ChapterRow[]).filter((ch: ChapterRow) => ch.course_id === course.id);
       const totalChapters = courseChapters.length;
-      
-      // Get progress for this course's chapters
-       
-      const chapterIds = courseChapters.map((ch: any) => ch.id);
-       
-      const progressData = progress as any[] | null;
-       
-      const courseProgress = progressData?.filter((p: any) => chapterIds.includes(p.chapter_id)) || [];
-       
-      // Calculate actual completed chapters from student progress
-      const completedChapters = courseProgress.filter((p: any) => p.completed === true).length;
+      const chapterIds = courseChapters.map((ch: ChapterRow) => ch.id);
+      const progressData = progress as ProgressRow[] | null;
+      const courseProgress = progressData?.filter((p: ProgressRow) => chapterIds.includes(p.chapter_id)) ?? [];
+      const completedChapters = courseProgress.filter((p: ProgressRow) => p.completed === true).length;
       
       // Debug logging for progress calculation
       if (process.env.NODE_ENV === 'development') {
         console.log(`📊 [Course Progress] Course: ${course.id}, Total Chapters: ${totalChapters}, Completed Chapters: ${completedChapters}, Progress Records: ${courseProgress.length}`);
       }
       
-      // Get assignments for this course
-       
-      const courseAssignments = (assignmentsData as any[]).filter((a: any) => a.course_id === course.id);
+      const courseAssignments = (assignmentsData as AssignmentRow[]).filter((a: AssignmentRow) => a.course_id === course.id);
       const totalAssignments = courseAssignments.length;
-       
-      const assignmentIdsForCourse = courseAssignments.map((a: any) => a.id);
-       
-      const submissionsData = submissions as any[] | null;
-       
-      const courseSubmissions = submissionsData?.filter((s: any) => assignmentIdsForCourse.includes(s.assignment_id)) || [];
-       
-      const completedAssignments = courseSubmissions.filter((s: any) => s.status === 'submitted').length;
-      
-      // Calculate average grade
-       
-      const gradedSubmissions = courseSubmissions.filter((s: any) => s.grade !== null);
+      const assignmentIdsForCourse = courseAssignments.map((a: AssignmentRow) => a.id);
+      const submissionsData = submissions as SubmissionRow[] | null;
+      const courseSubmissions = submissionsData?.filter((s: SubmissionRow) => assignmentIdsForCourse.includes(s.assignment_id)) ?? [];
+      const completedAssignments = courseSubmissions.filter((s: SubmissionRow) => s.status === 'submitted').length;
+      const gradedSubmissions = courseSubmissions.filter((s: SubmissionRow) => s.grade != null);
       const averageGrade = gradedSubmissions.length > 0
-         
-        ? gradedSubmissions.reduce((sum: number, s: any) => sum + (s.grade || 0), 0) / gradedSubmissions.length
+        ? gradedSubmissions.reduce((sum: number, s: SubmissionRow) => sum + (s.grade ?? 0), 0) / gradedSubmissions.length
         : 0;
 
       // Calculate progress percentage based on actual completed chapters
@@ -805,7 +854,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Create paginated response
-    let responseData: any;
+    let responseData: { courses: unknown[]; pagination?: { nextCursor?: string; prevCursor?: string; hasMore?: boolean }; total?: number; limit?: number; offset?: number };
     if (useCursor) {
       const limit = cursorParams.limit || 50;
       const cursorResponse = createCursorResponse(

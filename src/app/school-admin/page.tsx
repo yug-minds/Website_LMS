@@ -22,24 +22,7 @@ import {
   ClipboardList,
   School
 } from "lucide-react";
-import { 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  PieChart as RechartsPieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  AreaChart,
-  Area
-} from "recharts";
 import { useSmartRefresh } from "../../hooks/useSmartRefresh";
-
-// Chart color palette
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
 // Enhanced interfaces for real-time data
 interface DashboardStats {
@@ -89,7 +72,8 @@ export default function SchoolAdminDashboard() {
     pendingLeaves: 0,
     averageAttendance: 0
   });
-  const [schoolInfo, setSchoolInfo] = useState<any>(null);
+  type SchoolInfo = { id?: string; name?: string; address?: string; [key: string]: unknown };
+  const [schoolInfo, setSchoolInfo] = useState<SchoolInfo | null>(null);
   
   // Use context schoolInfo if available, otherwise use local state
   const displaySchoolInfo = contextSchoolInfo || schoolInfo;
@@ -103,11 +87,6 @@ export default function SchoolAdminDashboard() {
     setIsMounted(true);
   }, []);
 
-  // Real-time chart data states
-  const [growthData, setGrowthData] = useState<Array<{name: string; teachers: number; students: number}>>([]);
-  const [attendanceData, setAttendanceData] = useState<Array<{name: string; attendance: number}>>([]);
-  const [courseProgressData, setCourseProgressData] = useState<Array<{name: string; completed: number; pending: number}>>([]);
-  const [gradeDistributionData, setGradeDistributionData] = useState<Array<{name: string; students: number}>>([]);
 
   const loadDashboardData = useCallback(async () => {
     setIsRefreshing(true);
@@ -219,7 +198,7 @@ export default function SchoolAdminDashboard() {
             const studentsData = await studentsResponse.json();
             const recentStudents = (studentsData.students || []).slice(0, 2);
              
-            recentStudents.forEach((s: any) => {
+            recentStudents.forEach((s: { id?: string; profile?: { full_name?: string }; enrolled_at?: string; created_at?: string }) => {
               activityItems.push({
                 id: `student-${s.id}`,
                 title: 'New Student Enrollment',
@@ -239,7 +218,7 @@ export default function SchoolAdminDashboard() {
             const teachersData = await teachersResponse.json();
             const recentTeachers = (teachersData.teachers || []).slice(0, 2);
              
-            recentTeachers.forEach((t: any) => {
+            recentTeachers.forEach((t: { id?: string; teacher_id?: string; teacher?: { full_name?: string }; assigned_at?: string; created_at?: string }) => {
               const teacher = t.teacher || t;
               activityItems.push({
                 id: `teacher-${t.id || t.teacher_id}`,
@@ -284,15 +263,10 @@ export default function SchoolAdminDashboard() {
         setRecentActivity([]);
       }
 
-      // Parallelize quick action previews and chart data loading
-      await Promise.all([
-        loadQuickActionPreviews(profile.school_id).catch(error => {
-          console.error('Error loading quick action previews:', error);
-        }),
-        loadChartData(newStats, profile.school_id).catch(error => {
-          console.error('Error loading chart data:', error);
-        })
-      ]);
+      // Load quick action previews
+      await loadQuickActionPreviews(profile.school_id).catch(error => {
+        console.error('Error loading quick action previews:', error);
+      });
       
       setLastRefresh(new Date());
     } catch (error) {
@@ -302,31 +276,8 @@ export default function SchoolAdminDashboard() {
     }
   }, []);
 
-  const loadChartData = useCallback(async (currentStats: DashboardStats, schoolId: string) => {
-    try {
-      // Set empty growth data - will be populated from real data when available
-      setGrowthData([]);
 
-      // Set empty attendance data - will be populated from real data when available
-      setAttendanceData([]);
-
-      // Set empty course progress data - will be populated from real data when available
-      setCourseProgressData([]);
-
-      // Set empty grade distribution data - will be populated from real data when available
-      setGradeDistributionData([]);
-
-    } catch (error) {
-      console.error('Error loading chart data:', error);
-      // Set empty data on error
-      setGrowthData([]);
-      setAttendanceData([]);
-      setCourseProgressData([]);
-      setGradeDistributionData([]);
-    }
-  }, []);
-
-  const loadQuickActionPreviews = async (schoolId: string) => {
+  const loadQuickActionPreviews = async (_schoolId: string) => {
     const previews: QuickActionPreview[] = [];
 
     // Get session once and reuse for all API calls
@@ -360,7 +311,7 @@ export default function SchoolAdminDashboard() {
           description: 'Latest student enrollments',
           icon: <User className="h-4 w-4" />,
            
-          data: recentStudents.map((s: any) => ({
+          data: recentStudents.map((s: { id?: string; profile?: { full_name?: string; email?: string }; enrolled_at?: string; created_at?: string }) => ({
             id: s.id,
             full_name: s.profile?.full_name || 'Unknown',
             email: s.profile?.email || '',
@@ -386,7 +337,7 @@ export default function SchoolAdminDashboard() {
           description: 'Latest teacher assignments',
           icon: <Users className="h-4 w-4" />,
            
-          data: recentTeachers.map((t: any) => {
+          data: recentTeachers.map((t: { id?: string; teacher?: { full_name?: string; email?: string }; assigned_at?: string; created_at?: string }) => {
             const teacher = t.teacher || t;
             return {
               id: t.id,
@@ -416,7 +367,7 @@ export default function SchoolAdminDashboard() {
             description: 'Teacher reports awaiting approval',
             icon: <ClipboardList className="h-4 w-4" />,
              
-            data: recentReports.map((r: any) => {
+            data: recentReports.map((r: { id?: string; teacher?: { full_name?: string }; topics_taught?: string; created_at?: string; date?: string }) => {
               const profile = r.teacher || {};
               return {
                 id: r.id,
@@ -447,7 +398,7 @@ export default function SchoolAdminDashboard() {
           description: 'Published courses in your school',
           icon: <BookOpen className="h-4 w-4" />,
            
-          data: recentCourses.map((c: any) => ({
+          data: recentCourses.map((c: { id?: string; title?: string; created_at?: string; status?: string }) => ({
             id: c.id,
             title: c.title,
             created_at: c.created_at,
@@ -616,9 +567,8 @@ export default function SchoolAdminDashboard() {
 
       {/* Main Content Tabs */}
       <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="management">Management</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
@@ -699,17 +649,6 @@ export default function SchoolAdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {stats.averageAttendance > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Average Attendance</span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="bg-blue-100 text-blue-800">
-                          {stats.averageAttendance}%
-                        </Badge>
-                        <TrendingUp className="h-4 w-4 text-blue-500" />
-                      </div>
-                    </div>
-                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">Pending Reports</span>
                     <div className="flex items-center gap-2">
@@ -799,122 +738,6 @@ export default function SchoolAdminDashboard() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* Analytics Tab */}
-        <TabsContent value="analytics" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Growth Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Growth Overview
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                </CardTitle>
-                <CardDescription>Teachers and Students over time</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={growthData.length > 0 ? growthData : [{name: 'No Data', teachers: 0, students: 0}]}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="teachers" stackId="1" stroke="#82ca9d" fill="#82ca9d" />
-                    <Area type="monotone" dataKey="students" stackId="1" stroke="#ffc658" fill="#ffc658" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Teacher Attendance */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Teacher Attendance
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                </CardTitle>
-                <CardDescription>Weekly attendance trends</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={attendanceData.length > 0 ? attendanceData : [{name: 'No Data', attendance: 0}]}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="attendance" stroke="#8884d8" strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Course Progress */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Course Progress
-                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
-                </CardTitle>
-                <CardDescription>Completion rates by subject</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Pie
-                      data={courseProgressData.length > 0 ? courseProgressData : [{name: 'No Data', completed: 0, pending: 0}]}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }: any) => `${name}: ${value}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="completed"
-                    >
-                      {(courseProgressData.length > 0 ? courseProgressData : [{name: 'No Data', completed: 0, pending: 0}]).map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </RechartsPieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Grade Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Student Distribution by Grade
-                  <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                </CardTitle>
-                <CardDescription>Current enrollment by grade level</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Pie
-                      data={gradeDistributionData.length > 0 ? gradeDistributionData : [{name: 'No Data', students: 0}]}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }: any) => `${name}: ${value}`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="students"
-                    >
-                      {(gradeDistributionData.length > 0 ? gradeDistributionData : [{name: 'No Data', students: 0}]).map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </RechartsPieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
 
         {/* Management Tab */}

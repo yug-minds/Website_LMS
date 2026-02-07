@@ -5,9 +5,6 @@ import { courseAccessSchema, validateRequestBody } from '../../../../../../lib/v
 import { logger, handleApiError } from '../../../../../../lib/logger';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-
 // GET - Get all course access entries for a course
 export async function GET(
   request: NextRequest,
@@ -52,8 +49,7 @@ export async function GET(
         )
       `)
       .eq('course_id', courseId)
-       
-      .order('grade', { ascending: true }) as any;
+      .order('grade', { ascending: true });
 
     if (accessError) {
       console.error('Error fetching course access:', accessError);
@@ -115,7 +111,7 @@ export async function POST(
     const validation = validateRequestBody(courseAccessSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -142,8 +138,7 @@ export async function POST(
       .from('courses')
       .select('id')
       .eq('id', courseId)
-       
-      .single() as any;
+      .single();
 
     if (courseError || !course) {
       return NextResponse.json({ 
@@ -156,8 +151,7 @@ export async function POST(
     const { data: existingSchools, error: schoolsCheckError } = await supabaseAdmin
       .from('schools')
       .select('id')
-       
-      .in('id', school_ids) as any;
+      .in('id', school_ids);
 
     if (schoolsCheckError) {
       console.error('Error validating schools:', schoolsCheckError);
@@ -243,14 +237,17 @@ export async function POST(
     }
 
     // Insert entries (use upsert to handle duplicates gracefully)
-    const { data: insertedAccess, error: accessError } = await (supabaseAdmin
+    type _CourseAccessEntry = {
+      course_id: string;
+      school_id: string;
+      grade: string;
+    };
+    const { data: insertedAccess, error: accessError } = await supabaseAdmin
       .from('course_access')
-       
-      .upsert(accessEntries as any, { 
+      .upsert(accessEntries as never, { 
         onConflict: 'course_id,school_id,grade',
         ignoreDuplicates: false 
-       
-      }) as any)
+      })
       .select();
 
     if (accessError) {

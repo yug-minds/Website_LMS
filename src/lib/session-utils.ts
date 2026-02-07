@@ -4,18 +4,19 @@
  * Helper functions for managing and verifying Supabase sessions
  */
 
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
 /**
  * Wait for session to be available with retry logic
  * @param maxAttempts - Maximum number of attempts (default: 3)
  * @param delayMs - Delay between attempts in milliseconds (default: 300)
- * @returns Promise<Session | null> - The session if found, null otherwise
+ * @returns Promise<{ session, error } | null> - The session if found, null otherwise
  */
 export async function waitForSession(
   maxAttempts: number = 3,
   delayMs: number = 300
-): Promise<{ session: any; error: any } | null> {
+): Promise<{ session: Session | null; error: unknown } | null> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const { data, error } = await supabase.auth.getSession();
@@ -52,8 +53,8 @@ export async function waitForSession(
         console.log(`⏳ No session found on attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms...`);
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
-    } catch (err: any) {
-      const errorMessage = err?.message || String(err);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('took too long');
       
       if (isTimeout) {

@@ -26,7 +26,7 @@ interface Attendance {
   status: string;
 }
 
-interface Submission {
+interface _Submission {
   assignment_id: string;
   grade: number | null;
 }
@@ -123,6 +123,7 @@ export function useStudentProfile() {
             id,
             school_id,
             grade,
+            section,
             joining_code,
             enrolled_at,
             is_active,
@@ -146,16 +147,18 @@ export function useStudentProfile() {
             userId: user.id,
           });
           // Return profile but indicate no school assignment
+          type ProfileReturn = typeof profile & { students: unknown[]; student_schools: unknown[]; hasSchoolAssignment: boolean };
           return {
-            ...profile,
+            ...(profile as Record<string, unknown>),
             students: [],
             student_schools: [],
             hasSchoolAssignment: false,
-          };
+          } as ProfileReturn;
         }
 
         // Use student_schools data (deprecated students table is no longer used)
-        const studentData = studentSchools[0];
+        type StudentSchoolRow = { school_id?: string; grade?: string; section?: string; [key: string]: unknown };
+        const studentData = studentSchools[0] as StudentSchoolRow;
 
         frontendLogger.info('Student profile fetched successfully', {
           component: 'useStudentProfile',
@@ -163,12 +166,13 @@ export function useStudentProfile() {
           schoolId: studentData.school_id,
         });
 
+        type ProfileWithStudents = typeof profile & { students: StudentSchoolRow[]; student_schools: StudentSchoolRow[]; hasSchoolAssignment: boolean };
         return {
-          ...profile,
+          ...(profile as Record<string, unknown>),
           students: [studentData],
-          student_schools: studentSchools,
+          student_schools: studentSchools as StudentSchoolRow[],
           hasSchoolAssignment: true,
-        };
+        } as ProfileWithStudents;
       } catch (error) {
         handleApiErrorResponse(
           error,
@@ -440,12 +444,14 @@ export function useStudentCourse(courseId: string) {
         async (payload) => {
           // Check if this content belongs to a chapter in this course
           if (payload.new && 'chapter_id' in payload.new) {
-            const { data: chapter } = await supabase
+            type ChapterRow = { course_id?: string };
+            const { data: chapterData } = await supabase
               .from('chapters')
               .select('course_id')
-              .eq('id', payload.new.chapter_id)
-              .single()
+              .eq('id', (payload.new as { chapter_id?: string }).chapter_id ?? '')
+              .maybeSingle()
             
+            const chapter = chapterData as ChapterRow | null;
             if (chapter && chapter.course_id === courseId) {
               console.log('🔄 Chapter content updated via realtime:', payload)
               queryClient.invalidateQueries({ queryKey: ['courseChapters', courseId] })
@@ -499,13 +505,16 @@ async function checkStudentCourseAccess(courseId: string, userId: string): Promi
   console.log(`🔍 [checkStudentCourseAccess] Checking access for student ${userId} to course ${courseId}`)
   
   // Check enrollment
-  const { data: enrollment, error: enrollmentError } = await supabase
+  type EnrollmentRow = { id?: string; course_id?: string; status?: string };
+  const { data: enrollmentData, error: enrollmentError } = await supabase
     .from('enrollments')
     .select('id, course_id, status')
     .eq('student_id', userId)
     .eq('course_id', courseId)
     .eq('status', 'active')
     .maybeSingle()
+
+  const enrollment = enrollmentData as EnrollmentRow | null;
 
   if (enrollmentError) {
     console.error('[checkStudentCourseAccess] Error checking enrollment:', {
@@ -525,13 +534,15 @@ async function checkStudentCourseAccess(courseId: string, userId: string): Promi
   }
 
   // Check course_access with normalized grade matching
-  const { data: studentSchools, error: schoolError } = await supabase
+  type StudentSchoolRow = { school_id?: string; grade?: string };
+  const { data: studentSchoolsData, error: schoolError } = await supabase
     .from('student_schools')
     .select('school_id, grade')
     .eq('student_id', userId)
     .eq('is_active', true)
     .limit(1)
 
+  const studentSchools = studentSchoolsData as StudentSchoolRow[] | null;
   const studentSchool = studentSchools && studentSchools.length > 0 ? studentSchools[0] : null
 
   if (schoolError) {
@@ -553,11 +564,13 @@ async function checkStudentCourseAccess(courseId: string, userId: string): Promi
   let hasCourseAccess = false
   if (studentSchool) {
     // Get all course_access entries for this course and school
-    const { data: courseAccessList, error: courseAccessError } = await supabase
+    const { data: courseAccessListData, error: courseAccessError } = await supabase
       .from('course_access')
       .select('id, course_id, school_id, grade')
       .eq('course_id', courseId)
-      .eq('school_id', studentSchool.school_id)
+      .eq('school_id', studentSchool.school_id ?? '')
+    
+    const courseAccessList = courseAccessListData as CourseAccess[] | null;
     
     if (courseAccessError) {
       console.error('[checkStudentCourseAccess] Error checking course_access:', {
@@ -572,7 +585,7 @@ async function checkStudentCourseAccess(courseId: string, userId: string): Promi
     } else if (courseAccessList && courseAccessList.length > 0) {
       console.log(`📋 [checkStudentCourseAccess] Found ${courseAccessList.length} course_access entries`)
       // Use normalized grade matching (same logic as database function)
-      const studentGradeNormalized = normalizeGradeForComparison(studentSchool.grade)
+      const studentGradeNormalized = normalizeGradeForComparison(studentSchool.grade ?? '')
       hasCourseAccess = courseAccessList.some((ca: CourseAccess) => {
         const accessGradeNormalized = normalizeGradeForComparison(ca.grade)
         const matches = (
@@ -580,7 +593,7 @@ async function checkStudentCourseAccess(courseId: string, userId: string): Promi
           accessGradeNormalized === studentGradeNormalized || // Normalized match
           // Additional normalized matching (handles "Grade 4" vs "grade4")
           normalizeGradeForComparison(ca.grade.replace(/^Grade\s+/, '')) === 
-          normalizeGradeForComparison(studentSchool.grade.replace(/^Grade\s+/, ''))
+          normalizeGradeForComparison((studentSchool.grade ?? '').replace(/^Grade\s+/, ''))
         )
         if (matches) {
           console.log(`✅ [checkStudentCourseAccess] Grade match found:`, {
@@ -771,12 +784,14 @@ export function useCourseChapters(courseId: string) {
         async (payload) => {
           // Check if this content belongs to a chapter in this course
           if (payload.new && 'chapter_id' in payload.new) {
-            const { data: chapter } = await supabase
+            type ChapterRow = { course_id?: string };
+            const { data: chapterData } = await supabase
               .from('chapters')
               .select('course_id')
-              .eq('id', payload.new.chapter_id)
-              .single()
+              .eq('id', (payload.new as { chapter_id?: string }).chapter_id ?? '')
+              .maybeSingle()
             
+            const chapter = chapterData as ChapterRow | null;
             if (chapter && chapter.course_id === courseId) {
               console.log('🔄 Chapter content updated via realtime:', payload)
               queryClient.invalidateQueries({ queryKey: ['courseChapters', courseId] })
@@ -1104,19 +1119,22 @@ export function useStudentCalendar() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('No user found')
 
-      // Get student's school and grade from student_schools (primary source of truth)
-      const { data: studentSchool } = await supabase
+      // Get student's school, grade, and section from student_schools (primary source of truth)
+      type StudentSchoolRow = { school_id?: string; grade?: string; section?: string };
+      const { data: studentSchoolData } = await supabase
         .from('student_schools')
-        .select('school_id, grade')
+        .select('school_id, grade, section')
         .eq('student_id', user.id)
         .eq('is_active', true)
-        .single()
+        .maybeSingle()
 
+      const studentSchool = studentSchoolData as StudentSchoolRow | null;
       if (!studentSchool) return []
       
       const studentData = {
-        school_id: studentSchool.school_id,
-        grade: studentSchool.grade
+        school_id: studentSchool.school_id ?? '',
+        grade: studentSchool.grade ?? '',
+        section: studentSchool.section ?? ''
       }
 
       // Get class schedules for student's classes
@@ -1148,13 +1166,21 @@ export function useStudentCalendar() {
         .eq('status', 'active')
 
       // Combine course IDs from both tables
+      type StudentCourseRow = { course_id?: string };
+      type EnrollmentRow = { course_id?: string };
       const courseIds = new Set<string>()
-      studentCourses?.forEach(sc => {
-        if (sc.course_id) courseIds.add(sc.course_id)
-      })
-      enrollments?.forEach(e => {
-        if (e.course_id) courseIds.add(e.course_id)
-      })
+      const studentCoursesTyped = studentCourses as StudentCourseRow[] | null;
+      const enrollmentsTyped = enrollments as EnrollmentRow[] | null;
+      if (studentCoursesTyped && Array.isArray(studentCoursesTyped)) {
+        studentCoursesTyped.forEach((sc: StudentCourseRow) => {
+          if (sc.course_id) courseIds.add(sc.course_id)
+        })
+      }
+      if (enrollmentsTyped && Array.isArray(enrollmentsTyped)) {
+        enrollmentsTyped.forEach((e: EnrollmentRow) => {
+          if (e.course_id) courseIds.add(e.course_id)
+        })
+      }
 
       // Only fetch assignments for student's enrolled courses
        
@@ -1541,29 +1567,31 @@ export function useStudentCertificates() {
       }
 
       // Then fetch course details for each certificate
-      const courseIds = certificates
-        .map(cert => cert.course_id)
+      type CertificateRow = { course_id?: string; [key: string]: unknown };
+      type CourseRow = { id: string; name?: string; title?: string; grade?: string; subject?: string };
+      const certificatesTyped = certificates as CertificateRow[];
+      const courseIds = certificatesTyped
+        .map((cert: CertificateRow) => cert.course_id)
         .filter((id): id is string => !!id)
 
-      let coursesMap = new Map()
+      let coursesMap = new Map<string, CourseRow>()
       if (courseIds.length > 0) {
-        const { data: courses } = await supabase
+        const { data: coursesData } = await supabase
           .from('courses')
           .select('id, name, title, grade, subject')
           .in('id', courseIds)
 
+        const courses = coursesData as CourseRow[] | null;
         if (courses) {
-          coursesMap = new Map(courses.map(course => [course.id, course]))
+          coursesMap = new Map(courses.map((course: CourseRow) => [course.id, course]))
         }
       }
 
       // Combine certificates with course data
-      const data = certificates.map(cert => ({
-        ...cert,
-        courses: coursesMap.get(cert.course_id) || null,
+      const data = certificatesTyped.map((cert: CertificateRow) => ({
+        ...(cert as Record<string, unknown>),
+        courses: coursesMap.get(cert.course_id ?? '') || null,
       }))
-
-      return data
 
       return data || []
     },
@@ -1591,6 +1619,8 @@ export function useUpdateStudentProgress() {
           is_completed: isCompleted,
           completed_at: isCompleted ? new Date().toISOString() : null,
           time_spent_minutes: timeSpent || 0
+        } as never, {
+          onConflict: 'student_id,content_id'
         })
 
       return data
@@ -1660,12 +1690,61 @@ export function useMarkNotificationAsRead() {
 
   return useMutation({
     mutationFn: async (notificationId: string) => {
-      const { data } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId)
+      // Get current user session for authentication
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!user || !session) {
+        throw new Error('No user session found')
+      }
+      
+      // Use API endpoint for consistency and better error handling
+      const response = await fetchWithCsrf('/api/notifications/user', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          notification_id: notificationId,
+          user_id: user.id,
+          is_read: true
+        })
+      })
 
-      return data
+      const responseText = await response.text()
+      
+      if (!response.ok) {
+        let errorMessage = 'Unknown error'
+        try {
+          if (responseText && responseText.trim()) {
+            try {
+              const errorData = JSON.parse(responseText)
+              errorMessage = errorData.details || errorData.error || errorData.message || JSON.stringify(errorData)
+            } catch {
+              errorMessage = responseText || `HTTP ${response.status}: ${response.statusText}`
+            }
+          } else {
+            errorMessage = `HTTP ${response.status}: ${response.statusText}`
+          }
+        } catch (parseError) {
+          console.error('Error parsing error response:', parseError)
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        }
+        
+        console.error('Failed to mark student notification as read:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorMessage,
+          notificationId,
+          userId: user.id
+        })
+        
+        throw new Error(errorMessage)
+      }
+
+      const data = JSON.parse(responseText)
+      return data.notification || data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['studentNotifications'] })
@@ -1683,7 +1762,7 @@ export function useUpdateProfile() {
 
       const { data } = await supabase
         .from('profiles')
-        .update(updates)
+        .update(updates as never)
         .eq('id', user.id)
 
       return data
@@ -1714,7 +1793,7 @@ export function useChangePassword() {
       // Update force_password_change to false
       const { error: profileError } = await supabase
         .from('profiles')
-        .update({ force_password_change: false })
+        .update({ force_password_change: false } as never)
         .eq('id', userData.user.id);
 
       if (profileError) {
@@ -1799,10 +1878,12 @@ export function useChapterContents(chapterId: string, courseId?: string) {
             .eq('id', chapterId)
             .maybeSingle();
 
+          type ChapterRow = { course_id?: string };
+          const chapterTyped = chapter as ChapterRow | null;
           if (chapterError) {
             console.warn('⚠️ [useChapterContents] Error fetching chapter (will try to infer courseId):', chapterError);
-          } else if (chapter?.course_id) {
-            resolvedCourseId = chapter.course_id;
+          } else if (chapterTyped?.course_id) {
+            resolvedCourseId = chapterTyped.course_id;
             console.log(`✅ [useChapterContents] Chapter found, course_id: ${resolvedCourseId}`)
           } else {
             console.warn('⚠️ [useChapterContents] Chapter not found or missing course_id')
@@ -1983,7 +2064,9 @@ export function useCourseMaterials(courseId: string) {
         return [];
       }
 
-      const chapterIds = chapters.map((c) => c.id);
+      type ChapterRow = { id: string };
+      const chaptersTyped = chapters as ChapterRow[];
+      const chapterIds = chaptersTyped.map((c: ChapterRow) => c.id);
 
       // Fetch materials for all chapters
       const { data: materials, error } = await supabase
@@ -2018,12 +2101,14 @@ export function useCourseMaterials(courseId: string) {
         async (payload) => {
           // Check if material belongs to this course
           if (payload.new && 'chapter_id' in payload.new) {
-            const { data: chapter } = await supabase
+            type ChapterRow = { course_id?: string };
+            const { data: chapterData } = await supabase
               .from('chapters')
               .select('course_id')
-              .eq('id', payload.new.chapter_id)
-              .single();
+              .eq('id', (payload.new as { chapter_id?: string }).chapter_id ?? '')
+              .maybeSingle();
 
+            const chapter = chapterData as ChapterRow | null;
             if (chapter && chapter.course_id === courseId) {
               console.log('🔄 Course material updated via realtime:', payload);
               queryClient.invalidateQueries({ queryKey: ['courseMaterials', courseId] });

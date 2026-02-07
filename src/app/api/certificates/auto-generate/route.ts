@@ -19,6 +19,15 @@ import { generateCertificateImage } from '../../../../lib/certificate-image-gene
  * Returns: { success: boolean, certificateId?: string, certificateUrl?: string, error?: string }
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     const body = await request.json()
     const { studentId, courseId } = body
@@ -31,13 +40,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Get student profile
+    type StudentRow = { full_name?: string | null; email?: string | null };
     const { data: student, error: studentError } = await supabaseAdmin
       .from('profiles')
       .select('full_name, email')
       .eq('id', studentId)
       .single()
 
-    if (studentError || !student) {
+    const studentRow = student as StudentRow | null;
+    if (studentError || !studentRow) {
       console.error('Student not found:', studentError)
       return NextResponse.json(
         { success: false, error: 'Student not found' },
@@ -46,13 +57,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Get course details
+    type CourseRow = { name?: string | null; title?: string | null; description?: string | null };
     const { data: course, error: courseError } = await supabaseAdmin
       .from('courses')
       .select('name, title, description')
       .eq('id', courseId)
       .single()
 
-    if (courseError || !course) {
+    const courseRow = course as CourseRow | null;
+    if (courseError || !courseRow) {
       console.error('Course not found:', courseError)
       return NextResponse.json(
         { success: false, error: 'Course not found' },
@@ -110,7 +123,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const completedChapters = progress?.filter((p: any) => p.completed === true).length || 0
+    type ProgressItem = {
+      completed?: boolean | null;
+    };
+    const completedChapters = ((progress || []) as ProgressItem[]).filter((p) => p.completed === true).length
 
     // Calculate completion percentage (round to 2 decimal places for consistency)
     const completionPercent = totalChapters > 0
@@ -130,6 +146,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if certificate already exists
+    type CertRow = { id?: string; certificate_url?: string | null };
     const { data: existingCert } = await supabaseAdmin
       .from('certificates')
       .select('id, certificate_url')
@@ -137,26 +154,26 @@ export async function POST(request: NextRequest) {
       .eq('course_id', courseId)
       .maybeSingle()
 
-    // If certificate exists and has a URL, return it
-    if (existingCert?.certificate_url) {
+    const existingCertRow = existingCert as CertRow | null;
+    if (existingCertRow?.certificate_url) {
       return NextResponse.json({
         success: true,
-        certificateId: existingCert.id,
-        certificateUrl: existingCert.certificate_url,
+        certificateId: existingCertRow.id,
+        certificateUrl: existingCertRow.certificate_url,
         message: 'Certificate already exists',
       })
     }
 
     // Validate student and course names before generating
-    const studentName = student.full_name?.trim() || 'Student'
-    const courseName = course.name?.trim() || course.title?.trim() || 'Course'
+    const studentName = studentRow.full_name?.trim() || 'Student'
+    const courseName = courseRow.name?.trim() || courseRow.title?.trim() || 'Course'
     
     if (!studentName || studentName === 'Student') {
-      console.warn('Student name is missing or default, using fallback:', { studentId, student })
+      console.warn('Student name is missing or default, using fallback:', { studentId, studentRow })
     }
     
     if (!courseName || courseName === 'Course') {
-      console.warn('Course name is missing or default, using fallback:', { courseId, course })
+      console.warn('Course name is missing or default, using fallback:', { courseId, courseRow })
     }
 
     // Generate certificate image
@@ -166,13 +183,13 @@ export async function POST(request: NextRequest) {
         studentName,
         courseName,
       })
-    } catch (imageError: any) {
+    } catch (imageError: unknown) {
       console.error('Error generating certificate image:', imageError)
       return NextResponse.json(
         { 
           success: false, 
           error: 'Failed to generate certificate image', 
-          details: imageError.message 
+          details: imageError instanceof Error ? imageError.message : 'Unknown error'
         },
         { status: 500 }
       )
@@ -183,7 +200,7 @@ export async function POST(request: NextRequest) {
     const fileName = `${timestamp}.png`
     const filePath = `${studentId}/${courseId}/${fileName}`
 
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+    const { error: uploadError } = await supabaseAdmin.storage
       .from('certificates')
       .upload(filePath, certificateBuffer, {
         contentType: 'image/png',
@@ -218,6 +235,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if certificate record exists, then update or insert
+    type CertRecordRow = { id?: string; issued_at?: string | null };
     const { data: existingCertRecord } = await supabaseAdmin
       .from('certificates')
       .select('id, issued_at')
@@ -225,17 +243,19 @@ export async function POST(request: NextRequest) {
       .eq('course_id', courseId)
       .maybeSingle()
 
-    let certificate
-    if (existingCertRecord) {
+    const existingRecord = existingCertRecord as CertRecordRow | null;
+    type CertificateResult = { id: string; certificate_url?: string | null };
+    let certificate: CertificateResult;
+    if (existingRecord?.id) {
       // Update existing certificate
       const { data: updatedCert, error: updateError } = await supabaseAdmin
         .from('certificates')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .update({
-          certificate_name: `${course.name || course.title} - Certificate of Completion`,
+          certificate_name: `${courseRow.name || courseRow.title} - Certificate of Completion`,
           certificate_url: certificateUrl,
-          // Keep original issued_at
         })
-        .eq('id', existingCertRecord.id)
+        .eq('id', existingRecord.id)
         .select()
         .single()
 
@@ -254,15 +274,16 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
-      certificate = updatedCert
+      certificate = updatedCert as CertificateResult;
     } else {
       // Insert new certificate
       const { data: newCert, error: insertError } = await supabaseAdmin
         .from('certificates')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .insert({
           student_id: studentId,
           course_id: courseId,
-          certificate_name: `${course.name || course.title} - Certificate of Completion`,
+          certificate_name: `${courseRow.name || courseRow.title} - Certificate of Completion`,
           certificate_url: certificateUrl,
           issued_at: new Date().toISOString(),
         })
@@ -284,7 +305,7 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
-      certificate = newCert
+      certificate = newCert as CertificateResult;
     }
 
     console.log('Certificate auto-generated successfully', {
@@ -296,7 +317,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       certificateId: certificate.id,
-      certificateUrl: certificate.certificate_url,
+      certificateUrl: certificate.certificate_url ?? undefined,
       message: 'Certificate generated successfully',
     })
   } catch (error) {

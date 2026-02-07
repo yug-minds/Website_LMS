@@ -54,14 +54,15 @@ try {
 			
 			// If authenticated user is not the requested user, check if they're admin
 			if (authenticatedUserId !== userId) {
-				const { data: profile } = await supabase
-					.from('profiles')
-					.select('role')
-					.eq('id', authenticatedUserId)
-      
-					.single() as any;
+			type ProfileRoleRow = { role?: string | null };
+			const { data: profile } = await supabase
+				.from('profiles')
+				.select('role')
+				.eq('id', authenticatedUserId)
+				.single();
 				
-				if (profile?.role !== 'admin') {
+				const adminProfile = profile as ProfileRoleRow | null;
+				if (adminProfile?.role !== 'admin') {
 					return NextResponse.json({ 
 						error: 'Forbidden', 
 						message: 'You can only access your own role' 
@@ -70,32 +71,32 @@ try {
 			}
 			
 			// Fetch profile with RLS - policies will enforce access
+			type ProfileRow = { id?: string; role?: string | null; email?: string | null; force_password_change?: boolean | null; full_name?: string | null };
 			const result = await supabase
 				.from('profiles')
 				.select('id, role, email, force_password_change, full_name')
 				.eq('id', userId)
-     
-				.single() as any;
+				.single();
 			
-			profileData = result.data;
+			profileData = result.data as ProfileRow | null;
 			profileError = result.error;
 		} else {
 			// Fallback to admin client for unauthenticated access (e.g., during login)
 			// This is a special case where we need to check role before authentication is complete
 			console.log(`🔍 get-role API: Using admin client (unauthenticated) for userId=${shortenUserId(userId)}`);
 			try {
-				const result = await supabaseAdmin
-					.from('profiles')
-					.select('id, role, email, force_password_change, full_name')
-					.eq('id', userId)
-	     
-					.single() as any;
+			type ProfileRow = { id?: string; role?: string | null; email?: string | null; force_password_change?: boolean | null; full_name?: string | null };
+			const result = await supabaseAdmin
+				.from('profiles')
+				.select('id, role, email, force_password_change, full_name')
+				.eq('id', userId)
+				.single();
 				
-				profileData = result.data;
+				profileData = result.data as ProfileRow | null;
 				profileError = result.error;
-			} catch (adminError: any) {
+			} catch (adminError: unknown) {
 				console.error(`❌ get-role API: Error using admin client:`, adminError);
-				profileError = adminError;
+				profileError = adminError as { message?: string } | null;
 				profileData = null;
 			}
 		}
@@ -131,17 +132,18 @@ try {
 		// If user is a school admin, check if they are active
 		if (role === 'school_admin') {
 			// Use admin client for this check as it's a system-level check
+			type SchoolAdminRow = { is_active?: boolean | null };
 			const { data: schoolAdminData, error: schoolAdminError } = await supabaseAdmin
 				.from('school_admins')
 				.select('is_active')
 				.eq('profile_id', userId)
-     
-				.maybeSingle() as any;
+				.maybeSingle();
 			
+			const schoolAdmin = schoolAdminData as SchoolAdminRow | null;
 			if (schoolAdminError) {
 				console.warn('Error checking school admin status:', schoolAdminError)
 				// If we can't check, allow login (fail open for now)
-			} else if (schoolAdminData && !schoolAdminData.is_active) {
+			} else if (schoolAdmin && !schoolAdmin.is_active) {
 				return NextResponse.json({ 
 					error: 'Your account has been deactivated. Please contact your administrator.',
 					role: null,

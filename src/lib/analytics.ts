@@ -2,6 +2,14 @@
  * Analytics tracking for assignment interactions
  */
 
+ 
+declare global {
+  interface Window {
+    gtag?: (...args: unknown[]) => void;
+  }
+}
+ 
+
 export type AnalyticsEvent = 
   | 'assignment_viewed'
   | 'assignment_started'
@@ -24,13 +32,13 @@ export interface AnalyticsEventData {
   chapterId?: string
   grade?: number
   timeSpent?: number
-  [key: string]: any
+  [key: string]: unknown
 }
 
 /**
  * Generic track event function that accepts any event name
  */
-export function trackEvent(event: AnalyticsEvent | string, data?: AnalyticsEventData | Record<string, any>): void {
+export function trackEvent(event: AnalyticsEvent | string, data?: AnalyticsEventData | Record<string, unknown>): void {
   // Only track in browser environment
   if (typeof window === 'undefined') return
 
@@ -50,8 +58,8 @@ export function trackEvent(event: AnalyticsEvent | string, data?: AnalyticsEvent
     }
 
     // Send to analytics service (example with gtag)
-    if (typeof window !== 'undefined' && (window as any).gtag) {
-      ;(window as any).gtag('event', event, {
+    if (typeof window !== 'undefined' && window.gtag) {
+      window.gtag('event', event, {
         ...data,
         event_category: 'assignment',
         event_label: data?.assignmentId || 'unknown'
@@ -166,8 +174,8 @@ export function trackPageView(path: string, gaId?: string): void {
 
   try {
     // Use gtag if available (Google Analytics)
-    if ((window as any).gtag) {
-      ;(window as any).gtag('config', gaId || process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || 'G-VLEC0XTTY5', {
+    if (window.gtag) {
+      window.gtag('config', gaId || process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || 'G-VLEC0XTTY5', {
         page_path: path
       })
     }
@@ -185,7 +193,7 @@ export function trackPageView(path: string, gaId?: string): void {
 /**
  * Track feature usage
  */
-export function trackFeatureUsage(featureName: string, metadata?: Record<string, any>): void {
+export function trackFeatureUsage(featureName: string, metadata?: Record<string, unknown>): void {
   trackEvent('feature_used', {
     featureName,
     ...metadata
@@ -195,7 +203,7 @@ export function trackFeatureUsage(featureName: string, metadata?: Record<string,
 /**
  * Track error
  */
-export function trackError(error: Error, context?: Record<string, any>): void {
+export function trackError(error: Error, context?: Record<string, unknown>): void {
   trackEvent('error_occurred', {
     errorMessage: error.message,
     errorStack: error.stack,
@@ -207,9 +215,9 @@ export function trackError(error: Error, context?: Record<string, any>): void {
 /**
  * Set user properties
  */
-export function setUserProperties(userId: string, properties?: Record<string, any>): void {
-  if (typeof window !== 'undefined' && (window as any).gtag) {
-    ;(window as any).gtag('set', {
+export function setUserProperties(userId: string, properties?: Record<string, unknown>): void {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('set', {
       user_id: userId,
       ...properties
     })

@@ -19,28 +19,28 @@ import {
 export function useAnalytics() {
   const pathname = usePathname();
 
-  const track = useCallback((eventName: string, params?: Record<string, any>) => {
+  const track = useCallback((eventName: string, params?: Record<string, unknown>) => {
     trackEvent(eventName, {
       page_path: pathname,
       ...params,
     });
   }, [pathname]);
 
-  const trackFeature = useCallback((featureName: string, metadata?: Record<string, any>) => {
+  const trackFeature = useCallback((featureName: string, metadata?: Record<string, unknown>) => {
     trackFeatureUsage(featureName, {
       page_path: pathname,
       ...metadata,
     });
   }, [pathname]);
 
-  const trackError = useCallback((error: Error, context?: Record<string, any>) => {
+  const trackError = useCallback((error: Error, context?: Record<string, unknown>) => {
     trackErrorAnalytics(error, {
       page_path: pathname,
       ...context,
     });
   }, [pathname]);
 
-  const setUser = useCallback((userId: string, properties?: Record<string, any>) => {
+  const setUser = useCallback((userId: string, properties?: Record<string, unknown>) => {
     setUserProperties(userId, properties);
   }, []);
 

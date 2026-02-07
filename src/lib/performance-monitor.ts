@@ -20,13 +20,22 @@ export interface DashboardMetrics {
   componentName: string;
 }
 
+interface WindowWithSentry extends Window {
+  Sentry?: {
+    metrics?: {
+      distribution: (name: string, value: number, options?: { tags?: Record<string, string>; unit?: string }) => void;
+    };
+  };
+}
+
 /**
  * Track Core Web Vitals
  */
 export function trackWebVitals(metric: WebVitals) {
   // Send to Sentry if available
-  if (typeof window !== 'undefined' && (window as any).Sentry) {
-    (window as any).Sentry.metrics.distribution(`web_vitals.${metric.name}`, metric.value, {
+  const sentryMetrics = typeof window !== 'undefined' ? (window as WindowWithSentry).Sentry?.metrics : undefined;
+  if (sentryMetrics) {
+    sentryMetrics.distribution(`web_vitals.${metric.name}`, metric.value, {
       tags: {
         rating: metric.rating || 'unknown',
       },
@@ -47,22 +56,23 @@ export function trackWebVitals(metric: WebVitals) {
  */
 export function trackDashboardMetric(metrics: DashboardMetrics) {
   // Send to Sentry if available
-  if (typeof window !== 'undefined' && (window as any).Sentry) {
-    (window as any).Sentry.metrics.distribution('dashboard.tab_switch_time', metrics.tabSwitchTime, {
+  const sentryMetrics = typeof window !== 'undefined' ? (window as WindowWithSentry).Sentry?.metrics : undefined;
+  if (sentryMetrics) {
+    sentryMetrics.distribution('dashboard.tab_switch_time', metrics.tabSwitchTime, {
       tags: {
         component: metrics.componentName,
       },
       unit: 'millisecond',
     });
 
-    (window as any).Sentry.metrics.distribution('dashboard.data_load_time', metrics.dataLoadTime, {
+    sentryMetrics.distribution('dashboard.data_load_time', metrics.dataLoadTime, {
       tags: {
         component: metrics.componentName,
       },
       unit: 'millisecond',
     });
 
-    (window as any).Sentry.metrics.distribution('dashboard.render_time', metrics.renderTime, {
+    sentryMetrics.distribution('dashboard.render_time', metrics.renderTime, {
       tags: {
         component: metrics.componentName,
       },

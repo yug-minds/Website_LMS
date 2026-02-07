@@ -1,10 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
+import { rateLimit, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { passwordResetRequestSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { validateCsrf } from '../../../../lib/csrf-middleware';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Profile {
+  id?: string;
+  email?: string;
+  school_id?: string;
+  role?: string;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface PasswordResetRequest {
+  id?: string;
+  user_id?: string;
+  email?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+interface RequestData {
+  user_id: string;
+  email: string;
+  status: string;
+  requested_at: string;
+}
+
+interface Notification {
+  user_id: string;
+  title: string;
+  message: string;
+  type: string;
+  created_at: string;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface SchoolAdmin {
+  id?: string;
+  email?: string;
+  [key: string]: unknown;
+}
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -47,7 +87,11 @@ export async function POST(request: NextRequest) {
     const validation = validateRequestBody(passwordResetRequestSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => {
+        const issue = e as { path?: (string | number)[]; message?: string };
+        const path = Array.isArray(issue.path) ? issue.path.filter((p): p is string | number => typeof p === 'string' || typeof p === 'number').join('.') : '';
+        return `${path ? path + ': ' : ''}${issue.message || ''}`;
+      }).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -61,10 +105,16 @@ export async function POST(request: NextRequest) {
 
         // Find the user profile by email
         // Retry lookup in case profile was just created
+        type Profile = {
+          id: string;
+          email?: string | null;
+          role?: string | null;
+          school_id?: string | null;
+          full_name?: string | null;
+        };
+        let profile: Profile | null = null;
          
-        let profile: any = null;
-         
-        let profileError: any = null;
+        let profileError: unknown = null;
         
         for (let retry = 0; retry < 3; retry++) {
           if (retry > 0) {
@@ -76,7 +126,7 @@ export async function POST(request: NextRequest) {
             .select('id, email, role, school_id, full_name')
             .eq('email', email.toLowerCase().trim())
              
-            .single() as any;
+            .single();
           
           if (!error && profileData) {
             profile = profileData;
@@ -95,16 +145,17 @@ export async function POST(request: NextRequest) {
           );
         }
         
-        console.log(`✅ Found profile: id=${profile.id}, role=${profile.role}, school_id=${profile.school_id || 'null'}`);
+        const typedProfile = profile as { id?: string; role?: string; school_id?: string; full_name?: string; email?: string };
+        console.log(`✅ Found profile: id=${typedProfile.id}, role=${typedProfile.role}, school_id=${typedProfile.school_id || 'null'}`);
 
     // Check if there's already a pending request
     const { data: existingRequest } = await supabaseAdmin
       .from('password_reset_requests')
       .select('id')
-      .eq('user_id', profile.id)
+      .eq('user_id', typedProfile.id || '')
       .eq('status', 'pending')
        
-      .single() as any;
+      .single();
 
     if (existingRequest) {
       return NextResponse.json(
@@ -115,27 +166,26 @@ export async function POST(request: NextRequest) {
 
         // Create the password reset request
         // Ensure school_id is set correctly
-         
-        const requestData: any = {
-          user_id: profile.id,
-          email: profile.email,
-          user_role: profile.role,
+        const requestData: RequestData & { user_role?: string; school_id?: string } = {
+          user_id: typedProfile.id || '',
+          email: typedProfile.email || '',
+          user_role: typedProfile.role,
           status: 'pending',
           requested_at: new Date().toISOString()
         };
         
         // Only set school_id if it exists (some users like main admins might not have a school_id)
-        if (profile.school_id) {
-          requestData.school_id = profile.school_id;
+        if (typedProfile.school_id) {
+          requestData.school_id = typedProfile.school_id;
         }
         
         console.log('📝 Attempting to insert password reset request with data:', JSON.stringify(requestData, null, 2));
         
         const { data: resetRequest, error: insertError } = await supabaseAdmin
           .from('password_reset_requests')
-          .insert(requestData)
+          .insert(requestData as never)
           .select()
-          .single() as any;
+          .single();
 
     if (insertError) {
       console.error('❌ Error creating password reset request:', {
@@ -172,33 +222,35 @@ export async function POST(request: NextRequest) {
     // Send notifications based on user role:
     // - If student: notify school admin AND admin
     // - If teacher/school_admin: notify admin only
-    const notificationsToInsert: any[] = [];
+    const notificationsToInsert: Notification[] = [];
 
     // Always notify main admin (admin or super_admin role)
     const { data: mainAdmins } = await supabaseAdmin
       .from('profiles')
       .select('id, email, full_name')
-      .in('role', ['admin', 'super_admin']) as any;
+      .in('role', ['admin', 'super_admin']);
 
     if (mainAdmins && mainAdmins.length > 0) {
       mainAdmins.forEach((admin: { id: string; email?: string; full_name?: string }) => {
+        const profileForNotification = profile as { full_name?: string; email?: string; role?: string };
         notificationsToInsert.push({
           user_id: admin.id,
           title: 'Password Reset Request',
-          message: `A password reset request has been submitted by ${profile.full_name || profile.email} (${profile.role}). Please review and approve or reject the request.`,
+          message: `A password reset request has been submitted by ${profileForNotification.full_name || profileForNotification.email} (${profileForNotification.role}). Please review and approve or reject the request.`,
           type: 'info',
-          is_read: false
-        });
+          is_read: false,
+          created_at: new Date().toISOString()
+        } as Notification);
       });
       console.log(`✅ Added ${mainAdmins.length} main admin(s) to notification list`);
     }
 
     // If the requesting user is a STUDENT, also notify school admin
-    if (profile.role === 'student' && profile.school_id) {
-      console.log(`🔍 Looking for school admins for student's school_id: ${profile.school_id}`);
+    if (typedProfile.role === 'student' && typedProfile.school_id) {
+      console.log(`🔍 Looking for school admins for student's school_id: ${typedProfile.school_id}`);
       
-      let schoolAdmins: any[] = [];
-      let schoolAdminError: any = null;
+      let schoolAdmins: Array<{ id?: string }> = [];
+      let schoolAdminError: unknown = null;
       
       for (let retry = 0; retry < 3; retry++) {
         if (retry > 0) {
@@ -209,10 +261,10 @@ export async function POST(request: NextRequest) {
           .from('profiles')
           .select('id, email, full_name, school_id')
           .eq('role', 'school_admin')
-          .eq('school_id', profile.school_id) as any;
+          .eq('school_id', typedProfile.school_id || '');
 
         if (!error && admins && admins.length > 0) {
-          schoolAdmins = admins;
+          schoolAdmins = admins as Array<{ id?: string }>;
           schoolAdminError = null;
           break;
         } else {
@@ -223,36 +275,37 @@ export async function POST(request: NextRequest) {
       if (schoolAdminError) {
         console.error('❌ Error fetching school admins:', schoolAdminError);
       } else if (schoolAdmins && schoolAdmins.length > 0) {
-        console.log(`✅ Found ${schoolAdmins.length} school admin(s) for school_id ${profile.school_id}`);
-        schoolAdmins.forEach(admin => {
-          notificationsToInsert.push({
-            user_id: admin.id,
-            title: 'Password Reset Request',
-            message: `A password reset request has been submitted by ${profile.full_name || profile.email} (${profile.role}) from your school. Please review and approve or reject the request.`,
-            type: 'info',
-            is_read: false
-          });
+        console.log(`✅ Found ${schoolAdmins.length} school admin(s) for school_id ${typedProfile.school_id}`);
+        schoolAdmins.forEach((admin: { id?: string }) => {
+          if (admin.id) {
+            notificationsToInsert.push({
+              user_id: admin.id,
+              title: 'Password Reset Request',
+              message: `A password reset request has been submitted by ${typedProfile.full_name || typedProfile.email} (${typedProfile.role}) from your school. Please review and approve or reject the request.`,
+              type: 'info',
+              is_read: false,
+              created_at: new Date().toISOString()
+            } as Notification);
+          }
         });
         console.log(`✅ Added ${schoolAdmins.length} school admin(s) to notification list`);
       } else {
-        console.log(`⚠️ No school admin found for school_id: ${profile.school_id}`);
+        console.log(`⚠️ No school admin found for school_id: ${typedProfile.school_id}`);
       }
     } else {
-      if (profile.role !== 'student') {
-        console.log(`ℹ️ User role is '${profile.role}', not 'student' - only notifying main admin (not school admin)`);
-      } else if (!profile.school_id) {
+      if (typedProfile.role !== 'student') {
+        console.log(`ℹ️ User role is '${typedProfile.role}', not 'student' - only notifying main admin (not school admin)`);
+      } else if (!typedProfile.school_id) {
         console.log(`⚠️ Student has no school_id, skipping school admin notification`);
       }
     }
 
     // Insert all notifications
     if (notificationsToInsert.length > 0) {
-      const { data: insertedNotifications, error: notificationError } = await (supabaseAdmin
+      const { data: insertedNotifications, error: notificationError } = await supabaseAdmin
         .from('notifications')
-         
-        .insert(notificationsToInsert as any)
-         
-        .select() as any);
+        .insert(notificationsToInsert as never)
+        .select();
 
       if (notificationError) {
         console.error('❌ Error creating notifications:', notificationError);
@@ -263,9 +316,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Return success response with CSRF token cookie
+    const resetRequestData = resetRequest as { id?: string };
     const successResponse = NextResponse.json({
       message: 'Password reset request submitted successfully. An administrator will review your request.',
-      requestId: resetRequest.id
+      requestId: resetRequestData.id
     });
     // Ensure CSRF token is set in response
     const { ensureCsrfToken } = await import('../../../../lib/csrf-middleware');

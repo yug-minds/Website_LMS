@@ -168,7 +168,7 @@ export function useTodayAttendanceStatus(schoolId?: string, date?: string) {
 
 /**
  * Get teacher's monthly attendance data
- * Uses API route to bypass RLS securely
+ * Uses the monthly attendance API endpoint which provides accurate data from teacher_monthly_attendance_log
  */
 export function useTeacherMonthlyAttendance(schoolId?: string, months?: number) {
   return useQuery({
@@ -181,7 +181,7 @@ export function useTeacherMonthlyAttendance(schoolId?: string, months?: number) 
       if (schoolId) params.append('school_id', schoolId);
       if (months) params.append('limit', months.toString());
 
-      const url = `/api/teacher/analytics${params.toString() ? '?' + params.toString() : ''}`;
+      const url = `/api/teacher/attendance/monthly${params.toString() ? '?' + params.toString() : ''}`;
 
       const response = await fetch(url, {
         cache: 'no-store',
@@ -196,8 +196,79 @@ export function useTeacherMonthlyAttendance(schoolId?: string, months?: number) 
       }
 
       const data = await response.json();
-      // Return raw monthly attendance data from analytics response
-      return data.analytics?.monthlyAttendanceRaw || [];
+      // The monthly endpoint returns monthlyData array from teacher_monthly_attendance_log
+      const monthlyData = data.monthlyData || [];
+      
+      // Filter by school_id if provided (API may return data for all schools)
+      interface MonthlyDataItem {
+        month?: string;
+        school_id?: string;
+        present_days?: number;
+        absent_days?: number;
+        leave_days?: number;
+        unreported_days?: number;
+        total_working_days?: number;
+        attendance_percentage?: number;
+      }
+      let filteredData = monthlyData as MonthlyDataItem[];
+      if (schoolId && monthlyData.length > 0) {
+        filteredData = monthlyData.filter((item: MonthlyDataItem) => item.school_id === schoolId);
+      }
+      
+      // Transform to match expected format with present_count, absent_count, etc.
+      // Data is already sorted descending (most recent first) by the API
+      const transformed = filteredData.map((item: MonthlyDataItem) => ({
+        month: item.month,
+        present_count: item.present_days || 0,
+        absent_count: item.absent_days || 0,
+        leave_count: item.leave_days || 0,
+        unreported_count: item.unreported_days || 0,
+        total_days: item.total_working_days || 0,
+        attendance_percentage: item.attendance_percentage || 0
+      }));
+      
+      return transformed;
+    },
+    enabled: true, // Always enabled
+  });
+}
+
+/**
+ * Get teacher's monthly attendance log data (from teacher_monthly_attendance_log table)
+ * Uses API route to bypass RLS securely
+ * Returns detailed monthly breakdown with all metrics
+ */
+export function useTeacherMonthlyAttendanceLog(schoolId?: string, yearMonth?: string) {
+  return useQuery({
+    queryKey: ['teacher', 'monthly-attendance-log', schoolId, yearMonth],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const params = new URLSearchParams();
+      if (schoolId) params.append('school_id', schoolId);
+      if (yearMonth) params.append('yearMonth', yearMonth);
+      params.append('limit', '12'); // Default to 12 months
+
+      const url = `/api/teacher/attendance/monthly${params.toString() ? '?' + params.toString() : ''}`;
+
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: {
+          'Authorization': `Bearer ${session.access_token || ''}`
+        }
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to fetch monthly attendance log');
+      }
+
+      const data = await response.json();
+      return {
+        monthlyData: data.monthlyData || [],
+        summary: data.summary || {}
+      };
     },
   });
 }
@@ -249,8 +320,10 @@ export function useTeacherAttendance(schoolId?: string, month?: string) {
       const params = new URLSearchParams();
       if (schoolId) params.append('school_id', schoolId);
       if (month) {
-        const startDate = new Date(month);
-        const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+        // month format is "YYYY-MM", convert to date range
+        const [year, monthNum] = month.split('-').map(Number);
+        const startDate = new Date(year, monthNum - 1, 1); // First day of month
+        const endDate = new Date(year, monthNum, 0); // Last day of month
         params.append('start_date', startDate.toISOString().split('T')[0]);
         params.append('end_date', endDate.toISOString().split('T')[0]);
       }
@@ -330,7 +403,7 @@ export function useTeacherSchedules(schoolId?: string, day?: string) {
 
 /**
  * Get today's classes for the teacher
- * Uses API routes to bypass RLS securely
+ * Uses schedules to determine which classes are scheduled for today based on day of week
  */
 export function useTodaysClasses(schoolId?: string) {
   return useQuery({
@@ -340,29 +413,83 @@ export function useTodaysClasses(schoolId?: string) {
       if (!session) throw new Error('Not authenticated');
 
       const today = new Date().toISOString().split('T')[0];
+      const todayDate = new Date(today + 'T00:00:00');
+      const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const todayDayOfWeek = daysOfWeek[todayDate.getDay()];
+
       const authHeader = { 'Authorization': `Bearer ${session.access_token || ''}` };
 
-      // Get classes assigned to teacher
-      const classesUrl = schoolId 
-        ? `/api/teacher/classes?school_id=${schoolId || 'undefined'}`
-        : '/api/teacher/classes';
-      
-      const classesResponse = await fetch(classesUrl, {
+      // Get schedules for today (filtered by day of week)
+      const schedulesUrl = schoolId
+        ? `/api/teacher/schedules?school_id=${schoolId}&day=${todayDayOfWeek}`
+        : `/api/teacher/schedules?day=${todayDayOfWeek}`;
+
+      const schedulesResponse = await fetch(schedulesUrl, {
         cache: 'no-store',
         headers: authHeader
       });
 
-      if (!classesResponse.ok) {
-        throw new Error('Failed to fetch classes');
+      if (!schedulesResponse.ok) {
+        throw new Error('Failed to fetch today\'s schedules');
       }
 
-      const classesData = await classesResponse.json();
-      const classAssignments = classesData?.classes ?? classesData?.data ?? [];
+      const schedulesData = await schedulesResponse.json();
+      const todaysSchedules = schedulesData?.schedules || [];
 
-      if (classAssignments.length === 0) return [];
+      console.log(`📅 Today's schedules (${todayDayOfWeek}):`, {
+        date: today,
+        dayOfWeek: todayDayOfWeek,
+        scheduleCount: todaysSchedules.length,
+        schedules: todaysSchedules
+      });
 
-      // Get today's reports
-      const reportsUrl = `/api/teacher/reports?date=${today}${schoolId ? `&school_id=${schoolId || 'undefined'}` : ''}`;
+      // If no schedules for today, return empty array
+      if (todaysSchedules.length === 0) {
+        console.log('✅ No schedules for today, returning empty array');
+        return [];
+      }
+
+      // Extract unique classes from schedules
+      // Use a Map to deduplicate by grade+subject combination
+      interface ClassItem {
+        id?: string;
+        grade?: string;
+        subject?: string;
+        class_name?: string;
+        school_id?: string;
+        schedule_id?: string;
+        start_time?: string;
+        end_time?: string;
+        class?: { class_name?: string };
+      }
+      
+      const uniqueClassesMap = new Map<string, ClassItem>();
+      
+      todaysSchedules.forEach((schedule: ClassItem) => {
+        // Create a unique key from grade and subject
+        const classKey = `${schedule.grade || ''}-${schedule.subject || ''}`;
+        
+        if (!uniqueClassesMap.has(classKey)) {
+          type ScheduleRow = { class_id?: string; id?: string; grade?: string; subject?: string; school_id?: string; class?: { class_name?: string } };
+          const scheduleTyped = schedule as ScheduleRow;
+          uniqueClassesMap.set(classKey, {
+            id: scheduleTyped.class_id || scheduleTyped.id || '',
+            grade: scheduleTyped.grade,
+            subject: scheduleTyped.subject,
+            class_name: scheduleTyped.grade || scheduleTyped.class?.class_name,
+            school_id: scheduleTyped.school_id,
+            // Include schedule info for display
+            schedule_id: schedule.id,
+            start_time: schedule.start_time,
+            end_time: schedule.end_time
+          });
+        }
+      });
+
+      const todaysClasses = Array.from(uniqueClassesMap.values());
+
+      // Get today's reports to check which classes have reports
+      const reportsUrl = `/api/teacher/reports?date=${today}${schoolId ? `&school_id=${schoolId}` : ''}`;
       const reportsResponse = await fetch(reportsUrl, {
         cache: 'no-store',
         headers: authHeader
@@ -371,18 +498,26 @@ export function useTodaysClasses(schoolId?: string) {
       const reportsData = reportsResponse.ok ? await reportsResponse.json() : { reports: [] };
       const todayReports = reportsData.reports || [];
        
-      const reportedClassIds = new Set(todayReports.map((r: any) => r.class_id));
+      // Create a set of reported grades (since reports use grade, not class_id)
+      interface Report {
+        grade?: string;
+      }
+      
+      const reportedGrades = new Set(todayReports.map((r: Report) => r.grade).filter(Boolean));
 
-      // API now returns flat structure, so we can use it directly
-      return classAssignments
-         
-        .map((ca: any) => ({
-          ...ca,
-          hasReport: reportedClassIds.has(ca.id || ca.class_id),
-          assignment: ca
-        }))
-         
-        .filter((c: any) => !schoolId || c.school_id === schoolId);
+      // Map classes and mark which ones have reports
+      const result = todaysClasses.map((classItem: ClassItem) => ({
+        ...classItem,
+        hasReport: reportedGrades.has(classItem.grade),
+        assignment: classItem
+      }));
+
+      console.log('✅ Today\'s classes from schedules:', {
+        uniqueClassesCount: result.length,
+        classes: result.map((c: ClassItem & { hasReport?: boolean }) => ({ grade: c.grade, subject: c.subject, hasReport: c.hasReport }))
+      });
+
+      return result;
     },
     enabled: !!schoolId,
     // Small polling fallback in case realtime isn't available / RLS blocks replication events
@@ -475,11 +610,15 @@ export function useSubmitReport() {
         const errorMessage = error.details || error.error || 'Failed to submit report';
         const errorWithDetails = new Error(errorMessage);
          
-        (errorWithDetails as any).details = error.details;
-         
-        (errorWithDetails as any).hint = error.hint;
-         
-        (errorWithDetails as any).data = error;
+        interface ErrorWithDetails extends Error {
+          details?: string;
+          hint?: string;
+          data?: unknown;
+        }
+        
+        (errorWithDetails as ErrorWithDetails).details = error.details;
+        (errorWithDetails as ErrorWithDetails).hint = error.hint;
+        (errorWithDetails as ErrorWithDetails).data = error;
         throw errorWithDetails;
       }
 
@@ -498,8 +637,9 @@ export function useSubmitReport() {
       console.log('Report submitted successfully');
     },
      
-    onError: (error: any) => {
-      console.error('Error submitting report:', error.message || 'Failed to submit report');
+    onError: (error: unknown) => {
+      const errorMessage = error instanceof Error ? error.message : (typeof error === 'string' ? error : 'Failed to submit report');
+      console.error('Error submitting report:', errorMessage);
     },
   });
 }
@@ -540,7 +680,7 @@ export function useApplyLeave() {
       if (!response.ok) {
         // API may return different error shapes depending on middleware / handler.
         // Prefer JSON if possible, but fall back to text and HTTP status.
-        let errorJson: any = null;
+        let errorJson: { details?: string; error?: string; message?: string } | null = null;
         let errorText: string | null = null;
         try {
           errorJson = await response.json();
@@ -559,9 +699,14 @@ export function useApplyLeave() {
           errorText ||
           `Failed to submit leave request (HTTP ${response.status})`;
 
-        const errorWithDetails = new Error(message);
-        (errorWithDetails as any).status = response.status;
-        (errorWithDetails as any).data = errorJson ?? { raw: errorText };
+        interface ErrorWithDetails extends Error {
+          status?: number;
+          data?: unknown;
+        }
+        
+        const errorWithDetails = new Error(message) as ErrorWithDetails;
+        errorWithDetails.status = response.status;
+        errorWithDetails.data = errorJson ?? { raw: errorText };
         throw errorWithDetails;
       }
 
@@ -575,8 +720,9 @@ export function useApplyLeave() {
       console.log('Leave request submitted successfully');
     },
      
-    onError: (error: any) => {
-      console.error('Error submitting leave request:', error.message || 'Failed to submit leave request');
+    onError: (error: unknown) => {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to submit leave request';
+      console.error('Error submitting leave request:', errorMessage);
     },
   });
 }

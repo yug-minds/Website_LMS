@@ -13,8 +13,7 @@ import {
   User,
   FileText,
   AlertCircle,
-  Loader2,
-  CheckCircle2
+  Loader2
 } from "lucide-react";
 import { fetchWithCsrf } from "../../lib/csrf-client";
 
@@ -26,7 +25,7 @@ interface CourseVersion {
   published_by?: string;
   published_by_name?: string;
   changes_summary?: string;
-  course_data?: any;
+  course_data?: Record<string, unknown>;
 }
 
 interface CourseVersionHistoryProps {
@@ -51,6 +50,7 @@ export function CourseVersionHistory({
     if (courseId) {
       loadVersions();
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- load when courseId changes */
   }, [courseId]);
 
   const loadVersions = useCallback(async () => {

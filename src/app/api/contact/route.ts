@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     // Validate request body
     const validation = validateRequestBody(contactFormSchema, body);
     if (!validation.success) {
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Contact form validation failed', {
         endpoint: '/api/contact',
         errors: errorMessages,

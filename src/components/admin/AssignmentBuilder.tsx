@@ -86,7 +86,7 @@ export function AssignmentBuilder({
       chapterIdMatches: assignment?.chapter_id === chapterId,
       questionsCount: questionsArray.length,
       hasQuestions: questionsArray.length > 0,
-      questions: questionsArray.map((q: any) => ({
+      questions: questionsArray.map((q: AssignmentQuestion) => ({
         id: q.id,
         question_type: q.question_type,
         question_text: q.question_text?.substring(0, 30) + '...'
@@ -124,7 +124,7 @@ export function AssignmentBuilder({
       // Log each question individually so they're visible
       if (questionsArray.length > 0) {
         console.log('✅ QUESTIONS FOUND:', questionsArray.length);
-        questionsArray.forEach((q: any, idx: number) => {
+        questionsArray.forEach((q: AssignmentQuestion, idx: number) => {
           console.log(`  Question ${idx + 1}:`, {
             id: q.id,
             type: q.question_type,
@@ -144,7 +144,7 @@ export function AssignmentBuilder({
     }
     
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssignmentBuilder.tsx:85',message:'Assignment prop received in AssignmentBuilder',data:{assignmentId:assignment?.id,assignmentTitle:assignment?.title,questionsCount:questionsArray.length,questions:questionsArray.map((q:any)=>({id:q.id,type:q.question_type})),willRender:questionsArray.length>0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'AssignmentBuilder.tsx:85',message:'Assignment prop received in AssignmentBuilder',data:{assignmentId:assignment?.id,assignmentTitle:assignment?.title,questionsCount:questionsArray.length,questions:questionsArray.map((q:AssignmentQuestion)=>({id:q.id,type:q.question_type})),willRender:questionsArray.length>0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
     // #endregion
   }, [assignment, chapterId, chapterName]);
 
@@ -300,7 +300,7 @@ export function AssignmentBuilder({
     }
 
     if (questionFormData.question_type === 'MCQ') {
-      const validOptions = questionFormData.options.filter((opt: any) => opt.trim());
+      const validOptions = questionFormData.options.filter((opt: string) => opt.trim());
       if (validOptions.length < 2) {
         alert('MCQ questions must have at least 2 options');
         return;
@@ -326,14 +326,14 @@ export function AssignmentBuilder({
       assignment_id: assignment?.id,
       question_type: questionFormData.question_type,
       question_text: questionFormData.question_text.trim(),
-      options: questionFormData.question_type === 'MCQ' ? questionFormData.options.filter((opt: any) => opt.trim()) : undefined,
+      options: questionFormData.question_type === 'MCQ' ? questionFormData.options.filter((opt: string) => opt.trim()) : undefined,
       correct_answer: questionFormData.correct_answer.trim(),
       marks,
     };
 
     const questions = assignment?.questions || [];
     if (editingQuestion) {
-      const updatedQuestions = questions.map((q: any) => 
+      const updatedQuestions = questions.map((q: AssignmentQuestion) => 
         q.id === editingQuestion.id ? newQuestion : q
       );
       onAssignmentChange({
@@ -355,7 +355,7 @@ export function AssignmentBuilder({
     if (confirm('Are you sure you want to delete this question?')) {
       onAssignmentChange({
         ...assignment,
-        questions: assignment.questions.filter((q: any) => q.id !== questionId),
+        questions: assignment.questions.filter((q: AssignmentQuestion) => q.id !== questionId),
       });
     }
   };
@@ -386,7 +386,7 @@ export function AssignmentBuilder({
 
   // CRITICAL: Ensure questions is an array before calculating total marks
   const questionsForMarks = Array.isArray(assignment?.questions) ? assignment.questions : [];
-  const totalMarks = questionsForMarks.reduce((sum: number, q: any) => sum + (q.marks || 0), 0) || 0;
+  const totalMarks = questionsForMarks.reduce((sum: number, q: AssignmentQuestion) => sum + (q.marks || 0), 0) || 0;
 
   return (
     <Card>
@@ -514,7 +514,7 @@ export function AssignmentBuilder({
                   questionsArrayLength: questionsArray.length,
                   hasQuestions: hasQuestions,
                   willRender: hasQuestions,
-                  questions: questionsArray.map((q: any) => ({ id: q.id, type: q.question_type }))
+                  questions: questionsArray.map((q: AssignmentQuestion) => ({ id: q.id, type: q.question_type }))
                 });
                 
                 return hasQuestions;
@@ -597,7 +597,7 @@ export function AssignmentBuilder({
                 </div>
               ) : (
                 <div className="text-sm text-gray-500 text-center py-4">
-                  <p>No questions added yet. Click "Add Question" to get started.</p>
+                  <p>No questions added yet. Click &quot;Add Question&quot; to get started.</p>
                   {/* Debug info */}
                   {assignment && 'questions' in assignment && (
                     <p className="text-xs text-red-500 mt-2">
@@ -788,7 +788,7 @@ export function AssignmentBuilder({
                     </SelectTrigger>
                     <SelectContent>
                       {questionFormData.options
-                        .filter((opt: any) => opt.trim())
+                        .filter((opt: string) => opt.trim())
                         .map((option, index) => (
                           <SelectItem key={index} value={option}>
                             {String.fromCharCode(65 + index)}. {option}

@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
   
   // Helper function to create safe error response
   const createErrorResponse = (error: string, details?: string, status: number = 500): NextResponse => {
-    const response: any = { error, status };
+    const response: { error: string; status: number; details?: string } = { error, status };
     if (details) response.details = details;
     // Ensure response is JSON-serializable
     try {
@@ -60,17 +60,19 @@ export async function POST(request: NextRequest) {
   };
 
   // Helper function to safely extract error info
-  const extractErrorInfo = (error: any): { message: string; code?: string; details?: string; hint?: string } => {
+  const extractErrorInfo = (error: unknown): { message: string; code?: string; details?: string; hint?: string } => {
     if (!error) return { message: 'Unknown error' };
     
-    const info: any = {
-      message: error?.message || String(error) || 'Unknown error'
+    const info: { message: string; code?: string; details?: string; hint?: string } = {
+      message: (error && typeof error === 'object' && 'message' in error ? String((error as { message: unknown }).message) : null) || String(error) || 'Unknown error'
     };
     
     // Safely extract Supabase error properties
-    if (error?.code && typeof error.code === 'string') info.code = error.code;
-    if (error?.details && typeof error.details === 'string') info.details = error.details;
-    if (error?.hint && typeof error.hint === 'string') info.hint = error.hint;
+    if (error && typeof error === 'object') {
+      if ('code' in error && typeof error.code === 'string') info.code = error.code;
+      if ('details' in error && typeof error.details === 'string') info.details = error.details;
+      if ('hint' in error && typeof error.hint === 'string') info.hint = error.hint;
+    }
     
     return info;
   };
@@ -87,8 +89,8 @@ export async function POST(request: NextRequest) {
       if (!rl.success) {
         return createErrorResponse('Rate limit exceeded', 'Too many requests. Please try again later.', 429);
       }
-    } catch (rateLimitError: any) {
-      logger.error('Rate limit check failed', { endpoint: '/api/admin/success-stories' }, rateLimitError);
+    } catch (rateLimitError: unknown) {
+      logger.error('Rate limit check failed', { endpoint: '/api/admin/success-stories' }, rateLimitError instanceof Error ? rateLimitError : new Error(String(rateLimitError)));
       return createErrorResponse('Rate limit check failed', 'Unable to verify rate limits', 500);
     }
 
@@ -96,8 +98,8 @@ export async function POST(request: NextRequest) {
     try {
       const csrfError = await validateCsrf(request);
       if (csrfError) return csrfError;
-    } catch (csrfErr: any) {
-      logger.error('CSRF validation failed', { endpoint: '/api/admin/success-stories' }, csrfErr);
+    } catch (csrfErr: unknown) {
+      logger.error('CSRF validation failed', { endpoint: '/api/admin/success-stories' }, csrfErr instanceof Error ? csrfErr : new Error(String(csrfErr)));
       return createErrorResponse('CSRF validation failed', 'Security check failed. Please refresh and try again.', 403);
     }
 
@@ -119,8 +121,8 @@ export async function POST(request: NextRequest) {
       
       authUserId = auth.userId;
       logger.info('Authentication successful', { endpoint: '/api/admin/success-stories', userId: authUserId });
-    } catch (authErr: any) {
-      logger.error('Authentication failed', { endpoint: '/api/admin/success-stories' }, authErr);
+    } catch (authErr: unknown) {
+      logger.error('Authentication failed', { endpoint: '/api/admin/success-stories' }, authErr instanceof Error ? authErr : new Error(String(authErr)));
       return createErrorResponse('Authentication failed', 'Unable to verify admin access', 401);
     }
 
@@ -129,8 +131,8 @@ export async function POST(request: NextRequest) {
     try {
       form = await request.formData();
       logger.info('Form data parsed successfully', { endpoint: '/api/admin/success-stories' });
-    } catch (formErr: any) {
-      logger.error('Form data parsing failed', { endpoint: '/api/admin/success-stories' }, formErr);
+    } catch (formErr: unknown) {
+      logger.error('Form data parsing failed', { endpoint: '/api/admin/success-stories' }, formErr instanceof Error ? formErr : new Error(String(formErr)));
       return createErrorResponse('Invalid form data', 'Unable to parse request data', 400);
     }
 
@@ -167,8 +169,8 @@ export async function POST(request: NextRequest) {
         order_index,
         is_published
       });
-    } catch (extractErr: any) {
-      logger.error('Form field extraction failed', { endpoint: '/api/admin/success-stories' }, extractErr);
+    } catch (extractErr: unknown) {
+      logger.error('Form field extraction failed', { endpoint: '/api/admin/success-stories' }, extractErr instanceof Error ? extractErr : new Error(String(extractErr)));
       return createErrorResponse('Form field extraction failed', 'Unable to extract form data', 400);
     }
 
@@ -211,7 +213,16 @@ export async function POST(request: NextRequest) {
       if (bucketError) {
         logger.warn('Failed to list buckets', { endpoint: '/api/admin/success-stories', error: bucketError.message });
       } else {
-        const schoolLogosBucket = buckets?.find((b: any) => b.name === 'school-logos');
+        type StorageBucket = {
+          name: string;
+          id?: string;
+          public?: boolean;
+          created_at?: string;
+          updated_at?: string;
+          file_size_limit?: number | null;
+          allowed_mime_types?: string[] | null;
+        };
+        const schoolLogosBucket = (buckets || []).find((b: StorageBucket) => b.name === 'school-logos');
         if (schoolLogosBucket) {
           bucketSizeLimit = schoolLogosBucket.file_size_limit || null;
           logger.info('Bucket configuration retrieved', { 
@@ -222,8 +233,8 @@ export async function POST(request: NextRequest) {
           logger.warn('School-logos bucket not found', { endpoint: '/api/admin/success-stories' });
         }
       }
-    } catch (bucketCheckErr: any) {
-      logger.warn('Error checking bucket configuration', { endpoint: '/api/admin/success-stories' }, bucketCheckErr);
+    } catch (bucketCheckErr: unknown) {
+      logger.warn('Error checking bucket configuration', { endpoint: '/api/admin/success-stories' }, bucketCheckErr instanceof Error ? bucketCheckErr : new Error(String(bucketCheckErr)));
     }
 
     // Validate file size against bucket limit or defaults
@@ -312,7 +323,7 @@ export async function POST(request: NextRequest) {
           endpoint: '/api/admin/success-stories', 
           path, 
           error: uploadError.message,
-          code: uploadError.statusCode,
+          code: (uploadError as { statusCode?: number }).statusCode,
           fileSize: file.size,
           fileSizeMB,
           bufferSize: buffer.length,
@@ -320,11 +331,12 @@ export async function POST(request: NextRequest) {
         });
         
         // Try to clean up if file was partially uploaded
-        if (uploadData?.path) {
+        const uploadPath = uploadData ? (uploadData as { path?: string })?.path : null;
+        if (uploadPath) {
           try {
-            await supabaseAdmin.storage.from('school-logos').remove([uploadData.path]);
-          } catch (cleanupErr) {
-            logger.warn('Failed to clean up partial upload', { endpoint: '/api/admin/success-stories', path: uploadData.path });
+            await supabaseAdmin.storage.from('school-logos').remove([uploadPath]);
+          } catch {
+            logger.warn('Failed to clean up partial upload', { endpoint: '/api/admin/success-stories', path: uploadPath });
           }
         }
         
@@ -345,8 +357,8 @@ export async function POST(request: NextRequest) {
       }
       
       logger.info('Media uploaded successfully', { endpoint: '/api/admin/success-stories', path, image_url });
-    } catch (uploadErr: any) {
-      logger.error('Media processing failed', { endpoint: '/api/admin/success-stories' }, uploadErr);
+    } catch (uploadErr: unknown) {
+      logger.error('Media processing failed', { endpoint: '/api/admin/success-stories' }, uploadErr instanceof Error ? uploadErr : new Error(String(uploadErr)));
       const errorInfo = extractErrorInfo(uploadErr);
       return createErrorResponse(
         'Upload failed',
@@ -356,7 +368,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 8: Prepare insert data with validation
-    const insertData: any = {
+    interface SuccessStoryInsert {
+      title: string;
+      body_primary: string;
+      body_secondary?: string | null;
+      body_tertiary?: string | null;
+      background?: string;
+      image_position?: string;
+      order_index: number;
+      image_url: string;
+      storage_path: string;
+      created_by: string;
+      is_published: boolean;
+      published_at?: string;
+    }
+    
+    const insertData: SuccessStoryInsert = {
       title: title.trim(),
       body_primary: body_primary.trim(),
       body_secondary: body_secondary ? body_secondary.trim() : null,
@@ -404,11 +431,27 @@ export async function POST(request: NextRequest) {
     });
     
     // Step 10: Database insert with comprehensive error handling
-    let inserted: any;
+    interface InsertedSection {
+      id?: string;
+      title?: string;
+      body_primary?: string;
+      body_secondary?: string | null;
+      body_tertiary?: string | null;
+      image_url?: string;
+      background?: string;
+      image_position?: string;
+      order_index?: number;
+      is_published?: boolean;
+      published_at?: string | null;
+      created_at?: string;
+      updated_at?: string;
+    }
+    
+    let inserted: InsertedSection | null = null;
     try {
       const { data: insertResult, error: dbError } = await supabaseAdmin
         .from('success_story_sections')
-        .insert(insertData)
+        .insert(insertData as never)
         .select('id, title, body_primary, body_secondary, body_tertiary, image_url, background, image_position, order_index, is_published, published_at, created_at, updated_at')
         .single();
       
@@ -469,7 +512,7 @@ export async function POST(request: NextRequest) {
           try {
             await supabaseAdmin.storage.from('school-logos').remove([storage_path]);
             logger.info('Cleaned up image after failed insert', { endpoint: '/api/admin/success-stories', path: storage_path });
-          } catch (cleanupErr) {
+          } catch {
             logger.warn('Failed to clean up image after failed insert', { endpoint: '/api/admin/success-stories', path: storage_path });
           }
         }
@@ -481,21 +524,23 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      inserted = insertResult;
-      logger.info('Success story section created', { 
-        endpoint: '/api/admin/success-stories',
-        sectionId: inserted.id,
-        order_index: inserted.order_index
-      });
-    } catch (dbErr: any) {
-      logger.error('Database operation exception', { endpoint: '/api/admin/success-stories' }, dbErr);
+      inserted = insertResult as typeof inserted;
+      if (inserted) {
+        logger.info('Success story section created', { 
+          endpoint: '/api/admin/success-stories',
+          sectionId: (inserted as { id?: string }).id,
+          order_index: (inserted as { order_index?: number }).order_index
+        });
+      }
+    } catch (dbErr: unknown) {
+      logger.error('Database operation exception', { endpoint: '/api/admin/success-stories' }, dbErr instanceof Error ? dbErr : new Error(String(dbErr)));
       
       // Clean up uploaded image on error
       if (storage_path) {
         try {
           await supabaseAdmin.storage.from('school-logos').remove([storage_path]);
           logger.info('Cleaned up image after database error', { endpoint: '/api/admin/success-stories', path: storage_path });
-        } catch (cleanupErr) {
+        } catch {
           logger.warn('Failed to clean up image after database error', { endpoint: '/api/admin/success-stories', path: storage_path });
         }
       }
@@ -511,47 +556,49 @@ export async function POST(request: NextRequest) {
     // Step 11: Create version snapshot if publishing (non-critical, log but don't fail)
     if (is_published && inserted) {
       try {
+        const insertedData = inserted as { id?: string; title?: string; body_primary?: string; body_secondary?: string; body_tertiary?: string; image_url?: string; background?: string; image_position?: string; order_index?: number; is_published?: boolean; published_at?: string };
         const snapshot = {
-          id: inserted.id,
-          title: inserted.title,
-          body_primary: inserted.body_primary,
-          body_secondary: inserted.body_secondary,
-          body_tertiary: (inserted as any).body_tertiary,
-          image_url: inserted.image_url,
-          background: inserted.background,
-          image_position: inserted.image_position,
-          order_index: inserted.order_index,
-          is_published: inserted.is_published,
-          published_at: inserted.published_at,
+          id: insertedData.id,
+          title: insertedData.title,
+          body_primary: insertedData.body_primary,
+          body_secondary: insertedData.body_secondary,
+          body_tertiary: insertedData.body_tertiary,
+          image_url: insertedData.image_url,
+          background: insertedData.background,
+          image_position: insertedData.image_position,
+          order_index: insertedData.order_index,
+          is_published: insertedData.is_published,
+          published_at: insertedData.published_at,
         };
         
         const { error: vErr } = await supabaseAdmin
           .from('success_story_versions')
           .insert({ 
-            section_id: inserted.id, 
+            section_id: insertedData.id, 
             version_number: 1, 
             snapshot, 
             created_by: authUserId 
-          });
+          } as never);
         
         if (vErr) {
           logger.warn('Version insert error (non-critical)', { 
             endpoint: '/api/admin/success-stories',
-            sectionId: inserted.id,
+            sectionId: insertedData.id,
             error: vErr.message
           });
         } else {
           logger.info('Version snapshot created', { 
             endpoint: '/api/admin/success-stories',
-            sectionId: inserted.id
+            sectionId: insertedData.id
           });
         }
-      } catch (versionErr: any) {
+      } catch (versionErr: unknown) {
         // Version creation is non-critical, log but don't fail the request
+        const insertedDataInCatch = inserted as { id?: string };
         logger.warn('Version creation exception (non-critical)', { 
           endpoint: '/api/admin/success-stories',
-          sectionId: inserted.id
-        }, versionErr);
+          sectionId: insertedDataInCatch.id
+        }, versionErr instanceof Error ? versionErr : new Error(String(versionErr)));
       }
     }
 
@@ -559,29 +606,34 @@ export async function POST(request: NextRequest) {
     try {
       await invalidateCache(CacheKeys.successStories());
       logger.info('Cache invalidated', { endpoint: '/api/admin/success-stories' });
-    } catch (cacheErr: any) {
+    } catch (cacheErr: unknown) {
       // Cache invalidation is non-critical, log but don't fail
-      logger.warn('Cache invalidation failed (non-critical)', { endpoint: '/api/admin/success-stories' }, cacheErr);
+      logger.warn('Cache invalidation failed (non-critical)', { endpoint: '/api/admin/success-stories' }, cacheErr instanceof Error ? cacheErr : new Error(String(cacheErr)));
     }
 
     // Step 13: Return success response
+    if (!inserted) {
+      throw new Error('Failed to create success story section - insertResult was null');
+    }
+    
     logger.info('Success story section creation completed', { 
       endpoint: '/api/admin/success-stories',
-      sectionId: inserted.id,
+      sectionId: (inserted as { id?: string }).id,
       is_published
     });
     
     return NextResponse.json({ section: inserted }, { status: 201, headers });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Final catch-all error handler - should rarely be reached due to defensive handling above
     let errorInfo: { message: string; code?: string; details?: string; hint?: string };
     
     try {
       errorInfo = extractErrorInfo(error);
-    } catch (extractErr) {
+    } catch {
       // If we can't extract error info, create a safe default
+      const errorObj = error as { message?: string } | null;
       errorInfo = { 
-        message: error?.message || String(error) || 'An unexpected error occurred',
+        message: errorObj?.message || String(error) || 'An unexpected error occurred',
         details: 'Unable to extract detailed error information'
       };
     }
@@ -637,30 +689,38 @@ export async function POST(request: NextRequest) {
     else if (errorInfo.message?.toLowerCase().includes('size') || errorInfo.message?.toLowerCase().includes('exceeded')) statusCode = 400;
     
     // Build safe error response - ensure all values are serializable
-    const response: any = {
+    interface ErrorResponse {
+      error: string;
+      status: number;
+      details?: string;
+    }
+    
+    const response: ErrorResponse = {
       error: errorInfo.message || 'Failed to create section',
       status: statusCode
     };
     
     // Add details if available and safe (string only)
-    if (errorInfo.details && typeof errorInfo.details === 'string') {
-      response.details = errorInfo.details.substring(0, 500); // Limit length
+    const errorInfoTyped = errorInfo as { details?: string; hint?: string; code?: string };
+    if (errorInfoTyped.details && typeof errorInfoTyped.details === 'string') {
+      (response as { details?: string }).details = errorInfoTyped.details.substring(0, 500); // Limit length
     }
-    if (errorInfo.hint && typeof errorInfo.hint === 'string') {
-      response.hint = errorInfo.hint.substring(0, 500); // Limit length
+    if (errorInfoTyped.hint && typeof errorInfoTyped.hint === 'string') {
+      (response as { hint?: string }).hint = errorInfoTyped.hint.substring(0, 500); // Limit length
     }
-    if (errorInfo.code && typeof errorInfo.code === 'string') {
-      response.code = errorInfo.code;
+    if (errorInfoTyped.code && typeof errorInfoTyped.code === 'string') {
+      (response as { code?: string }).code = errorInfoTyped.code;
     }
     
     // In development, add stack trace (safely and limited)
     if (process.env.NODE_ENV === 'development') {
-      if (error?.stack && typeof error.stack === 'string') {
-        response.stack = error.stack.substring(0, 1000); // Limit stack trace length
+      const errorObj = error as { stack?: string; constructor?: { name?: string } } | null;
+      if (errorObj?.stack && typeof errorObj.stack === 'string') {
+        (response as { stack?: string }).stack = errorObj.stack.substring(0, 1000); // Limit stack trace length
       }
       // Also include error type for debugging
-      if (error?.constructor?.name) {
-        response.errorType = error.constructor.name;
+      if (errorObj?.constructor?.name) {
+        (response as { errorType?: string }).errorType = errorObj.constructor.name;
       }
     }
     

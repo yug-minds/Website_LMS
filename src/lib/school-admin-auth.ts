@@ -190,9 +190,10 @@ export async function getSchoolAdminSchoolId(request: NextRequest): Promise<stri
     // Verify the token and get user using Supabase Admin
     // Try multiple methods to verify the token
      
-    let user: any = null;
+    type AuthUser = { id: string; email?: string };
+    let user: AuthUser | null = null;
      
-    let userError: any = null;
+    let userError: { message?: string } | null = null;
     
     // Method 1: Try decoding JWT directly to get user ID (fastest, no API call)
     try {
@@ -222,9 +223,9 @@ export async function getSchoolAdminSchoolId(request: NextRequest): Promise<stri
         console.warn('Invalid JWT format - expected 3 parts, got:', parts.length);
       }
      
-    } catch (decodeError: any) {
-      // JWT decode failed, try other methods
-      console.log('JWT decode failed, trying other methods:', decodeError?.message);
+    } catch (decodeError: unknown) {
+      const msg = decodeError instanceof Error ? decodeError.message : String(decodeError);
+      console.log('JWT decode failed, trying other methods:', msg);
     }
 
     // Method 2: Try with admin client
@@ -290,8 +291,9 @@ export async function getSchoolAdminSchoolId(request: NextRequest): Promise<stri
           console.warn('Direct API call failed with status:', response.status, errorText.substring(0, 200));
         }
        
-      } catch (apiError: any) {
-        console.warn('Direct API call error:', apiError?.message);
+      } catch (apiError: unknown) {
+        const msg = apiError instanceof Error ? apiError.message : String(apiError);
+        console.warn('Direct API call error:', msg);
       }
     }
     
@@ -368,7 +370,7 @@ export async function getSchoolAdminSchoolId(request: NextRequest): Promise<stri
       .select('role')
       .eq('id', user.id)
        
-      .single() as any;
+      .single();
 
     if (profileError || !profile) {
       console.warn('Failed to get profile:', profileError?.message);
@@ -393,7 +395,7 @@ export async function getSchoolAdminSchoolId(request: NextRequest): Promise<stri
       .eq('profile_id', user.id)
       .eq('is_active', true)
        
-      .single() as any;
+      .single();
 
     if (schoolAdminError || !schoolAdmin) {
       console.warn('❌ School admin record not found or inactive:', schoolAdminError?.message);
@@ -445,11 +447,12 @@ export async function validateSchoolAccess(
  * @param request - Next.js request object (required for API routes)
  * @returns Promise with profile and school data or null
  */
+type SchoolProfile = { id: string; email?: string; role?: string; full_name?: string; [key: string]: unknown };
+type SchoolData = { id: string; name?: string; [key: string]: unknown };
+
 export async function getSchoolAdminProfile(request: NextRequest): Promise<{
-   
-  profile: any;
-   
-  school: any;
+  profile: SchoolProfile;
+  school: SchoolData;
   school_id: string;
 } | null> {
   try {
@@ -477,7 +480,7 @@ export async function getSchoolAdminProfile(request: NextRequest): Promise<{
       .select('*')
       .eq('id', user.id)
        
-      .single() as any;
+      .single();
 
     if (profileError || !profile) {
       return null;
@@ -489,7 +492,7 @@ export async function getSchoolAdminProfile(request: NextRequest): Promise<{
       .select('*')
       .eq('id', school_id)
        
-      .single() as any;
+      .single();
 
     if (schoolError || !school) {
       return null;

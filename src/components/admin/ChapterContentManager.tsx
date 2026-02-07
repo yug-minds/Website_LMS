@@ -18,8 +18,7 @@ import {
   Link, 
   Image,
   File,
-  GripVertical,
-  X
+  GripVertical
 } from "lucide-react";
 import { FileUploadZone } from "./FileUploadZone";
 
@@ -34,7 +33,7 @@ export interface ChapterContent {
   order_index?: number;
   storage_path?: string;
   duration_minutes?: number;
-  content_metadata?: Record<string, any>;
+  content_metadata?: Record<string, unknown>;
 }
 
 interface ChapterContentManagerProps {
@@ -69,7 +68,7 @@ export function ChapterContentManager({
     duration_minutes: '',
   });
 
-  const sortedContents = [...contents].sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0));
+  const sortedContents = [...contents].sort((a: ChapterContent, b: ChapterContent) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
   // Validate and detect link type
   const detectLinkType = (url: string): 'video_link' | 'link' => {
@@ -221,7 +220,7 @@ export function ChapterContentManager({
       content_text: finalContentType === 'text' ? formData.content_text : undefined,
       content_url: ['video_link', 'link'].includes(finalContentType) ? formData.content_url.trim() : undefined,
       duration_minutes: finalContentType === 'video_link' && formData.duration_minutes ? parseFloat(formData.duration_minutes) : undefined,
-      order_index: editingContent?.order_index || (contents.length > 0 ? Math.max(...contents.map((c: any) => c.order_index || 0)) + 1 : 1),
+      order_index: editingContent?.order_index || (contents.length > 0 ? Math.max(...contents.map((c: ChapterContent) => c.order_index ?? 0)) + 1 : 1),
     };
 
     // If it's a video link, also notify parent to add it to videos table
@@ -236,7 +235,7 @@ export function ChapterContentManager({
 
     if (editingContent) {
       const editingId = editingContent.id || editingContent.content_id;
-      onContentsChange(contents.map((c: any) => {
+      onContentsChange(contents.map((c: ChapterContent) => {
         const cId = c.id || c.content_id;
         return cId === editingId ? newContent : c;
       }));
@@ -255,7 +254,7 @@ export function ChapterContentManager({
     }
     
     if (confirm('Are you sure you want to delete this content?')) {
-      const updatedContents = contents.filter((c: any) => {
+      const updatedContents = contents.filter((c: ChapterContent) => {
         const cId = c.id || c.content_id;
         // Also check by title as fallback if IDs don't match
         if (!cId && contentId) {
@@ -269,7 +268,7 @@ export function ChapterContentManager({
         contentId,
         beforeCount: contents.length,
         afterCount: updatedContents.length,
-        contents: contents.map((c: any) => ({ id: c.id, content_id: c.content_id, title: c.title }))
+        contents: contents.map((c: ChapterContent) => ({ id: c.id, content_id: c.content_id, title: c.title }))
       });
       
       if (updatedContents.length === contents.length) {
@@ -314,7 +313,7 @@ export function ChapterContentManager({
       title: fileName,
       content_url: fileUrl,
       storage_path: filePath || undefined, // Save storage_path from upload response
-      order_index: contents.length > 0 ? Math.max(...contents.map((c: any) => c.order_index || 0)) + 1 : 1,
+      order_index: contents.length > 0 ? Math.max(...contents.map((c: ChapterContent) => c.order_index ?? 0)) + 1 : 1,
     };
     console.log('✅ File uploaded and added to chapter contents:', {
       title: fileName,
@@ -417,7 +416,7 @@ export function ChapterContentManager({
       <CardContent className="space-y-3">
         {sortedContents.length === 0 ? (
           <p className="text-sm text-gray-500 text-center py-4">
-            No content added yet. Click "Add Text", "Add Link", or "Add Material" to get started.
+            No content added yet. Click &quot;Add Text&quot;, &quot;Add Link&quot;, or &quot;Add Material&quot; to get started.
           </p>
         ) : (
           sortedContents.map((content, index) => {
@@ -466,7 +465,7 @@ export function ChapterContentManager({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => openDialog(content.content_type as any, content)}
+                      onClick={() => openDialog(content.content_type as ContentType, content)}
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -496,9 +495,9 @@ export function ChapterContentManager({
                           
                           if (contentIndex >= 0) {
                             // Remove from sorted contents and update
-                            const updatedSorted = sortedContents.filter((_, idx) => idx !== contentIndex);
+                            const _updatedSorted = sortedContents.filter((_, idx) => idx !== contentIndex);
                             // Convert back to original order and update
-                            const updatedContents = contents.filter((c: any) => {
+                            const updatedContents = contents.filter((c: ChapterContent) => {
                               const cTitle = c.title;
                               const cType = c.content_type;
                               const cChapterId = c.chapter_id;
@@ -514,7 +513,7 @@ export function ChapterContentManager({
                             onContentsChange(updatedContents);
                             console.log('✅ Content deleted using property matching fallback');
                           } else {
-                            console.error('Cannot delete: content not found', { content, contents: contents.map((c: any) => ({ id: c.id, content_id: c.content_id, title: c.title })) });
+                            console.error('Cannot delete: content not found', { content, contents: contents.map((c: ChapterContent) => ({ id: c.id, content_id: c.content_id, title: c.title })) });
                             alert('Error: Cannot delete this content. Please refresh the page and try again.');
                           }
                         }
@@ -632,9 +631,9 @@ export function ChapterContentManager({
                           <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
                             <p className="font-medium mb-1">⚠️ Important:</p>
                             <ul className="list-disc list-inside space-y-0.5">
-                              <li>Make sure the file/folder is set to "Anyone with the link can view"</li>
-                              <li>For Google Drive: Right-click file → Share → Change to "Anyone with the link"</li>
-                              <li>For OneDrive: Right-click file → Share → Set permission to "Anyone"</li>
+                              <li>Make sure the file/folder is set to &quot;Anyone with the link can view&quot;</li>
+                              <li>For Google Drive: Right-click file → Share → Change to &quot;Anyone with the link&quot;</li>
+                              <li>For OneDrive: Right-click file → Share → Set permission to &quot;Anyone&quot;</li>
                             </ul>
                           </div>
                         )}
@@ -679,7 +678,7 @@ export function ChapterContentManager({
                   />
                   {contentType === 'file' && (
                     <p className="text-xs text-gray-500 mt-2">
-                      💡 Tip: For large files, consider uploading to Google Drive and using the "Add Link" option instead
+                      💡 Tip: For large files, consider uploading to Google Drive and using the &quot;Add Link&quot; option instead
                     </p>
                   )}
                 </div>

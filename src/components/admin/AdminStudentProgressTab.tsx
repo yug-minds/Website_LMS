@@ -14,19 +14,17 @@ import {
   Clock,
   Search,
   Filter,
-  Eye,
   CheckCircle,
   AlertCircle,
   PlayCircle,
   School,
   GraduationCap,
-  BarChart3,
   Globe,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
 import { useAdminStudentProgress } from "../../hooks/useStudentProgress";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
@@ -35,6 +33,7 @@ export default function AdminStudentProgressTab() {
   const [selectedSchool, setSelectedSchool] = useState<string>("all");
   const [selectedCourse, setSelectedCourse] = useState<string>("all");
   const [selectedGrade, setSelectedGrade] = useState<string>("all");
+  const [selectedSection, setSelectedSection] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(0);
   const [pageSize] = useState(50);
 
@@ -48,6 +47,7 @@ export default function AdminStudentProgressTab() {
     schoolId: selectedSchool !== "all" ? selectedSchool : undefined,
     courseId: selectedCourse !== "all" ? selectedCourse : undefined,
     grade: selectedGrade !== "all" ? selectedGrade : undefined,
+    section: selectedSection !== "all" ? selectedSection : undefined,
     limit: pageSize,
     offset: currentPage * pageSize
   });
@@ -94,40 +94,66 @@ export default function AdminStudentProgressTab() {
   const summary = progressData?.summary;
   const pagination = progressData?.pagination;
 
-  // Filter students based on search term
-  const filteredStudents = students.filter((student: any) =>
-    student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.school_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter students based on search term and section
+  interface Student {
+    full_name: string;
+    email: string;
+    section?: string;
+    grade?: string;
+    school_name?: string;
+    average_progress?: number;
+  }
+  
+  const filteredStudents = students.filter((student: Student) => {
+    const matchesSearch = student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.school_name?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSection = selectedSection === "all" || student.section === selectedSection;
+    return matchesSearch && matchesSection;
+  });
 
   // Get unique grades for filter
-  const availableGrades = [...new Set(students.map((s: any) => s.grade))].sort();
+  const availableGrades = [...new Set(students.map((s: Student) => s.grade))].sort();
 
   // Prepare chart data
-  const schoolProgressData = schools.map((school: any) => ({
+  interface School {
+    school_name: string;
+    total_students?: number;
+    average_progress?: number;
+  }
+  
+  const schoolProgressData = schools.map((school: School) => ({
     name: school.school_name,
     students: school.total_students,
     avgProgress: school.average_progress
   }));
 
-  const courseCompletionData = courses.slice(0, 10).map((course: any) => ({
+  interface Course {
+    course_name: string;
+    completion_rate?: number;
+    enrolled_students?: number;
+    completed_students?: number;
+  }
+  
+  const courseCompletionData = courses.slice(0, 10).map((course: Course) => ({
     name: course.course_name.length > 20 ? course.course_name.substring(0, 20) + '...' : course.course_name,
     completion_rate: course.completion_rate,
     enrolled: course.enrolled_students,
     completed: course.completed_students
   }));
 
-  const gradeDistributionData = availableGrades.map((grade: any) => {
-    const gradeStudents = students.filter((s: any) => s.grade === grade);
-    return {
-      grade,
-      students: gradeStudents.length,
-      avgProgress: gradeStudents.length > 0 
-        ? Math.round(gradeStudents.reduce((sum: number, s: any) => sum + s.average_progress, 0) / gradeStudents.length)
-        : 0
-    };
-  });
+  const gradeDistributionData = availableGrades
+    .filter((g): g is string => typeof g === 'string')
+    .map((grade: string) => {
+      const gradeStudents = students.filter((s: Student) => s.grade === grade);
+      return {
+        grade,
+        students: gradeStudents.length,
+        avgProgress: gradeStudents.length > 0 
+          ? Math.round(gradeStudents.reduce((sum: number, s: Student) => sum + (s.average_progress || 0), 0) / gradeStudents.length)
+          : 0
+      };
+    });
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -312,7 +338,10 @@ export default function AdminStudentProgressTab() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={(entry: any) => `${entry.grade}: ${entry.students}`}
+                  label={(props) => {
+                  const entry = gradeDistributionData[props.index];
+                  return entry ? `${entry.grade}: ${entry.students}` : '';
+                }}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="students"
@@ -356,8 +385,8 @@ export default function AdminStudentProgressTab() {
               <SelectContent>
                 <SelectItem value="all">All Schools</SelectItem>
                 {schools.map((school) => (
-                  <SelectItem key={school.school_id} value={school.school_id}>
-                    {school.school_name}
+                  <SelectItem key={school.school_id ?? ''} value={school.school_id ?? ''}>
+                    {school.school_name ?? ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -369,9 +398,20 @@ export default function AdminStudentProgressTab() {
               <SelectContent>
                 <SelectItem value="all">All Grades</SelectItem>
                 {availableGrades.map((grade) => (
-                  <SelectItem key={grade} value={grade}>
-                    {grade}
+                  <SelectItem key={grade ?? ''} value={grade ?? ''}>
+                    {grade ?? ''}
                   </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedSection} onValueChange={setSelectedSection}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="Section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sections</SelectItem>
+                {[...new Set(students.map((s: Student) => s.section).filter((s): s is string => typeof s === 'string'))].sort().map((section) => (
+                  <SelectItem key={section} value={section}>{section}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -382,8 +422,8 @@ export default function AdminStudentProgressTab() {
               <SelectContent>
                 <SelectItem value="all">All Courses</SelectItem>
                 {courses.map((course) => (
-                  <SelectItem key={course.course_id} value={course.course_id}>
-                    {course.course_name}
+                  <SelectItem key={course.course_id ?? ''} value={course.course_id ?? ''}>
+                    {course.course_name ?? ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -432,6 +472,9 @@ export default function AdminStudentProgressTab() {
                             <div className="flex items-center gap-3 mb-2">
                               <h3 className="font-semibold">{student.full_name}</h3>
                               <Badge variant="outline">{student.grade}</Badge>
+                              {student.section && (
+                                <Badge variant="outline">Section {student.section}</Badge>
+                              )}
                               <Badge variant="secondary">{student.school_name}</Badge>
                               <Badge className={getStatusColor(
                                 student.average_progress === 100 ? 'completed' :

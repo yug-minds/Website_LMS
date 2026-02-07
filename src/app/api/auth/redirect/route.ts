@@ -57,17 +57,18 @@ export async function GET(request: NextRequest) {
           .from('profiles')
           .select('role, email, force_password_change')
           .eq('id', userId)
-           
-          .single() as any;
+          .single();
         
-        if (error || !profile) {
+        type ProfileRow = { role?: string | null; email?: string | null; force_password_change?: boolean | null };
+        const profileRow = profile as ProfileRow | null;
+        if (error || !profileRow) {
           console.error(`❌ Error fetching profile for userId=${shortenUserId(userId)}:`, error);
           return NextResponse.json({ error: error?.message || 'User not found' }, { status: 404 });
         }
         
-        role = profile.role;
-        forcePasswordChange = profile.force_password_change || false;
-        console.log(`✅ redirect API: Fetched from DB - userId=${shortenUserId(userId)}, email=${profile.email}, role="${role}" (raw from DB), force_password_change=${forcePasswordChange}`);
+        role = profileRow.role ?? undefined;
+        forcePasswordChange = profileRow.force_password_change || false;
+        console.log(`✅ redirect API: Fetched from DB - userId=${shortenUserId(userId)}, email=${profileRow.email}, role="${role}" (raw from DB), force_password_change=${forcePasswordChange}`);
       } catch (error) {
         console.error(`❌ Database query error for userId=${shortenUserId(userId)}:`, error);
         return NextResponse.json({ error: 'Database query failed. Please try again.' }, { status: 500 });

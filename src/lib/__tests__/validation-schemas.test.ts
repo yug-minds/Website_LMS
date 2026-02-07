@@ -4,7 +4,6 @@ import {
   createStudentSchema,
   updateStudentSchema,
   createTeacherSchema,
-  updateTeacherSchema,
   createSchoolSchema,
   validateRequestBody,
   validateQueryParams,
@@ -93,7 +92,7 @@ describe('Validation Schemas', () => {
     });
 
     it('should allow all fields to be optional', () => {
-      const emptyUpdate: any = {};
+      const emptyUpdate: Record<string, unknown> = {};
 
       expect(() => updateStudentSchema.parse(emptyUpdate)).not.toThrow();
     });

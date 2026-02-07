@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { supabaseAdmin } from '../../../../../lib/supabase';
 import { getSchoolAdminSchoolId } from '../../../../../lib/school-admin-auth';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { bulkReportApprovalSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 // PATCH: Bulk approve teacher reports
 export async function PATCH(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -32,7 +39,7 @@ try {
     const validation = validateRequestBody(bulkReportApprovalSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for bulk report approval', {
         endpoint: '/api/school-admin/reports/bulk',
         errors: errorMessages,
@@ -69,8 +76,7 @@ try {
       .from('teacher_reports')
       .select('id')
       .in('id', report_ids)
-       
-      .eq('school_id', school_id) as any;
+      .eq('school_id', school_id);
 
     if (fetchError) {
       console.error('❌ Error verifying reports:', fetchError);
@@ -88,18 +94,15 @@ try {
     }
 
     // Bulk update reports
-     
-    const { data: updatedReports, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedReports, error: updateError } = await supabaseAdmin
       .from('teacher_reports')
       .update({
         approved_by: userId,
-        approved_at: new Date().toISOString()
-       
-      } as any)
+        approved_at: new Date().toISOString(),
+      } as never)
       .in('id', report_ids)
       .eq('school_id', school_id)
-       
-      .select() as any) as any;
+      .select();
 
     if (updateError) {
       console.error('❌ Error bulk updating teacher reports:', updateError);

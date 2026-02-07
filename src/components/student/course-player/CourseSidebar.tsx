@@ -9,7 +9,6 @@ import {
   BookOpen, 
   CheckCircle, 
   Lock, 
-  Play,
   ChevronRight,
   ChevronDown,
   Menu,
@@ -81,7 +80,7 @@ export default function CourseSidebar({
     setExpandedChapters(newExpanded)
   }
 
-  const sortedChapters = [...chapters].sort((a: any, b: any) => {
+  const sortedChapters = [...chapters].sort((a: Chapter, b: Chapter) => {
     const orderA = a.order_number || a.order_index || 0
     const orderB = b.order_number || b.order_index || 0
     return orderA - orderB
@@ -335,10 +334,11 @@ function ChapterContents({
       role="list"
       aria-label="Chapter lessons"
     >
-      {contents.map((content: any, index: number) => {
+      {contents.map((content, index: number) => {
         const isCurrent = content.id === currentContentId
         // Check both server state and optimistic state
-        const completed = content.is_completed || isContentCompleted(content.id)
+        const contentWithCompletion = content as { id: string; title: string; content_type?: string; is_completed?: boolean; name?: string };
+        const completed = contentWithCompletion.is_completed || isContentCompleted(content.id)
         const ContentIcon = getContentIcon(content.content_type)
 
         return (
@@ -365,7 +365,7 @@ function ChapterContents({
               aria-hidden="true" 
             />
             <span className="truncate flex-1">
-              {content.title || content.name || `Content ${index + 1}`}
+              {content.title || contentWithCompletion.name || `Content ${index + 1}`}
             </span>
             {completed && (
               <CheckCircle 

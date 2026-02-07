@@ -45,6 +45,15 @@ export async function GET(
       userId: user.id
     });
 
+    type EnrollmentRow = { id?: string };
+    type AssignmentRow = {
+      id?: string;
+      course_id?: string | null;
+      chapter_id?: string | null;
+      title?: string | null;
+      is_published?: boolean | null;
+      [key: string]: unknown;
+    };
     const { data: assignment, error: assignmentError } = await supabaseAdmin
       .from('assignments')
       .select('*')
@@ -52,6 +61,7 @@ export async function GET(
       .eq('is_published', true)
       .maybeSingle();
 
+    const assignmentRow = assignment as AssignmentRow | null;
     if (assignmentError) {
       logger.error('Error fetching assignment', {
         endpoint: 'GET assignment',
@@ -66,7 +76,7 @@ export async function GET(
       }, { status: 500 });
     }
     
-    if (!assignment) {
+    if (!assignmentRow) {
       logger.warn('Assignment not found', {
         endpoint: 'GET assignment',
         assignmentId,
@@ -81,35 +91,37 @@ export async function GET(
     logger.info('Assignment found', {
       endpoint: 'GET assignment',
       assignmentId,
-      courseId: assignment.course_id,
-      title: assignment.title,
-      isPublished: assignment.is_published
+      courseId: assignmentRow.course_id,
+      title: assignmentRow.title,
+      isPublished: assignmentRow.is_published
     });
 
     // 4. Access Check (Simplified for robustness)
     let hasAccess = false;
 
     // If assignment has course_id, check access via course
-    if (assignment.course_id) {
+    if (assignmentRow.course_id) {
       // Check enrollment
       const { data: enrollment } = await supabaseAdmin
         .from('enrollments')
         .select('id')
         .eq('student_id', user.id)
-        .eq('course_id', assignment.course_id)
+        .eq('course_id', assignmentRow.course_id)
         .eq('status', 'active')
         .maybeSingle();
 
-      if (enrollment) {
+      const enrollmentRow = enrollment as EnrollmentRow | null;
+      if (enrollmentRow?.id) {
         hasAccess = true;
         logger.info('Access granted via enrollment', {
           endpoint: 'GET assignment',
           assignmentId,
-          courseId: assignment.course_id,
-          enrollmentId: enrollment.id
+          courseId: assignmentRow.course_id,
+          enrollmentId: enrollmentRow.id
         });
       } else {
         // Check school mapping via course_access
+        type StudentSchoolRow = { school_id?: string | null; grade?: string | null };
         const { data: studentSchool } = await supabaseAdmin
           .from('student_schools')
           .select('school_id, grade')
@@ -117,14 +129,15 @@ export async function GET(
           .eq('is_active', true)
           .maybeSingle();
 
-        if (studentSchool) {
+        const studentSchoolRow = studentSchool as StudentSchoolRow | null;
+        if (studentSchoolRow?.school_id != null) {
           // Try exact match first
           const { data: accessExact } = await supabaseAdmin
             .from('course_access')
             .select('id')
-            .eq('course_id', assignment.course_id)
-            .eq('school_id', studentSchool.school_id)
-            .eq('grade', studentSchool.grade)
+            .eq('course_id', assignmentRow.course_id)
+            .eq('school_id', studentSchoolRow.school_id)
+            .eq('grade', studentSchoolRow.grade ?? '')
             .maybeSingle();
 
           if (accessExact) {
@@ -132,25 +145,30 @@ export async function GET(
             logger.info('Access granted via course_access (exact match)', {
               endpoint: 'GET assignment',
               assignmentId,
-              courseId: assignment.course_id,
-              schoolId: studentSchool.school_id,
-              grade: studentSchool.grade
+              courseId: assignmentRow.course_id,
+              schoolId: studentSchoolRow.school_id,
+              grade: studentSchoolRow.grade
             });
           } else {
             // Try normalized grade match
             const { data: accessList } = await supabaseAdmin
               .from('course_access')
               .select('id, grade')
-              .eq('course_id', assignment.course_id)
-              .eq('school_id', studentSchool.school_id);
+              .eq('course_id', assignmentRow.course_id)
+              .eq('school_id', studentSchoolRow.school_id);
 
             if (accessList && accessList.length > 0) {
+              type CourseAccess = {
+                id: string;
+                grade?: string | null;
+              };
               const normalizeGrade = (g: string) => 
                 g.toLowerCase().trim().replace(/^grade\s*/i, '').replace(/grade/i, '');
               
-              const studentGradeNormalized = normalizeGrade(studentSchool.grade);
-              const hasMatch = accessList.some((ca: any) => {
-                const accessGradeNormalized = normalizeGrade(ca.grade);
+              const studentGradeNormalized = normalizeGrade(studentSchoolRow.grade ?? '');
+              const hasMatch = (accessList as CourseAccess[]).some((ca) => {
+                const accessGrade = ca.grade || '';
+                const accessGradeNormalized = normalizeGrade(accessGrade);
                 return accessGradeNormalized === studentGradeNormalized;
               });
 
@@ -159,40 +177,43 @@ export async function GET(
                 logger.info('Access granted via course_access (normalized match)', {
                   endpoint: 'GET assignment',
                   assignmentId,
-                  courseId: assignment.course_id,
-                  schoolId: studentSchool.school_id,
-                  studentGrade: studentSchool.grade
+                  courseId: assignmentRow.course_id,
+                  schoolId: studentSchoolRow.school_id,
+                  studentGrade: studentSchoolRow.grade
                 });
               }
             }
           }
         }
       }
-    } else if (assignment.chapter_id) {
+    } else if (assignmentRow.chapter_id) {
       // If assignment only has chapter_id, check access via chapter's course
+      type ChapterRow = { course_id?: string | null };
       const { data: chapter } = await supabaseAdmin
         .from('chapters')
         .select('course_id')
-        .eq('id', assignment.chapter_id)
+        .eq('id', assignmentRow.chapter_id)
         .maybeSingle();
 
-      if (chapter?.course_id) {
+      const chapterRow = chapter as ChapterRow | null;
+      if (chapterRow?.course_id) {
         // Check enrollment for the chapter's course
         const { data: enrollment } = await supabaseAdmin
           .from('enrollments')
           .select('id')
           .eq('student_id', user.id)
-          .eq('course_id', chapter.course_id)
+          .eq('course_id', chapterRow.course_id)
           .eq('status', 'active')
           .maybeSingle();
 
-        if (enrollment) {
+        const enrollRow = enrollment as EnrollmentRow | null;
+        if (enrollRow?.id) {
           hasAccess = true;
           logger.info('Access granted via chapter enrollment', {
             endpoint: 'GET assignment',
             assignmentId,
-            chapterId: assignment.chapter_id,
-            courseId: chapter.course_id
+            chapterId: assignmentRow.chapter_id,
+            courseId: chapterRow.course_id
           });
         }
       }
@@ -210,8 +231,8 @@ export async function GET(
         endpoint: 'GET assignment',
         assignmentId,
         userId: user.id,
-        courseId: assignment.course_id,
-        chapterId: assignment.chapter_id
+        courseId: assignmentRow.course_id,
+        chapterId: assignmentRow.chapter_id
       });
       return NextResponse.json({ 
         error: 'Access denied',
@@ -221,14 +242,25 @@ export async function GET(
     }
 
     // 5. Fetch Questions (Standardized)
-    let questions = [];
+    type AssignmentQuestionRow = {
+      id: string;
+      assignment_id?: string;
+      question_text?: string | null;
+      question_type?: string | null;
+      options?: string | Record<string, unknown> | unknown[] | null;
+      correct_answer?: string | number | null;
+      points?: number | null;
+      order_index?: number | null;
+      [key: string]: unknown;
+    };
+    let questions: AssignmentQuestionRow[] = [];
     const { data: dbQuestions } = await supabaseAdmin
       .from('assignment_questions')
       .select('*')
       .eq('assignment_id', assignmentId)
       .order('order_index', { ascending: true });
 
-    if (dbQuestions) questions = dbQuestions;
+    if (dbQuestions) questions = dbQuestions as AssignmentQuestionRow[];
 
     // 6. Fetch Submission - CRITICAL FIX: Use simple, verified query logic
     const normalizedStudentId = user.id.trim();
@@ -247,64 +279,62 @@ export async function GET(
       .eq('student_id', normalizedStudentId)
       .maybeSingle();
 
+    type SubmissionRow = { id?: string; status?: string | null; [key: string]: unknown };
+    const submissionRow = submission as SubmissionRow | null;
     if (submissionError) {
       logger.error('Submission fetch error', { error: submissionError });
     }
 
     logger.info('Submission query result', {
-      found: !!submission,
-      id: submission?.id,
-      status: submission?.status
+      found: !!submissionRow,
+      id: submissionRow?.id,
+      status: submissionRow?.status
     });
 
     // 7. Prepare Response
-    // Map questions for frontend
-    const mappedQuestions = questions.map((q: any) => {
+    const mappedQuestions = questions.map((q) => {
       let opts = [];
       try {
         opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-      } catch (e) { opts = [q.options]; }
+      } catch (_e) { opts = [q.options]; }
 
       // Log correct_answer for debugging
-      if (submission && q.correct_answer != null) {
+      if (submissionRow && q.correct_answer != null) {
         logger.info('Question correct_answer', {
           endpoint: 'GET assignment',
           questionId: q.id,
           correctAnswer: q.correct_answer,
           correctAnswerType: typeof q.correct_answer,
           options: opts,
-          hasSubmission: !!submission
+          hasSubmission: !!submissionRow
         });
       }
 
       return {
         ...q,
         options: Array.isArray(opts) ? opts : [],
-        // CRITICAL: Only send correct_answer if submission exists!
-        // Also ensure correct_answer is not null (handle database null values)
-        // Send correct_answer as-is (could be index number, string index, or option text)
-        correct_answer: submission && q.correct_answer != null ? q.correct_answer : undefined
+        correct_answer: submissionRow && q.correct_answer != null ? q.correct_answer : undefined
       };
     });
 
     const response = NextResponse.json({
       assignment: {
-        ...assignment,
+        ...assignmentRow,
         questions: mappedQuestions
       },
-      submission: submission || null
+      submission: submissionRow ?? null
     });
 
     ensureCsrfToken(response, request);
     return response;
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('API Error in GET assignment', {
       endpoint: 'GET assignment',
       assignmentId: (await params).assignmentId,
-      error: error.message,
-      stack: error.stack,
-      errorType: error.constructor?.name
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      errorType: error instanceof Error ? error.constructor?.name : undefined
     });
     
     const errorInfo = await handleApiError(

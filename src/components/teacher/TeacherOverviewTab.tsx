@@ -16,7 +16,6 @@ import {
   Plus
 } from "lucide-react";
 import { 
-  useTeacherClasses, 
   useTeacherReports, 
   useTeacherLeaves,
   useTodaysClasses,
@@ -36,6 +35,26 @@ interface RecentActivity {
   type: 'success' | 'warning' | 'info' | 'error';
 }
 
+interface ClassItem {
+  id?: string;
+  grade?: string;
+  class_name?: string;
+  subject?: string;
+  hasReport?: boolean;
+}
+
+interface Schedule {
+  id?: string;
+  day_of_week?: string;
+  start_time?: string;
+  end_time?: string;
+  subject?: string;
+  grade?: string;
+  section?: string;
+  period?: { start_time?: string; end_time?: string };
+  room?: string | { room_number?: string; room_name?: string };
+}
+
 export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverviewTabProps) {
   const { data: todaysClasses, isLoading: todaysClassesLoading } = useTodaysClasses(selectedSchoolId);
   const { data: reports, isLoading: reportsLoading } = useTeacherReports(selectedSchoolId, { limit: 5 });
@@ -49,19 +68,32 @@ export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverview
     
     // Recent reports
     const recentReports = reports?.slice(0, 3) || [];
-    recentReports.forEach((report: any) => {
+    interface Report {
+      id: string;
+      grade?: string;
+      date?: string;
+      created_at?: string;
+      report_status?: string;
+      classes?: Array<{ grade?: string }> | { grade?: string };
+    }
+    
+    recentReports.forEach((report: Report) => {
       const classData = Array.isArray(report.classes) ? report.classes[0] : report.classes;
       activity.push({
         id: `report-${report.id}`,
         title: 'Report Submitted',
-        message: `Submitted report for ${report.grade || classData?.grade || 'grade'} on ${new Date(report.date).toLocaleDateString()}`,
-        created_at: report.created_at,
+        message: `Submitted report for ${report.grade || classData?.grade || 'grade'} on ${report.date ? new Date(report.date).toLocaleDateString() : 'unknown date'}`,
+        created_at: report.created_at ?? new Date().toISOString(),
         type: report.report_status === 'Approved' ? 'success' : 'info'
       });
     });
 
     // Pending leaves
-    const pendingLeavesList = leaves?.filter((l: any) => l.status === 'Pending') || [];
+    interface Leave {
+      status?: string;
+    }
+    
+    const pendingLeavesList = leaves?.filter((l: Leave) => l.status === 'Pending') || [];
     if (pendingLeavesList.length > 0) {
       activity.push({
         id: 'pending-leaves',
@@ -73,7 +105,7 @@ export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverview
     }
 
     // Sort by date and limit
-    activity.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    activity.sort((a: RecentActivity, b: RecentActivity) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     return activity.slice(0, 5);
   }, [selectedSchoolId, reports, leaves]);
 
@@ -103,7 +135,7 @@ export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverview
           <CardContent>
             {todaysClasses && todaysClasses.length > 0 ? (
               <div className="space-y-3">
-                {todaysClasses.slice(0, 5).map((classItem: any) => (
+                {todaysClasses.slice(0, 5).map((classItem: ClassItem) => (
                   <div
                     key={classItem.id}
                     className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50"
@@ -257,7 +289,7 @@ export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverview
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {schedules.map((schedule: any) => {
+                  {schedules.map((schedule: Schedule) => {
                     const formatTime = (time: string) => {
                       if (!time) return '';
                       const [hours, minutes] = time.split(':');
@@ -275,21 +307,23 @@ export default function TeacherOverviewTab({ selectedSchoolId }: TeacherOverview
                         <TableCell>
                           {schedule.period ? (
                             <span className="text-sm">
-                              {formatTime(schedule.period.start_time)} - {formatTime(schedule.period.end_time)}
+                              {formatTime(schedule.period.start_time ?? '')} - {formatTime(schedule.period.end_time ?? '')}
                             </span>
                           ) : schedule.start_time && schedule.end_time ? (
                             <span className="text-sm">
-                              {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
+                              {formatTime(schedule.start_time ?? '')} - {formatTime(schedule.end_time ?? '')}
                             </span>
                           ) : (
                             <span className="text-sm text-gray-400">N/A</span>
                           )}
                         </TableCell>
-                        <TableCell className="font-medium">{schedule.subject}</TableCell>
-                        <TableCell>{schedule.grade}</TableCell>
+                        <TableCell className="font-medium">{schedule.subject ?? ''}</TableCell>
+                        <TableCell>{schedule.grade ?? ''}</TableCell>
                         <TableCell>
-                          {schedule.room ? (
-                            <span>{schedule.room.room_number} {schedule.room.room_name && `- ${schedule.room.room_name}`}</span>
+                          {schedule.room && typeof schedule.room === 'object' && 'room_number' in schedule.room ? (
+                            <span>{schedule.room.room_number ?? ''} {schedule.room.room_name && `- ${schedule.room.room_name}`}</span>
+                          ) : schedule.room ? (
+                            <span>{String(schedule.room)}</span>
                           ) : (
                             <span className="text-gray-400">N/A</span>
                           )}

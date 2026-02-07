@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin, createAuthenticatedClient } from '../../../../../lib/supabase';
+import { createAuthenticatedClient } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { emptyBodySchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { verifyAdmin } from '../../../../../lib/auth-utils';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 // POST: Export system data
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -52,7 +58,7 @@ export async function POST(request: NextRequest) {
       const validation = validateRequestBody(emptyBodySchema, body);
       if (!validation.success) {
          
-        const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+        const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
         return NextResponse.json(
           { 
             error: 'Validation failed',

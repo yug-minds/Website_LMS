@@ -1,25 +1,16 @@
 'use client'
 
 import { useStudentCourses } from '../../../hooks/useStudentData'
-import CourseCard from '../../../components/student/CourseCard'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card'
+import CourseCard, { type CourseCardProps } from '../../../components/student/CourseCard'
+import { Card } from '../../../components/ui/card'
 import { Button } from '../../../components/ui/button'
 import { Input } from '../../../components/ui/input'
 import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../../../components/ui/select'
-import { 
   BookOpen, 
   Search,
-  Filter,
   Play,
   AlertCircle
 } from 'lucide-react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useMemo, useEffect } from 'react'
 import ErrorBoundary from '../../../components/student/course-player/ErrorBoundary'
@@ -29,7 +20,7 @@ export default function MyCoursesPage() {
   const { data: coursesData, isLoading: coursesLoading, error: coursesError } = useStudentCourses()
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<string>('all')
-  const [sortOption, setSortOption] = useState<string>('newest')
+  const [sortOption, _setSortOption] = useState<string>('newest')
   const [mounted, setMounted] = useState(false)
 
   // Ensure component is mounted (client-side only)
@@ -40,7 +31,25 @@ export default function MyCoursesPage() {
   }, [])
 
   const courses = useMemo(() => {
-    return (coursesData || []).map((course: any) => ({
+    interface CourseData {
+      id: string;
+      name?: string;
+      title?: string;
+      description?: string;
+      grade?: string;
+      subject?: string;
+      thumbnail_url?: string;
+      progress_percentage?: number;
+      last_accessed?: string;
+      total_chapters?: number;
+      completed_chapters?: number;
+      total_assignments?: number;
+      completed_assignments?: number;
+      average_grade?: number;
+      status?: string;
+    }
+    
+    return (coursesData || []).map((course: CourseData) => ({
       id: course.id,
       name: course.name || course.title || '',
       title: course.title || course.name || '',
@@ -54,36 +63,54 @@ export default function MyCoursesPage() {
       completed_chapters: course.completed_chapters || 0,
       total_assignments: course.total_assignments || 0,
       completed_assignments: course.completed_assignments || 0,
-      average_grade: course.average_grade || 0,
-      status: course.status || 'active',
+      average_grade: course.average_grade,
+      status: (course.status === 'active' || course.status === 'completed' || course.status === 'not_started' ? course.status : 'active') as 'active' | 'completed' | 'not_started',
     }))
   }, [coursesData])
 
+  type CourseItem = {
+    id: string;
+    name: string;
+    title: string;
+    description: string;
+    grade: string;
+    subject: string;
+    thumbnail_url?: string;
+    progress_percentage: number;
+    last_accessed: string;
+    total_chapters: number;
+    completed_chapters: number;
+    total_assignments: number;
+    completed_assignments: number;
+    average_grade?: number;
+    status: 'active' | 'completed' | 'not_started';
+  };
+
   const filteredAndSortedCourses = useMemo(() => {
-    let filtered: any[] = courses
+    let filtered: CourseItem[] = courses
 
     // Filter by search query
     if (searchQuery) {
-      filtered = filtered.filter((course: any) =>
-        course.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        course.description.toLowerCase().includes(searchQuery.toLowerCase())
+      filtered = filtered.filter((course: CourseItem) =>
+        (course.name ?? course.title ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (course.description && course.description.toLowerCase().includes(searchQuery.toLowerCase()))
       )
     }
 
     // Filter by status
     if (filterStatus !== 'all') {
-      filtered = filtered.filter((course: any) => course.status === filterStatus)
+      filtered = filtered.filter((course: CourseItem) => course.status === filterStatus)
     }
 
     // Sort
     if (sortOption === 'newest') {
-      filtered = filtered.sort((a: any, b: any) => 
-        new Date(b.last_accessed).getTime() - new Date(a.last_accessed).getTime()
+      filtered = [...filtered].sort((a, b) =>
+        new Date(b.last_accessed || 0).getTime() - new Date(a.last_accessed || 0).getTime()
       )
     } else if (sortOption === 'alphabetical') {
-      filtered = filtered.sort((a: any, b: any) => a.name.localeCompare(b.name))
+      filtered = [...filtered].sort((a, b) => (a.name ?? a.title ?? '').localeCompare(b.name ?? b.title ?? ''))
     } else if (sortOption === 'progress') {
-      filtered = filtered.sort((a: any, b: any) => b.progress_percentage - a.progress_percentage)
+      filtered = [...filtered].sort((a, b) => (b.progress_percentage || 0) - (a.progress_percentage || 0))
     }
 
     return filtered
@@ -133,11 +160,11 @@ export default function MyCoursesPage() {
                 <div className="relative z-10 w-full sm:w-2/3">
                     <h1 className="text-3xl font-bold mb-2">Welcome Back!</h1>
                     <p className="text-blue-100 text-lg mb-6 max-w-xl">
-                        Ready to continue learning? You have {filteredAndSortedCourses.filter((c: any) => c.status === 'active' || c.status === 'completed').length} courses available.
+                        Ready to continue learning? You have {courses.length} courses available.
                     </p>
                     
                      <div className="flex gap-4">
-                         {filteredAndSortedCourses.some((c: any) => c.status === 'active') && (
+                         {filteredAndSortedCourses.some((c) => c.status === 'active') && (
                             <Button variant="secondary" className="bg-white text-blue-800 hover:bg-blue-50">
                                 <Play className="h-4 w-4 mr-2" /> Resume Learning
                             </Button>
@@ -199,10 +226,10 @@ export default function MyCoursesPage() {
                 </div>
                 ) : filteredAndSortedCourses.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredAndSortedCourses.map((course) => (
+                    {filteredAndSortedCourses.map((course: CourseItem) => (
                     <div key={course.id} className="transform hover:-translate-y-1 transition-transform duration-300">
                         <CourseCard
-                        course={course}
+                        course={course as CourseCardProps['course']}
                         onViewChapters={(c) => {
                             // Navigate to course detail page which shows course overview with all chapters
                             router.push(`/student/my-courses/${c.id}`)

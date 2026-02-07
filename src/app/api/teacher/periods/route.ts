@@ -3,8 +3,6 @@ import { getTeacherUserId } from '../../../../lib/teacher-auth';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
 
 // GET /api/teacher/periods
 // Fetch periods with associated class information for the authenticated teacher on a given day
@@ -65,8 +63,7 @@ try {
         .select('school_id, is_primary')
         .eq('teacher_id', teacherId)
         .order('is_primary', { ascending: false })
-         
-        .limit(1) as any;
+        .limit(1) as { data: { school_id: string; is_primary?: boolean }[] | null; error: unknown };
 
       if (teacherSchoolsError) {
         logger.error('Failed to fetch teacher school assignment', {
@@ -128,7 +125,12 @@ try {
     if (day) {
       // Fetch schedules for that day to get periods with class info
       // Use a simpler query that doesn't require the classes join (which may fail if class_id is null)
-      const { data: schedules, error: schedulesError } = await supabaseAdmin
+      // Get date parameter for historical queries, default to today
+      const { searchParams } = new URL(request.url);
+      const dateParam = searchParams.get('date');
+      const queryDate = dateParam || new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      
+      let scheduleQuery = supabaseAdmin
         .from('class_schedules')
         .select(`
           id,
@@ -140,6 +142,8 @@ try {
           start_time,
           end_time,
           created_at,
+          effective_from,
+          effective_to,
           period:periods!period_id (
             id,
             period_number,
@@ -150,9 +154,17 @@ try {
         .eq('teacher_id', teacherId)
         .eq('school_id', finalSchoolId)
         .eq('day_of_week', day)
-        .eq('is_active', true)
-         
-        .order('created_at', { ascending: false }) as any; // Most recent first
+        .lte('effective_from', queryDate) // Schedule was active from this date or before
+        .or(`effective_to.is.null,effective_to.gte.${queryDate}`); // And hasn't ended yet, or ended after this date
+      
+      // For current schedules, also filter by is_active
+      if (!dateParam) {
+        scheduleQuery = scheduleQuery.eq('is_active', true);
+      }
+      
+      const { data: schedules, error: schedulesError } = await scheduleQuery
+        .order('effective_from', { ascending: false }) // Most recent effective date first
+        .order('created_at', { ascending: false }) as { data: unknown[] | null; error: unknown };
 
       if (schedulesError) {
         logger.error('Failed to fetch schedules for periods', {
@@ -181,7 +193,7 @@ try {
       
       if (schedules && schedules.length > 0) {
          
-        console.log('📋 Schedule details:', schedules.map((s: any) => ({
+        console.log('📋 Schedule details:', schedules.map((s: { id: string; period_id?: string; class_id?: string; period?: { id: string; period_number?: number }; subject?: string; grade?: string; day_of_week?: string }) => ({
           id: s.id,
           period_id: s.period_id,
           class_id: s.class_id,
@@ -195,23 +207,21 @@ try {
         // Check for duplicate period_ids on the same day (this shouldn't happen, but let's log it)
         const periodIdCounts = new Map();
          
-        schedules.forEach((s: any) => {
+        schedules.forEach((s: { period?: { id: string }; period_id?: string }) => {
           const periodId = s.period?.id || s.period_id;
           if (periodId) {
             periodIdCounts.set(periodId, (periodIdCounts.get(periodId) || 0) + 1);
           }
         });
         
-        const duplicatePeriods = Array.from(periodIdCounts.entries()).filter(([_, count]) => count > 1);
+        const duplicatePeriods = Array.from(periodIdCounts.entries()).filter(([, count]) => count > 1);
         if (duplicatePeriods.length > 0) {
           console.warn('⚠️ Found multiple schedules for the same period on the same day:', duplicatePeriods.map(([periodId, count]) => {
-             
-            const matchingSchedules = schedules.filter((s: any) => (s.period?.id || s.period_id) === periodId);
+            const matchingSchedules = schedules.filter((s: { period?: { id: string }; period_id?: string }) => (s.period?.id || s.period_id) === periodId);
             return {
               period_id: periodId,
               count,
-               
-              schedules: matchingSchedules.map((s: any) => ({
+              schedules: matchingSchedules.map((s: { id: string; subject?: string; grade?: string; class_id?: string }) => ({
                 id: s.id,
                 subject: s.subject,
                 grade: s.grade,
@@ -223,10 +233,9 @@ try {
         
         // Check if any schedules are missing class_id
          
-        const schedulesWithoutClassId = schedules.filter((s: any) => !s.class_id);
+        const schedulesWithoutClassId = schedules.filter((s: { class_id?: string }) => !s.class_id);
         if (schedulesWithoutClassId.length > 0) {
-           
-          console.warn('⚠️ Found schedules without class_id:', schedulesWithoutClassId.map((s: any) => ({
+          console.warn('⚠️ Found schedules without class_id:', schedulesWithoutClassId.map((s: { id: string; period_id?: string; subject?: string; grade?: string }) => ({
             id: s.id,
             period_id: s.period_id,
             subject: s.subject,
@@ -239,7 +248,7 @@ try {
       const periodIds = new Set<string>();
       if (schedules && schedules.length > 0) {
          
-        schedules.forEach((schedule: any) => {
+        schedules.forEach((schedule: { period_id?: string }) => {
           if (schedule.period_id) {
             periodIds.add(schedule.period_id);
           }
@@ -255,14 +264,12 @@ try {
           .from('periods')
           .select('id, period_number, start_time, end_time')
           .in('id', Array.from(periodIds))
-           
-          .eq('school_id', finalSchoolId) as any;
-        
+          .eq('school_id', finalSchoolId) as { data: { id: string; period_number?: number; start_time?: string; end_time?: string }[] | null; error: unknown };
+
         if (periodDetailsError) {
           console.error('Error fetching period details:', periodDetailsError);
         } else if (periodDetails) {
-           
-          periodDetails.forEach((pd: any) => {
+          periodDetails.forEach((pd: { id: string; period_number?: number; start_time?: string; end_time?: string }) => {
             periodDetailsMap.set(pd.id, pd);
           });
           console.log(`✅ Fetched ${periodDetails.length} period details`);
@@ -295,8 +302,7 @@ try {
               .eq('grade', grade)
               .eq('subject', subject)
               .eq('is_active', true)
-               
-              .limit(1) as any;
+              .limit(1) as { data: { id: string }[] | null; error: unknown };
             
             if (errorBySubject) {
               console.error('❌ Error searching by subject+grade:', errorBySubject);
@@ -316,9 +322,8 @@ try {
             .eq('school_id', schoolId)
             .eq('grade', grade)
             .eq('is_active', true)
-             
-            .limit(1) as any;
-          
+            .limit(1) as { data: { id: string }[] | null; error: unknown };
+
           if (errorByGrade) {
             console.error('❌ Error searching by grade:', errorByGrade);
           } else if (classesByGrade && classesByGrade.length > 0) {
@@ -336,7 +341,7 @@ try {
           
           console.log(`📝 Creating class with name: ${className}, grade: ${grade}, subject: ${subject || null}`);
            
-          const { data: newClass, error: createError } = await ((supabaseAdmin as any)
+          const { data: newClass, error: createError } = await supabaseAdmin
             .from('classes')
             .insert({
               school_id: schoolId,
@@ -344,12 +349,10 @@ try {
               grade: grade,
               subject: subject && subject.trim() !== '' ? subject : null,
               academic_year: '2024-25',
-              is_active: true
-             
-            } as any)
+              is_active: true,
+            } as never)
             .select('id')
-             
-            .single() as any) as any;
+            .single() as { data: { id: string } | null; error: unknown };
           
           if (createError) {
             console.error('❌ Error creating class entry:', createError);
@@ -362,8 +365,7 @@ try {
                 .eq('school_id', schoolId)
                 .eq('grade', grade)
                 .eq('is_active', true)
-                 
-                .limit(1) as any;
+                .limit(1) as { data: { id: string }[] | null; error: unknown };
               
               if (existingClass && existingClass.length > 0) {
                 console.log(`✅ Found existing class after duplicate error: ${existingClass[0].id}`);
@@ -391,7 +393,7 @@ try {
       if (schedules && schedules.length > 0) {
         // Sort schedules by creation time (most recent first) to prioritize newer schedules
         // This ensures if there are multiple schedules for the same period, we use the most recent one
-        const sortedSchedules = [...schedules].sort((a: any, b: any) => {
+        const sortedSchedules = [...schedules].sort((a: { created_at?: string; id?: string }, b: { created_at?: string; id?: string }) => {
           // If schedules have created_at, use that; otherwise use id as fallback
           const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
           const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -485,7 +487,7 @@ try {
                   try {
                     // Directly create a class if we can't find one
                      
-                    const { data: newClass, error: createError } = await ((supabaseAdmin as any)
+                    const { data: newClass, error: createError } = await supabaseAdmin
                       .from('classes')
                       .insert({
                         school_id: finalSchoolId,
@@ -493,12 +495,10 @@ try {
                         grade: schedule.grade,
                         subject: schedule.subject || null,
                         academic_year: '2024-25',
-                        is_active: true
-                       
-                      } as any)
+                        is_active: true,
+                      } as never)
                       .select('id')
-                       
-                      .single() as any) as any;
+                      .single() as { data: { id: string } | null; error: unknown };
                     
                     if (!createError && newClass && newClass.id) {
                       finalClassId = newClass.id;
@@ -511,8 +511,7 @@ try {
                         .eq('school_id', finalSchoolId)
                         .eq('grade', schedule.grade)
                         .eq('is_active', true)
-                         
-                        .limit(1) as any;
+                        .limit(1) as { data: { id: string }[] | null; error: unknown };
                       
                       if (existingClass && existingClass.length > 0) {
                         finalClassId = existingClass[0].id;
@@ -577,7 +576,7 @@ try {
               try {
                 console.log(`🚨 FINAL RESORT: Creating class directly for grade: ${schedule.grade}`);
                  
-                const { data: emergencyClass, error: emergencyError } = await ((supabaseAdmin as any)
+                const { data: emergencyClass, error: emergencyError } = await supabaseAdmin
                   .from('classes')
                   .insert({
                     school_id: finalSchoolId,
@@ -585,12 +584,10 @@ try {
                     grade: schedule.grade,
                     subject: schedule.subject || null,
                     academic_year: '2024-25',
-                    is_active: true
-                   
-                  } as any)
+                    is_active: true,
+                  } as never)
                   .select('id')
-                   
-                  .single() as any) as any;
+                  .single() as { data: { id: string } | null; error: unknown };
                 
                 if (!emergencyError && emergencyClass && emergencyClass.id) {
                   finalClassId = emergencyClass.id;
@@ -603,8 +600,7 @@ try {
                     .eq('school_id', finalSchoolId)
                     .eq('grade', schedule.grade)
                     .eq('is_active', true)
-                     
-                    .limit(1) as any;
+                    .limit(1) as { data: { id: string }[] | null; error: unknown };
                   
                   if (existingEmergencyClass && existingEmergencyClass.length > 0) {
                     finalClassId = existingEmergencyClass[0].id;
@@ -618,9 +614,8 @@ try {
                     .select('id')
                     .eq('school_id', finalSchoolId)
                     .eq('grade', schedule.grade)
-                     
-                    .limit(1) as any;
-                  
+                    .limit(1) as { data: { id: string }[] | null; error: unknown };
+
                   if (lastResortClass && lastResortClass.length > 0) {
                     finalClassId = lastResortClass[0].id;
                     console.log(`✅ FINAL RESORT: Found class by grade only: ${finalClassId}`);
@@ -637,9 +632,8 @@ try {
                     .select('id')
                     .eq('school_id', finalSchoolId)
                     .eq('grade', schedule.grade)
-                     
-                    .limit(1) as any;
-                  
+                    .limit(1) as { data: { id: string }[] | null; error: unknown };
+
                   if (lastResortClass && lastResortClass.length > 0) {
                     finalClassId = lastResortClass[0].id;
                     console.log(`✅ FINAL RESORT: Found class after exception: ${finalClassId}`);
@@ -685,7 +679,7 @@ try {
         }
       }
 
-      const periods = Array.from(periodsMap.values()).sort((a: any, b: any) => a.period_number - b.period_number);
+      const periods = Array.from(periodsMap.values()).sort((a: { period_number?: number }, b: { period_number?: number }) => (a.period_number ?? 0) - (b.period_number ?? 0));
       
       console.log(`✅ Processed ${periods.length} periods from ${schedules.length} schedules for day: ${day}`);
       
@@ -693,10 +687,9 @@ try {
       // We'll return all periods, even if some don't have class_id
       // The frontend can handle periods without class_id by using grade
        
-      const periodsWithoutClassId = periods.filter((p: any) => !p.class_id || (typeof p.class_id === 'string' && p.class_id.trim() === ''));
+      const periodsWithoutClassId = periods.filter((p: { class_id?: string | null }) => !p.class_id || (typeof p.class_id === 'string' && p.class_id.trim() === ''));
       if (periodsWithoutClassId.length > 0) {
-         
-        console.warn(`⚠️ WARNING: Found ${periodsWithoutClassId.length} periods without class_id! They will still be returned.`, periodsWithoutClassId.map((p: any) => ({
+        console.warn(`⚠️ WARNING: Found ${periodsWithoutClassId.length} periods without class_id! They will still be returned.`, periodsWithoutClassId.map((p: { id: string; period_number?: number; class_id?: string | null; grade?: string; subject?: string }) => ({
           id: p.id,
           period_number: p.period_number,
           class_id: p.class_id,
@@ -708,7 +701,7 @@ try {
       
       console.log(`✅ Fetched ${periods.length} periods with class info for day: ${day}`);
        
-      console.log('📋 Period details:', periods.map((p: any) => ({
+      console.log('📋 Period details:', periods.map((p: { id: string; period_number?: number; subject?: string; grade?: string; class_id?: string | null; class_name?: string }) => ({
         id: p.id,
         period_number: p.period_number,
         subject: p.subject,
@@ -729,8 +722,7 @@ try {
       .select('id, school_id, period_number, start_time, end_time, is_active, created_at, updated_at')
       .eq('school_id', finalSchoolId)
       .eq('is_active', true)
-       
-      .order('period_number', { ascending: true }) as any;
+      .order('period_number', { ascending: true }) as { data: unknown[] | null; error: unknown };
 
     if (error) {
       logger.error('Failed to fetch periods', {

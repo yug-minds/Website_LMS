@@ -9,16 +9,28 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../../lib/supabase'
 import { verifyAdmin } from '../../../../../lib/auth-utils'
 
+type EligibleStudent = { student_id: string; course_id: string };
+type CertificateRow = { certificate_url?: string | null };
+
 /**
  * POST /api/admin/certificates/batch-generate
- * 
+ *
  * Generates certificates for all eligible students
- * 
+ *
  * Query params:
  * - limit: Number of certificates to process (default: 50)
  * - force: If true, regenerate even if certificate exists (default: false)
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     // Verify admin access
     const auth = await verifyAdmin(request)
@@ -31,8 +43,10 @@ export async function POST(request: NextRequest) {
     const force = searchParams.get('force') === 'true'
 
     // Find all students with 80%+ completion who need certificates
-    const { data: eligibleStudents, error: findError } = await supabaseAdmin
+    const { data: rawEligible, error: findError } = await supabaseAdmin
       .rpc('batch_generate_certificates_for_eligible_students')
+
+    const eligibleStudents = (rawEligible ?? null) as EligibleStudent[] | null;
 
     if (findError) {
       console.error('Error finding eligible students:', findError)
@@ -78,7 +92,7 @@ export async function POST(request: NextRequest) {
             .select('certificate_url')
             .eq('student_id', item.student_id)
             .eq('course_id', item.course_id)
-            .maybeSingle()
+            .maybeSingle() as { data: CertificateRow | null };
 
           if (existingCert?.certificate_url) {
             results.push({
@@ -123,13 +137,14 @@ export async function POST(request: NextRequest) {
             error: result.error || 'Unknown error',
           })
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
+        const errorMessage = error instanceof Error ? error.message : 'Failed to generate certificate'
         results.push({
           studentId: item.student_id,
           courseId: item.course_id,
           success: false,
-          error: error.message || 'Failed to generate certificate',
+          error: errorMessage,
         })
         console.error(`Error generating certificate for student ${item.student_id}, course ${item.course_id}:`, error)
       }
@@ -143,12 +158,12 @@ export async function POST(request: NextRequest) {
       results,
       message: `Processed ${toProcess.length} certificate(s): ${successCount} success, ${errorCount} errors`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in batch certificate generation:', error)
     return NextResponse.json(
       { 
         error: 'Internal server error',
-        details: error.message 
+        details: error instanceof Error ? error.message : 'Unknown error' 
       },
       { status: 500 }
     )
@@ -168,8 +183,10 @@ export async function GET(request: NextRequest) {
       return auth.response
     }
 
-    const { data: eligibleStudents, error } = await supabaseAdmin
+    const { data: rawEligible, error } = await supabaseAdmin
       .rpc('batch_generate_certificates_for_eligible_students')
+
+    const eligibleStudents = rawEligible as EligibleStudent[] | null;
 
     if (error) {
       return NextResponse.json(
@@ -179,10 +196,10 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      eligibleCount: eligibleStudents?.length || 0,
-      message: `Found ${eligibleStudents?.length || 0} student(s) eligible for certificates`,
+      eligibleCount: eligibleStudents?.length ?? 0,
+      message: `Found ${eligibleStudents?.length ?? 0} student(s) eligible for certificates`,
     })
-  } catch (error: any) {
+  } catch (_error: unknown) {
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

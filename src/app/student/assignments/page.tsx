@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { useStudentAssignments } from '../../../hooks/useStudentData'
+import { useStudentAssignments, useStudentProfile } from '../../../hooks/useStudentData'
 import { Card } from '../../../components/ui/card'
 import { Button } from '../../../components/ui/button'
 import { Badge } from '../../../components/ui/badge'
@@ -14,7 +14,6 @@ import {
   Eye,
   Calendar,
   BookOpen,
-  Filter,
   Award
 } from 'lucide-react'
 import Link from 'next/link'
@@ -46,26 +45,80 @@ export default function AssignmentsPage() {
   
   // Use the optimized hook instead of redundant queries
   const { data: assignmentsData = [], isLoading } = useStudentAssignments()
+  const { data: profile } = useStudentProfile()
+
+  // Helper function to normalize grade format (e.g., "grade4" -> "Grade 4")
+  const normalizeGrade = (grade: string | null | undefined): string => {
+    if (!grade) return ''
+    const trimmed = typeof grade === 'string' ? grade.trim() : String(grade).trim()
+    
+    // If already in "Grade X" format, return as-is
+    if (/^Grade\s+\d+$/i.test(trimmed)) {
+      return trimmed
+    }
+    
+    // Remove "grade" prefix if present (case-insensitive)
+    const normalized = trimmed.replace(/^grade\s*/i, '').trim()
+    
+    // Extract number and format as "Grade X"
+    const numMatch = normalized.match(/(\d{1,2})/)
+    if (numMatch) {
+      return `Grade ${numMatch[1]}`
+    }
+    
+    // If no number found, return as-is (capitalize first letter)
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
+  }
+
+  // Helper function to check if a date is valid
+  const isValidDate = (dateString: string | null | undefined): boolean => {
+    if (!dateString) return false
+    const date = new Date(dateString)
+    // Check if date is valid and not the Unix epoch (Jan 1, 1970)
+    return !isNaN(date.getTime()) && date.getTime() > 0 && date.getFullYear() > 1970
+  }
+
+  // Get student's grade from profile
+  type ProfileWithStudents = { students?: Array<{ grade?: string }> };
+  const profileTyped = profile as ProfileWithStudents | null;
+  const studentGrade = profileTyped?.students?.[0]?.grade ? normalizeGrade(profileTyped.students[0].grade!) : null
 
   // Transform hook data to match component's Assignment interface
   const assignments: Assignment[] = useMemo(() => {
     if (!Array.isArray(assignmentsData)) return []
-    return (assignmentsData as unknown as any[]).map((assignment: any) => ({
+    interface AssignmentData {
+      id: string;
+      title?: string;
+      description?: string;
+      assignment_type?: string;
+      due_date?: string;
+      max_marks?: number;
+      course_title?: string;
+      course_name?: string;
+      course_grade?: string;
+      course_subject?: string;
+      status?: string;
+      submission?: unknown;
+      is_overdue?: boolean;
+      days_until_due?: number;
+    }
+    
+    return (assignmentsData as unknown as AssignmentData[]).map((assignment: AssignmentData) => ({
       id: assignment.id,
-      title: assignment.title,
-      description: assignment.description,
-      assignment_type: assignment.assignment_type,
-      due_date: assignment.due_date,
-      max_marks: assignment.max_marks,
-      course_title: assignment.course_title || 'Unknown',
-      course_grade: assignment.course_grade || 'Unknown',
+      title: assignment.title ?? '',
+      description: assignment.description ?? '',
+      assignment_type: (assignment.assignment_type ?? 'quiz') as Assignment['assignment_type'],
+      due_date: (isValidDate(assignment.due_date) ? assignment.due_date : '') as string,
+      max_marks: assignment.max_marks ?? 0,
+      course_title: assignment.course_title || assignment.course_name || 'Unknown',
+      course_grade: studentGrade || 'Unknown',
       course_subject: assignment.course_subject || 'Unknown',
-      status: assignment.status,
-      submission: assignment.submission,
-      is_overdue: assignment.is_overdue,
-      days_until_due: assignment.days_until_due
+      status: (assignment.status ?? 'not_started') as Assignment['status'],
+      submission: assignment.submission as Assignment['submission'],
+      is_overdue: assignment.is_overdue ?? false,
+      days_until_due: assignment.days_until_due ?? 0
     }))
-  }, [assignmentsData])
+  }, [assignmentsData, studentGrade])
 
   const loading = isLoading
 
@@ -101,7 +154,7 @@ export default function AssignmentsPage() {
     }
   }
 
-  const filteredAssignments = assignments.filter((assignment: any) => {
+  const filteredAssignments = assignments.filter((assignment: Assignment) => {
     switch (filter) {
       case 'pending': return assignment.status === 'not_started' || assignment.status === 'in_progress'
       case 'submitted': return assignment.status === 'submitted'
@@ -147,15 +200,15 @@ export default function AssignmentsPage() {
           <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
             {[
               { key: 'all', label: 'All', count: assignments.length },
-              { key: 'pending', label: 'Pending', count: assignments.filter((a: any) => a.status === 'not_started' || a.status === 'in_progress').length },
-              { key: 'submitted', label: 'Submitted', count: assignments.filter((a: any) => a.status === 'submitted').length },
-              { key: 'graded', label: 'Graded', count: assignments.filter((a: any) => a.status === 'graded').length },
-              { key: 'overdue', label: 'Overdue', count: assignments.filter((a: any) => a.status === 'overdue').length },
+              { key: 'pending', label: 'Pending', count: assignments.filter((a: Assignment) => a.status === 'not_started' || a.status === 'in_progress').length },
+              { key: 'submitted', label: 'Submitted', count: assignments.filter((a: Assignment) => a.status === 'submitted').length },
+              { key: 'graded', label: 'Graded', count: assignments.filter((a: Assignment) => a.status === 'graded').length },
+              { key: 'overdue', label: 'Overdue', count: assignments.filter((a: Assignment) => a.status === 'overdue').length },
             ].map((tab) => (
               <button
                 key={tab.key}
                  
-                onClick={() => setFilter(tab.key as any)}
+                onClick={() => setFilter(tab.key as 'all' | 'pending' | 'submitted' | 'graded' | 'overdue')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                   filter === tab.key
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -193,7 +246,7 @@ export default function AssignmentsPage() {
                       <div>
                         <h3 className="text-lg font-semibold text-gray-900">{assignment.title}</h3>
                         <p className="text-sm text-gray-500">
-                          {assignment.course_title} • {assignment.course_grade} • {assignment.course_subject}
+                          {assignment.course_grade}
                         </p>
                       </div>
                     </div>
@@ -201,23 +254,27 @@ export default function AssignmentsPage() {
                     <p className="text-gray-600 mb-4 line-clamp-2">{assignment.description}</p>
 
                     <div className="flex items-center space-x-6 text-sm text-gray-500">
-                      <div className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-2" />
-                        Due: {new Date(assignment.due_date).toLocaleDateString()}
-                      </div>
+                      {assignment.due_date && (
+                        <div className="flex items-center">
+                          <Calendar className="h-4 w-4 mr-2" />
+                          Due: {new Date(assignment.due_date).toLocaleDateString()}
+                        </div>
+                      )}
                       <div className="flex items-center">
                         <BookOpen className="h-4 w-4 mr-2" />
                         {assignment.max_marks} marks
                       </div>
-                      <div className="flex items-center">
-                        <Clock className="h-4 w-4 mr-2" />
-                        {assignment.is_overdue 
-                          ? `${Math.abs(assignment.days_until_due)} days overdue`
-                          : assignment.days_until_due > 0 
-                            ? `${assignment.days_until_due} days left`
-                            : 'Due today'
-                        }
-                      </div>
+                      {assignment.due_date && (
+                        <div className="flex items-center">
+                          <Clock className="h-4 w-4 mr-2" />
+                          {assignment.is_overdue 
+                            ? `${Math.abs(assignment.days_until_due)} days overdue`
+                            : assignment.days_until_due > 0 
+                              ? `${assignment.days_until_due} days left`
+                              : 'Due today'
+                          }
+                        </div>
+                      )}
                     </div>
 
                     {/* Submission Status */}

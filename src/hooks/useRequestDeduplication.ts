@@ -9,7 +9,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 
 interface PendingRequest {
-  promise: Promise<any>;
+  promise: Promise<unknown>;
   timestamp: number;
 }
 
@@ -85,7 +85,7 @@ export async function deduplicateRequest<T>(
  * @param getKey - Function that generates a unique key for the request
  * @returns Deduplicated version of the request function
  */
-export function useRequestDeduplication<TArgs extends any[], TReturn>(
+export function useRequestDeduplication<TArgs extends unknown[], TReturn>(
   requestFn: (...args: TArgs) => Promise<TReturn>,
   getKey: (...args: TArgs) => string
 ): (...args: TArgs) => Promise<TReturn> {

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
@@ -15,10 +16,8 @@ import {
   TabsTrigger 
 } from "../../../components/ui/tabs";
 import { 
-  Settings,
   User,
   Shield,
-  Mail,
   Key,
   Database,
   Users,
@@ -31,8 +30,8 @@ import {
 import { fetchWithCsrf } from '../../../lib/csrf-client';
 
 export default function AdminSettings() {
-  const [user, setUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<{ full_name?: string; email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -119,7 +118,7 @@ export default function AdminSettings() {
       setUser(authUser);
       setUserProfile(profile);
       setProfileData({
-        full_name: (profile as any).full_name || "",
+        full_name: (profile as { full_name?: string })?.full_name || "",
         email: authUser.email || "",
         current_password: "",
         new_password: "",
@@ -171,7 +170,15 @@ export default function AdminSettings() {
 
   const handleEnable2FA = async () => {
      
-    let data: any = null;
+    interface MfaResponse {
+      qr_code?: string;
+      secret?: string;
+      factorId?: string;
+      details?: string;
+      error?: string;
+    }
+    
+    let data: MfaResponse | null = null;
     try {
       setMfaEnrolling(true);
       setMessage(null);
@@ -201,20 +208,16 @@ export default function AdminSettings() {
         throw new Error(errorDetails);
       }
 
-      if (data.qr_code) {
-        setMfaQrCode(data.qr_code);
-      }
-      if (data.secret) {
-        setMfaSecret(data.secret);
-      }
-      if (data.factorId) {
-        setMfaFactorId(data.factorId);
+      if (data) {
+        if (data.qr_code) setMfaQrCode(data.qr_code);
+        if (data.secret) setMfaSecret(data.secret);
+        if (data.factorId) setMfaFactorId(data.factorId);
       }
       setMessage({ type: 'success', text: 'Scan the QR code with your authenticator app' });
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error enabling 2FA:', error);
-      const errorMessage = data?.details || data?.error || error.message || 'Unknown error';
+      const errorMessage = data?.details || data?.error || (error instanceof Error ? error.message : 'Unknown error');
       setMessage({ type: 'error', text: `Failed to enable 2FA: ${errorMessage}` });
     } finally {
       setMfaEnrolling(false);
@@ -264,9 +267,10 @@ export default function AdminSettings() {
       await loadSecurityInfo();
       setTimeout(() => setMessage(null), 3000);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error verifying 2FA:', error);
-      setMessage({ type: 'error', text: `Verification failed: ${error.message || 'Invalid code'}` });
+      const errorMessage = error instanceof Error ? error.message : 'Invalid code';
+      setMessage({ type: 'error', text: `Verification failed: ${errorMessage}` });
     } finally {
       setMfaVerifying(false);
     }
@@ -307,15 +311,15 @@ export default function AdminSettings() {
       await loadSecurityInfo();
       setTimeout(() => setMessage(null), 3000);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error disabling 2FA:', error);
-      setMessage({ type: 'error', text: `Failed to disable 2FA: ${error.message || 'Unknown error'}` });
+      setMessage({ type: 'error', text: `Failed to disable 2FA: ${error instanceof Error ? error.message : 'Unknown error'}` });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleLogout = async () => {
+  const _handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/login');
   };
@@ -381,7 +385,7 @@ export default function AdminSettings() {
           return;
         }
        
-      } catch (error: any) {
+      } catch {
         setMessage({ type: 'error', text: 'Failed to verify current password.' });
         return;
       }
@@ -483,9 +487,9 @@ export default function AdminSettings() {
       // Clear message after 3 seconds
       setTimeout(() => setMessage(null), 3000);
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating profile:', error);
-      setMessage({ type: 'error', text: `Error updating profile: ${error.message || 'Unknown error'}` });
+      setMessage({ type: 'error', text: `Error updating profile: ${error instanceof Error ? error.message : 'Unknown error'}` });
     } finally {
       setSaving(false);
     }
@@ -691,8 +695,8 @@ export default function AdminSettings() {
                       <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
                         <div className="text-sm font-medium">Scan QR Code with Authenticator App</div>
                         {mfaQrCode && (
-                          <div className="flex justify-center">
-                            <img src={mfaQrCode} alt="2FA QR Code" className="w-48 h-48" />
+                          <div className="flex justify-center relative w-48 h-48">
+                            <Image src={mfaQrCode} alt="2FA QR Code" fill className="object-contain" unoptimized />
                       </div>
                         )}
                         {mfaSecret && (
@@ -793,8 +797,8 @@ export default function AdminSettings() {
                               setMessage({ type: 'error', text: data.error || 'Failed to create backup' });
                             }
                            
-                          } catch (error: any) {
-                            setMessage({ type: 'error', text: 'Error creating backup: ' + error.message });
+                          } catch (error: unknown) {
+                            setMessage({ type: 'error', text: 'Error creating backup: ' + (error instanceof Error ? error.message : 'Unknown error') });
                           } finally {
                             setSaving(false);
                           }
@@ -821,8 +825,9 @@ export default function AdminSettings() {
                               setMessage({ type: 'error', text: data.error || 'Failed to cleanup users' });
                             }
                            
-                          } catch (error: any) {
-                            setMessage({ type: 'error', text: 'Error cleaning up users: ' + error.message });
+                          } catch (error: unknown) {
+                            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                            setMessage({ type: 'error', text: 'Error cleaning up users: ' + errorMessage });
                           } finally {
                             setSaving(false);
                           }
@@ -857,8 +862,9 @@ export default function AdminSettings() {
                             setMessage({ type: 'error', text: data.error || 'Failed to export data' });
                           }
                          
-                        } catch (error: any) {
-                          setMessage({ type: 'error', text: 'Error exporting data: ' + error.message });
+                        } catch (error: unknown) {
+                          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                          setMessage({ type: 'error', text: 'Error exporting data: ' + errorMessage });
                         } finally {
                           setSaving(false);
                         }

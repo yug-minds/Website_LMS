@@ -41,7 +41,7 @@ export interface CreateAccountParams {
   qualification?: string;
   experience_years?: number;
   specialization?: string;
-  permissions?: Record<string, any>;
+  permissions?: Record<string, unknown>;
   is_super_admin?: boolean;
 }
 
@@ -49,7 +49,7 @@ export interface CreateAccountResult {
   success: boolean;
   userId?: string;
    
-  data?: any;
+  data?: unknown;
   error?: string;
 }
 
@@ -82,8 +82,7 @@ export class AccountCreationService {
         .from('profiles')
         .select('id, email')
         .eq('email', params.email)
-         
-        .maybeSingle() as any;
+        .maybeSingle();
 
       if (existingProfile) {
         return {
@@ -99,15 +98,14 @@ export class AccountCreationService {
         
         if (!listError && authUsers?.users) {
            
-          const existingAuthUser = authUsers.users.find((user: any) => user.email === params.email);
+          const existingAuthUser = authUsers.users.find((user: { email?: string }) => user.email === params.email);
           if (existingAuthUser) {
             // Check if profile exists for this user
             const { data: profileForUser } = await supabaseAdmin
               .from('profiles')
               .select('id')
               .eq('id', existingAuthUser.id)
-               
-              .maybeSingle() as any;
+              .maybeSingle();
             
             if (profileForUser) {
               return {
@@ -143,7 +141,7 @@ export class AccountCreationService {
             try {
               const { data: authUsers } = await supabaseAdmin.auth.admin.listUsers();
                
-              const existingUser = authUsers?.users?.find((user: any) => user.email === params.email);
+              const existingUser = authUsers?.users?.find((user: { email?: string }) => user.email === params.email);
               if (existingUser) {
                 // Check if profile exists
                 const { data: profileCheck } = await supabaseAdmin
@@ -151,7 +149,7 @@ export class AccountCreationService {
                   .select('id')
                   .eq('id', existingUser.id)
                    
-                  .maybeSingle() as any;
+                  .maybeSingle();
                 
                 if (profileCheck) {
                   return {
@@ -236,14 +234,13 @@ export class AccountCreationService {
         try {
           const { data: authUsers } = await supabaseAdmin.auth.admin.listUsers();
            
-          const user = authUsers?.users?.find((u: any) => u.id === userId);
+          const _user = authUsers?.users?.find((u: { id?: string }) => u.id === userId);
           // If user was just created (no profile exists), we can safely delete
           const { data: profileCheck } = await supabaseAdmin
             .from('profiles')
             .select('id')
             .eq('id', userId)
-             
-            .maybeSingle() as any;
+            .maybeSingle();
           
           if (!profileCheck) {
             // No profile exists, safe to delete
@@ -315,8 +312,7 @@ export class AccountCreationService {
       p_parent_name: params.parent_name || null,
       p_parent_phone: params.parent_phone || null,
       p_joining_code: null
-     
-    } as any);
+    } as never);
 
     if (error) {
       return {
@@ -325,7 +321,7 @@ export class AccountCreationService {
       };
     }
 
-    const result = data as any;
+    const result = data as { success?: boolean; error?: string } | null;
     if (!result?.success) {
       return {
         success: false,
@@ -351,8 +347,7 @@ export class AccountCreationService {
       p_specialization: params.specialization || null,
       p_teacher_id: null,
       p_school_assignments: JSON.stringify(params.school_assignments || [])
-     
-    } as any);
+    } as never);
 
     if (error) {
       return {
@@ -361,7 +356,7 @@ export class AccountCreationService {
       };
     }
 
-    const result = data as any;
+    const result = data as { success?: boolean; error?: string } | null;
     if (!result?.success) {
       return {
         success: false,
@@ -382,7 +377,7 @@ export class AccountCreationService {
       .select('id')
       .eq('id', params.school_id!)
        
-      .single() as any;
+      .single();
 
     if (schoolError || !school) {
       return { success: false, error: 'School not found' };
@@ -398,8 +393,7 @@ export class AccountCreationService {
         role: 'school_admin',
         school_id: params.school_id,
         phone: params.phone || null
-       
-      } as any);
+      } as never);
 
     if (profileError) {
       return { success: false, error: profileError.message };
@@ -416,11 +410,9 @@ export class AccountCreationService {
         phone: params.phone || null,
         is_active: true,
         permissions: params.permissions || {}
-       
-      } as any)
+      } as never)
       .select()
-       
-      .single() as any;
+      .single();
 
     if (adminError) {
       return { success: false, error: adminError.message };
@@ -452,14 +444,12 @@ export class AccountCreationService {
         school_id: null
       };
       
-      const { data: updatedProfile, error: updateError } = await (supabaseAdmin
-         
-        .from('profiles') as any)
-        .update(updateData)
+      const { data: updatedProfile, error: updateError } = await supabaseAdmin
+        .from('profiles')
+        .update(updateData as never)
         .eq('id', userId)
         .select()
-         
-        .single() as any;
+        .single();
 
       if (!updateError && updatedProfile) {
         profile = updatedProfile;
@@ -477,7 +467,13 @@ export class AccountCreationService {
     if (!profile) {
       // Last resort: try upsert (in case profile wasn't created by trigger)
        
-      const upsertData: any = {
+      const upsertData: {
+        id: string;
+        full_name: string;
+        email: string;
+        role: string;
+        school_id: null;
+      } = {
         id: userId,
         full_name: params.full_name,
         email: params.email,
@@ -487,12 +483,11 @@ export class AccountCreationService {
       
       const { data: upsertProfile, error: upsertError } = await supabaseAdmin
         .from('profiles')
-        .upsert(upsertData, {
+        .upsert(upsertData as never, {
           onConflict: 'id'
         })
         .select()
-         
-        .single() as any;
+        .single();
 
       if (upsertError) {
         return { 

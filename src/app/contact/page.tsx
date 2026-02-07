@@ -161,11 +161,11 @@ export default function ContactPage() {
         </div>
 
         {/* Find Us Section */}
-        <div className="flex-1 flex items-start justify-center bg-blue-600 flex-shrink-0 py-8 md:py-12 min-h-0">
+        <div className="flex-1 flex items-center justify-center bg-blue-600 flex-shrink-0 py-8 md:py-12 min-h-0">
           <div className="container w-full py-4 md:py-6">
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold mb-6 md:mb-8 text-white max-w-5xl mx-auto">Find Us</h2>
-            <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-start justify-start">
-              <Card className="bg-white border-0 w-full max-w-sm mx-auto md:mx-auto mt-6 md:mt-8">
+            <div className="flex flex-col md:flex-row gap-6 md:gap-8 items-center justify-center">
+              <Card className="bg-white border-0 w-full max-w-sm mx-auto md:mx-auto">
                 <CardContent className="p-3 md:p-4 flex flex-col items-center text-center">
                   <div className="w-12 h-12 md:w-14 md:h-14 bg-blue-600 rounded-full flex items-center justify-center mb-2 md:mb-3 mx-auto">
                     <MapPin className="h-6 w-6 md:h-7 md:w-7 text-white" />

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
-import { Badge } from "../../../components/ui/badge";
 import { Progress } from "../../../components/ui/progress";
 import { 
   Award,
@@ -23,17 +22,20 @@ import { toast } from "../../../components/ui/toast";
 
 export default function CertificatesPage() {
   const { data: certificates, isLoading: certificatesLoading } = useStudentCertificates();
-  const { data: courses, isLoading: coursesLoading } = useStudentCourses();
+  const { data: courses, isLoading: _coursesLoading } = useStudentCourses();
   const queryClient = useQueryClient();
   const [generatingCertId, setGeneratingCertId] = useState<string | null>(null);
 
   // Filter courses eligible for certificates (80%+ completion)
   // Note: We check progress_percentage >= 80, regardless of status
-  const eligibleCourses = courses?.filter((course: any) => 
+  type StudentCourse = { id: string; name?: string; title?: string; progress_percentage: number; status?: string; average_grade?: number; grade?: string; subject?: string };
+  type Certificate = { id: string; course_id?: string; courses?: { id?: string; name?: string; title?: string; grade?: string; subject?: string }; certificate_name: string; certificate_url?: string; issued_at: string; profiles?: { full_name?: string } };
+
+  const eligibleCourses = courses?.filter((course: StudentCourse) => 
     course.progress_percentage >= 80
   ) || [];
 
-  const inProgressCourses = courses?.filter((course: any) => 
+  const inProgressCourses = courses?.filter((course: StudentCourse) => 
     course.progress_percentage < 80
   ) || [];
 
@@ -41,14 +43,12 @@ export default function CertificatesPage() {
   // Only show "Generate Certificate" button if:
   // 1. Course is 80%+ complete (already filtered above)
   // 2. No certificate exists with a valid URL
-  const eligibleCoursesWithoutCert = eligibleCourses.filter((course: any) => {
+  const eligibleCoursesWithoutCert = eligibleCourses.filter((course: StudentCourse) => {
     if (!certificates || certificates.length === 0) {
-      // No certificates at all, so button should show
       return true;
     }
     
-    // Check if certificate exists for this course with a valid URL
-    const hasCertificateWithUrl = certificates.some((cert: any) => {
+    const hasCertificateWithUrl = certificates.some((cert: Certificate) => {
       // Check both course_id (direct field) and courses?.id (from joined data) for compatibility
       const courseMatches = cert.course_id === course.id || cert.courses?.id === course.id;
       const hasValidUrl = cert.certificate_url && 
@@ -150,7 +150,7 @@ export default function CertificatesPage() {
                 </div>
               ) : certificates && certificates.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {certificates.map((cert: any) => (
+                  {certificates.map((cert: Certificate) => (
                     <div key={cert.id} className="border rounded-lg p-4 bg-gradient-to-br from-yellow-50 to-orange-50">
                       <div className="flex items-start gap-3 mb-4">
                         <div className="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0">
@@ -184,6 +184,7 @@ export default function CertificatesPage() {
                       {cert.certificate_url ? (
                         <>
                           <div className="mb-4 border rounded-lg overflow-hidden bg-white">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- external certificate URL, not static asset */}
                             <img 
                               src={cert.certificate_url} 
                               alt={cert.certificate_name}
@@ -243,12 +244,12 @@ export default function CertificatesPage() {
               <CardHeader>
                 <CardTitle>Ready for Certificate</CardTitle>
                 <CardDescription>
-                  Certificates are generated automatically. Use this button if your certificate hasn't appeared yet.
+                  Certificates are generated automatically. Use this button if your certificate has not appeared yet.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {eligibleCoursesWithoutCert.map((course: any) => (
+                  {eligibleCoursesWithoutCert.map((course: StudentCourse) => (
                     <div key={course.id} className="border rounded-lg p-4 bg-green-50">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -315,7 +316,7 @@ export default function CertificatesPage() {
                   <BookOpen className="h-5 w-5 text-blue-600" />
                 </div>
                 <div>
-                  <p className="font-semibold text-lg">{courses?.filter((c: any) => c.status === 'completed').length || 0}</p>
+                  <p className="font-semibold text-lg">{courses?.filter((c: StudentCourse) => c.status === 'completed').length || 0}</p>
                   <p className="text-xs text-gray-600">Courses Completed</p>
                 </div>
               </div>
@@ -327,7 +328,7 @@ export default function CertificatesPage() {
                   <p className="font-semibold text-lg">
                     {courses && courses.length > 0
                        
-                      ? Math.round(courses.reduce((acc: number, c: any) => acc + (c.average_grade || 0), 0) / courses.length)
+                      ? Math.round(courses.reduce((acc: number, c: StudentCourse) => acc + (c.average_grade || 0), 0) / courses.length)
                       : 0}%
                   </p>
                   <p className="text-xs text-gray-600">Average Grade</p>
@@ -345,7 +346,7 @@ export default function CertificatesPage() {
             <CardContent>
               {inProgressCourses.length > 0 ? (
                 <div className="space-y-3">
-                  {inProgressCourses.slice(0, 5).map((course: any) => (
+                  {inProgressCourses.slice(0, 5).map((course: StudentCourse) => (
                     <Link key={course.id} href={`/student/my-courses/${course.id}`}>
                       <div className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
                         <h4 className="text-sm font-medium text-gray-900 line-clamp-1">

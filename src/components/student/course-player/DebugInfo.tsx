@@ -5,11 +5,25 @@ import { useParams } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
 import { Card } from '../../ui/card'
 
+interface DebugData {
+  user?: { id: string; email: string } | null
+  hasSession?: boolean
+  hasToken?: boolean
+  courseId?: string
+  chapterId?: string
+  chapter?: { data: unknown; error: unknown }
+  course?: { data: unknown; error: unknown }
+  studentSchool?: { data: unknown; error: unknown }
+  courseAccess?: { data: unknown; error: unknown }
+  enrollment?: { data: unknown; error: unknown }
+  error?: string
+}
+
 export default function DebugInfo() {
   const params = useParams()
   const courseId = params?.courseId as string
   const chapterId = params?.chapterId as string
-  const [debugData, setDebugData] = useState<any>({})
+  const [debugData, setDebugData] = useState<DebugData>({})
 
   useEffect(() => {
     const runDebug = async () => {
@@ -35,7 +49,7 @@ export default function DebugInfo() {
         const { data: studentSchool, error: schoolError } = await supabase
           .from('student_schools')
           .select('*')
-          .eq('student_id', user?.id)
+          .eq('student_id', user?.id ?? '')
           .eq('is_active', true)
           .maybeSingle()
 
@@ -43,17 +57,17 @@ export default function DebugInfo() {
         const { data: courseAccess, error: accessError } = await supabase
           .from('course_access')
           .select('*')
-          .eq('course_id', courseId)
+          .eq('course_id', courseId ?? '')
 
         // Test enrollment
         const { data: enrollment, error: enrollmentError } = await supabase
           .from('enrollments')
           .select('*')
-          .eq('student_id', user?.id)
-          .eq('course_id', courseId)
+          .eq('student_id', user?.id ?? '')
+          .eq('course_id', courseId ?? '')
 
         setDebugData({
-          user: user ? { id: user.id, email: user.email } : null,
+          user: user ? { id: user.id, email: user.email ?? '' } : null,
           hasSession: !!session,
           hasToken: !!session?.access_token,
           courseId,

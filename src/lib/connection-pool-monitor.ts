@@ -51,7 +51,7 @@ class ConnectionPoolMonitor {
   getAverageUtilization(): number {
     if (this.metrics.length === 0) return 0;
     
-    const sum = this.metrics.reduce((acc: number, m: any) => acc + m.utilizationPercent, 0);
+    const sum = this.metrics.reduce((acc: number, m: PoolMetrics) => acc + m.utilizationPercent, 0);
     return Math.round(sum / this.metrics.length);
   }
 

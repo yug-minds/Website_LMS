@@ -9,7 +9,7 @@ import TextContentViewer from './TextContentViewer'
 import PDFContentViewer from './PDFContentViewer'
 import QuizContentViewer from './QuizContentViewer'
 import ErrorBoundary from './ErrorBoundary'
-import { useCourseWithRealtime, useCourseChapters, useChapterContents, useCourseMaterials } from '../../../hooks/useStudentData'
+import { useCourseWithRealtime, useCourseChapters, useChapterContents } from '../../../hooks/useStudentData'
 import { Badge } from '../../ui/badge'
 import { Progress } from '../../ui/progress'
 import { Card } from '../../ui/card'
@@ -31,6 +31,49 @@ import { supabase } from '../../../lib/supabase'
 
 interface CoursePlayerProps {
   courseId: string
+}
+
+interface Content {
+  id: string;
+  title: string;
+  name?: string;
+  content_type?: string;
+  content_url?: string;
+  content_text?: string;
+  chapter_id?: string;
+  course_id?: string;
+  source?: string;
+  max_score?: number;
+  auto_grading_enabled?: boolean;
+  is_completed?: boolean;
+  [key: string]: unknown;
+}
+
+interface Chapter {
+  id: string;
+  name?: string;
+  title?: string;
+  order_number?: number;
+  order_index?: number;
+  is_completed?: boolean;
+  is_unlocked?: boolean;
+  [key: string]: unknown;
+}
+
+interface ErrorWithCode extends Error {
+  code?: string;
+}
+
+interface Course {
+  id: string;
+  name?: string;
+  title?: string;
+  course_name?: string;
+  description?: string;
+  is_published?: boolean;
+  status?: string;
+  progress_percentage?: number;
+  [key: string]: unknown;
 }
 
 export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerProps) {
@@ -59,17 +102,17 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   const toast = useToast()
 
   // Find current chapter
-  const currentChapter = chapters?.find((c: any) => c.id === chapterId)
+  const currentChapter = chapters?.find((c: Chapter) => c.id === chapterId)
   
   // Get current content - prioritize contentId if available, otherwise use index
-  let currentContent = null
+  let currentContent: Content | null = null
   if (contents && Array.isArray(contents) && contents.length > 0) {
     if (contentId) {
       // Find content by ID (most reliable when contentId is in URL)
-      currentContent = contents.find((c: any) => c.id === contentId) || null
+      currentContent = (contents as Content[]).find((c: Content) => c.id === contentId) || null
       // If found by ID, update index to match
       if (currentContent) {
-        const foundIndex = contents.findIndex((c: any) => c.id === contentId)
+        const foundIndex = (contents as Content[]).findIndex((c: Content) => c.id === contentId)
         if (foundIndex >= 0 && foundIndex !== currentContentIndex) {
           setCurrentContentIndex(foundIndex)
         }
@@ -77,11 +120,11 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     }
     // Fallback to index-based selection if contentId not found or not provided
     if (!currentContent) {
-      currentContent = contents[currentContentIndex] || null
+      currentContent = (contents as Content[])[currentContentIndex] || null
     }
   } else if (contents && !Array.isArray(contents)) {
     // Handle non-array contents (shouldn't happen, but handle gracefully)
-    currentContent = contents?.[currentContentIndex] || null
+    currentContent = (contents as Content[])?.[currentContentIndex] || null
   }
   
   // Check completion from global store (must be after currentContent is defined)
@@ -89,7 +132,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
 
   // Calculate progress - use server-side progress data from API
   // The chapters API already includes progress from course_progress table in is_completed field
-  const completedChapters = chapters?.filter((c: any) => {
+  const completedChapters = chapters?.filter((c: Chapter) => {
     // Server-side progress is already included in is_completed field from API
     // Also check local store for optimistic updates
     return c.is_completed === true || isChapterCompleted(c.id)
@@ -98,7 +141,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   
   // Sort chapters by order to find next chapter correctly
   const sortedChapters = chapters && chapters.length > 0
-    ? [...chapters].sort((a: any, b: any) => {
+    ? [...chapters].sort((a: Chapter, b: Chapter) => {
         const orderA = a.order_number || a.order_index || 0
         const orderB = b.order_number || b.order_index || 0
         return orderA - orderB
@@ -110,7 +153,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   // This ensures students can always navigate forward
   let nextChapter = null
   if (chapterId && sortedChapters.length > 0) {
-    const currentChapterIndex = sortedChapters.findIndex((c: any) => c.id === chapterId)
+    const currentChapterIndex = sortedChapters.findIndex((c: Chapter) => c.id === chapterId)
     if (currentChapterIndex >= 0 && currentChapterIndex < sortedChapters.length - 1) {
       // Get the next chapter in order (regardless of completion or unlock status)
       // Students should be able to navigate to next chapter even if current isn't complete
@@ -144,18 +187,18 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       contentsLoading,
       courseError: courseError ? {
         message: courseError.message,
-        code: (courseError as any)?.code,
-        details: (courseError as any)?.details
+        code: (courseError as { code?: string })?.code,
+        details: (courseError as { details?: string })?.details
       } : null,
       chaptersError: chaptersError ? {
         message: chaptersError.message,
-        code: (chaptersError as any)?.code,
-        details: (chaptersError as any)?.details
+        code: (chaptersError as { code?: string })?.code,
+        details: (chaptersError as { details?: string })?.details
       } : null,
       contentsError: contentsError ? {
         message: contentsError.message,
-        code: (contentsError as any)?.code,
-        details: (contentsError as any)?.details
+        code: (contentsError as { code?: string })?.code,
+        details: (contentsError as { details?: string })?.details
       } : null,
       chaptersCount: chapters?.length || 0,
       contentsCount: contents?.length || 0,
@@ -195,29 +238,32 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     }
   }, [courseId, chapterId, contentId, courseLoading, courseError, chaptersLoading, chaptersError, contentsLoading, contentsError, chapters, contents, currentContent, totalChapters, completedChapters])
 
-  // Update content index when contentId changes (keep in sync)
+  // Update content index when contentId changes (keep in sync) — deferred to avoid cascading renders
   useEffect(() => {
+    let rafId: number | undefined
     if (contents && Array.isArray(contents) && contentId) {
-      const index = contents.findIndex((c: any) => c.id === contentId)
+      const index = (contents as Content[]).findIndex((c: Content) => c.id === contentId)
       if (index >= 0 && index !== currentContentIndex) {
-        console.log(`🔄 [CoursePlayer] Updating content index to ${index} for contentId ${contentId}`)
-        setCurrentContentIndex(index)
+        rafId = requestAnimationFrame(() => {
+          setCurrentContentIndex(index)
+        })
       } else if (index < 0) {
         console.warn(`⚠️ [CoursePlayer] Content with ID ${contentId} not found in contents array`)
         console.warn(`   Current chapterId: ${chapterId}`)
-        console.warn(`   Available content IDs:`, contents.map((c: any) => c.id))
-        
-        // If content not found in current chapter, try to find which chapter it belongs to
+        console.warn(`   Available content IDs:`, (contents as Content[]).map((c: Content) => c.id))
         if (chapters && Array.isArray(chapters)) {
           console.log(`   Searching other chapters for content ${contentId}...`)
-          // This is a fallback - ideally the URL should have the correct chapterId
         }
       }
     } else if (contents && Array.isArray(contents) && !contentId && contents.length > 0) {
-      // If no contentId but we have contents, ensure index is valid
       if (currentContentIndex >= contents.length) {
-        setCurrentContentIndex(0)
+        rafId = requestAnimationFrame(() => {
+          setCurrentContentIndex(0)
+        })
       }
+    }
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId)
     }
   }, [contentId, contents, currentContentIndex, chapterId, chapters])
 
@@ -230,7 +276,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     
     // If we have contents but no contentId, navigate to first content
     if (!contentId && contents && contents.length > 0) {
-      const firstContent = contents[0]
+      const firstContent = (contents as Content[])[0]
       if (firstContent && firstContent.id) {
         // Only navigate if we're not already on a content page
         const currentPath = window.location.pathname
@@ -257,19 +303,22 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       if (!user) return
 
       // Try to fetch progress from server
-      const { data: progress, error: progressError } = await supabase
+      type ProgressRow = { is_completed?: boolean };
+      const { data: progressData, error: progressError } = await supabase
         .from('student_progress')
         .select('is_completed')
         .eq('student_id', user.id)
         .eq('content_id', currentContent.id)
         .maybeSingle()
 
+      const progress = progressData as ProgressRow | null;
+
       if (progressError) {
         // Log but don't block - 406 or other errors are non-critical
         if (progressError.code !== 'PGRST301' && !progressError.message?.includes('406')) {
           console.warn('⚠️ [CoursePlayer] Error checking completion status (non-critical):', progressError)
         }
-      } else if (progress?.is_completed) {
+      } else if (progress && progress.is_completed) {
         // Sync server state to global store
         setContentCompleted(currentContent.id, chapterId, courseId, true)
       }
@@ -283,12 +332,13 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     if (!contents || !Array.isArray(contents) || !chapterId || !courseId) return
 
     const checkChapterCompletion = async () => {
+      const contentsArray = contents as Content[];
       // Check both local store completion AND server-side completion (is_completed field)
-      const allContentCompletedLocal = contents.every((content: any) => 
+      const allContentCompletedLocal = contentsArray.every((content: Content) => 
         isContentCompleted(content.id)
       )
       
-      const allContentCompletedServer = contents.every((content: any) => 
+      const allContentCompletedServer = contentsArray.every((content: Content) => 
         content.is_completed === true
       )
       
@@ -296,13 +346,13 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       
       console.log('🔍 [CoursePlayer] Chapter completion check on load:', {
         chapterId,
-        totalContents: contents.length,
-        completedContentsLocal: contents.filter((c: any) => isContentCompleted(c.id)).length,
-        completedContentsServer: contents.filter((c: any) => c.is_completed === true).length,
+        totalContents: contentsArray.length,
+        completedContentsLocal: contentsArray.filter((c: Content) => isContentCompleted(c.id)).length,
+        completedContentsServer: contentsArray.filter((c: Content) => c.is_completed === true).length,
         allCompletedLocal: allContentCompletedLocal,
         allCompletedServer: allContentCompletedServer,
         currentlyMarkedComplete,
-        contentsWithCompletion: contents.map((c: any) => ({
+        contentsWithCompletion: contentsArray.map((c: Content) => ({
           id: c.id,
           title: c.title,
           localComplete: isContentCompleted(c.id),
@@ -313,7 +363,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       // If server shows all content complete but local store doesn't, sync local store
       if (allContentCompletedServer && !allContentCompletedLocal) {
         console.log('🔄 [CoursePlayer] Syncing server completion to local store...')
-        contents.forEach((content: any) => {
+        contentsArray.forEach((content: Content) => {
           if (content.is_completed === true && !isContentCompleted(content.id)) {
             console.log(`📝 [CoursePlayer] Syncing content ${content.id} to local store`)
             setContentCompleted(content.id, chapterId, courseId, true)
@@ -369,7 +419,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   useEffect(() => {
     if (!courseId) return
     if (!chapterId && !chaptersLoading && chapters && chapters.length > 0) {
-      const sortedChapters = [...chapters].sort((a: any, b: any) => {
+      const sortedChapters = [...chapters].sort((a: Chapter, b: Chapter) => {
         const orderA = a.order_number || a.order_index || 0
         const orderB = b.order_number || b.order_index || 0
         return orderA - orderB
@@ -377,7 +427,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       const firstChapter = sortedChapters[0]
       
       if (firstChapter) {
-        const completedChapters = chapters.filter((c: any) => c.is_completed).length
+        const completedChapters = chapters.filter((c: Chapter & { is_completed?: boolean }) => c.is_completed).length
         // Only auto-redirect if user hasn't started the course yet (no progress)
         if (completedChapters === 0) {
           router.push(`/student/my-courses/${courseId}/chapters/${firstChapter.id}`)
@@ -417,7 +467,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       router.push(`/student/my-courses/${courseId}/chapters/${nextChapter.id}`)
     } else if (chapterId && sortedChapters.length > 0) {
       // Fallback: Find next chapter by order even if not found by previous logic
-      const currentChapterIndex = sortedChapters.findIndex((c: any) => c.id === chapterId)
+      const currentChapterIndex = sortedChapters.findIndex((c: Chapter) => c.id === chapterId)
       if (currentChapterIndex >= 0 && currentChapterIndex < sortedChapters.length - 1) {
         const fallbackNextChapter = sortedChapters[currentChapterIndex + 1]
         if (fallbackNextChapter && fallbackNextChapter.id) {
@@ -429,7 +479,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       console.warn('⚠️ [handleNext] No next chapter found (current chapter is last)')
     } else {
       const sortedChaptersForLog = chapters && chapters.length > 0
-        ? [...chapters].sort((a: any, b: any) => {
+        ? [...chapters].sort((a: Chapter, b: Chapter) => {
             const orderA = a.order_number || a.order_index || 0
             const orderB = b.order_number || b.order_index || 0
             return orderA - orderB
@@ -441,8 +491,8 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
         currentContentIndex,
         hasNextChapter: !!nextChapter,
         sortedChaptersLength: sortedChaptersForLog.length,
-        currentChapterIndex: chapterId ? sortedChaptersForLog.findIndex((c: any) => c.id === chapterId) : -1,
-        allChapterIds: sortedChaptersForLog.map((c: any) => ({ id: c.id, name: c.name || c.title, order: c.order_number || c.order_index, is_unlocked: c.is_unlocked }))
+        currentChapterIndex: chapterId ? sortedChaptersForLog.findIndex((c: Chapter) => c.id === chapterId) : -1,
+        allChapterIds: sortedChaptersForLog.map((c: Chapter) => ({ id: c.id, name: c.name ?? c.title ?? '', order: c.order_number ?? c.order_index ?? 0, is_unlocked: c.is_unlocked }))
       })
       toast.warning('No next chapter available')
     }
@@ -452,7 +502,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     if (currentContentIndex > 0) {
       const prevIndex = currentContentIndex - 1
       setCurrentContentIndex(prevIndex)
-      const prevContent = contents?.[prevIndex]
+      const prevContent = (contents as Content[])?.[prevIndex]
       if (prevContent) {
         router.push(
           `/student/my-courses/${courseId}/chapters/${chapterId}/content/${prevContent.id}`,
@@ -488,12 +538,13 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
     // Check if all content in this chapter is now completed
     let allContentCompleted = false
     if (contents && Array.isArray(contents)) {
-      allContentCompleted = contents.every((content: any) => 
+      const contentsArray = contents as Content[];
+      allContentCompleted = contentsArray.every((content: Content) => 
         content.id === currentContent.id || isContentCompleted(content.id)
       )
       
       console.log('🔍 [handleMarkComplete] Chapter completion check:', {
-        totalContents: contents.length,
+        totalContents: contentsArray.length,
         allCompleted: allContentCompleted
       })
 
@@ -569,7 +620,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
           content_id: currentContent.id,
           is_completed: true,
           completed_at: new Date().toISOString()
-        }, { onConflict: 'student_id,content_id' })
+        } as never, { onConflict: 'student_id,content_id' })
 
       if (contentError) {
         console.warn('⚠️ [handleMarkComplete] Content progress warning:', contentError)
@@ -662,7 +713,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
           {contents.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm">Available content:</p>
-              {contents.map((c: any, idx: number) => (
+              {(contents as Content[]).map((c: Content, idx: number) => (
                 <Button
                   key={c.id || idx}
                   onClick={() => router.push(`/student/my-courses/${courseId}/chapters/${chapterId}/content/${c.id}`)}
@@ -698,7 +749,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       case 'video_link':
         return (
           <VideoContentViewer
-            content={currentContent}
+            content={currentContent as { id: string; title: string; content_url?: string; content_type?: string; chapter_id?: string; course_id?: string }}
             courseId={courseId}
             chapterId={chapterId}
             onComplete={handleMarkComplete}
@@ -708,7 +759,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       case 'html':
         return (
           <TextContentViewer
-            content={currentContent}
+            content={currentContent as { id: string; title: string; content_text?: string; content_url?: string; chapter_id?: string; course_id?: string }}
             courseId={courseId}
             chapterId={chapterId}
             onComplete={handleMarkComplete}
@@ -718,7 +769,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       case 'file':
         return (
           <PDFContentViewer
-            content={currentContent}
+            content={currentContent as { id: string; title: string; content_url?: string; chapter_id?: string; course_id?: string }}
             courseId={courseId}
             chapterId={chapterId}
             onComplete={handleMarkComplete}
@@ -728,7 +779,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       case 'assignment':
         return (
           <QuizContentViewer
-            content={currentContent}
+            content={currentContent as { id: string; title: string; content_url?: string; source?: string; content_text?: string; max_score?: number; auto_grading_enabled?: boolean }}
             courseId={courseId || ''}
             chapterId={chapterId || ''}
             onComplete={handleMarkComplete}
@@ -748,7 +799,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   useEffect(() => {
     if (courseError || chaptersError || contentsError) {
       const error = courseError || chaptersError || contentsError
-      const errorCode = (error as any)?.code
+      const errorCode = (error as ErrorWithCode)?.code
       
       // Better error serialization for logging
       const errorDetails = error instanceof Error 
@@ -784,7 +835,12 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
   // Handle errors with specific messages based on error codes
   if (courseError || chaptersError || contentsError) {
     const error = courseError || chaptersError || contentsError
-    const errorCode = (error as any)?.code
+    interface SupabaseError {
+      code?: string;
+      message?: string;
+    }
+    
+    const errorCode = (error as SupabaseError)?.code
     
     // Determine error message based on error code
     let errorTitle = 'Error Loading Course'
@@ -902,7 +958,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
             <div className="min-h-screen bg-gray-50 flex flex-col">
               {/* Course Header */}
               <CourseHeader
-                course={fallbackCourse as any}
+                course={fallbackCourse}
                 totalChapters={totalChapters}
                 completedChapters={completedChapters}
               />
@@ -915,7 +971,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                      <div className="lg:sticky lg:top-8 space-y-4">
                        <CourseSidebar
                           courseId={courseId}
-                          chapters={(chapters || []) as any[]}
+                          chapters={chapters || []}
                           currentChapterId={chapterId}
                           currentContentId={currentContent?.id}
                         />
@@ -969,7 +1025,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                         <Button
                           variant="outline"
                           onClick={handlePrevious}
-                          disabled={currentContentIndex === 0 && !chapters?.find((c: any, idx: number) => idx > 0 && c.id === chapterId)}
+                          disabled={currentContentIndex === 0 && !chapters?.find((c: Chapter, idx: number) => idx > 0 && c.id === chapterId)}
                         >
                           <ChevronLeft className="h-4 w-4 mr-2" />
                           Previous
@@ -1001,7 +1057,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
       return (
         <div className="container mx-auto px-4 py-6">
           <CourseHeader
-            course={fallbackCourse as any}
+            course={fallbackCourse}
             totalChapters={totalChapters}
             completedChapters={completedChapters}
             nextChapterId={nextChapter?.id || firstChapter?.id}
@@ -1010,7 +1066,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
             <div className="lg:col-span-1">
               <CourseSidebar
                 courseId={courseId}
-                chapters={(chapters || []) as any[]}
+                chapters={chapters || []}
               />
             </div>
             <div className="lg:col-span-3">
@@ -1066,7 +1122,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
           <div className="text-center py-12">
             <p className="text-gray-500 mb-4">Course not found</p>
             <p className="text-sm text-gray-400 mb-4">
-              {courseError ? `Error: ${(courseError as any) instanceof Error ? (courseError as Error).message : String(courseError)}` : 'The course may not exist or you may not have access to it.'}
+              {courseError ? `Error: ${(courseError as Error | { message?: string })?.message ?? String(courseError)}` : 'The course may not exist or you may not have access to it.'}
             </p>
             <Button onClick={() => router.push('/student/my-courses')} variant="outline">
               Back to Courses
@@ -1091,13 +1147,13 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
           <div className="lg:col-span-1">
             <CourseSidebar
               courseId={courseId}
-              chapters={(chapters || []) as any[]}
+              chapters={(chapters || []) as Chapter[]}
             />
           </div>
           <div className="lg:col-span-3">
             <Card className="p-6">
               <h2 className="text-2xl font-bold mb-4">Course Overview</h2>
-              <p className="text-gray-600 mb-6">{course.description || 'No description available.'}</p>
+              <p className="text-gray-600 mb-6">{(course as Course).description || 'No description available.'}</p>
               
               {totalChapters === 0 ? (
                 <div className="text-center py-12">
@@ -1114,8 +1170,8 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                       <p className="text-xs text-red-600 mb-1">
                         {chaptersError && typeof chaptersError === 'object' && 'message' in chaptersError ? (chaptersError as Error).message : 'Failed to load chapters'}
                       </p>
-                      {(chaptersError as any)?.code && (
-                        <p className="text-xs text-red-500">Error Code: {(chaptersError as any).code}</p>
+                      {(chaptersError as ErrorWithCode)?.code && (
+                        <p className="text-xs text-red-500">Error Code: {(chaptersError as ErrorWithCode).code}</p>
                       )}
                       <p className="text-xs text-gray-500 mt-2">
                         Check browser console for detailed error information.
@@ -1187,7 +1243,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                <div className="lg:sticky lg:top-8 space-y-4">
                  <CourseSidebar
                     courseId={courseId}
-                    chapters={(chapters || []) as any[]}
+                    chapters={chapters || []}
                     currentChapterId={chapterId}
                     currentContentId={currentContent?.id}
                   />
@@ -1219,7 +1275,7 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                     <div>
                       <h2 className="text-xl font-bold text-gray-900 line-clamp-1">{currentContent.title}</h2>
                       <p className="text-sm text-gray-500 mt-1">
-                        {currentChapter && ((currentChapter as any).name || currentChapter.title)}
+                        {currentChapter && (currentChapter.name || currentChapter.title)}
                       </p>
                     </div>
                     {isCompleted && (
@@ -1245,13 +1301,13 @@ export default function CoursePlayer({ courseId: propCourseId }: CoursePlayerPro
                          <FileText className="h-8 w-8 text-gray-400" />
                       </div>
                       <h3 className="text-lg font-semibold text-gray-900 mb-2">No Content Available</h3>
-                      <p className="text-gray-500 max-w-sm">This chapter doesn't have any published content yet.</p>
+                      <p className="text-gray-500 max-w-sm">This chapter does not have any published content yet.</p>
                        {contentsError && (
                           <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded max-w-md">
                             <p className="font-semibold mb-1">Error Details:</p>
-                            <p>{(contentsError as any)?.message || 'Failed to load content'}</p>
-                            {(contentsError as any)?.code && (
-                              <p className="text-xs mt-1">Code: {(contentsError as any).code}</p>
+                            <p>{(contentsError as ErrorWithCode)?.message || 'Failed to load content'}</p>
+                            {(contentsError as ErrorWithCode)?.code && (
+                              <p className="text-xs mt-1">Code: {(contentsError as ErrorWithCode).code}</p>
                             )}
                           </div>
                        )}

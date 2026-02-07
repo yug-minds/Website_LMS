@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -30,7 +30,6 @@ import { AssignmentBuilder, Assignment } from "./AssignmentBuilder";
 import { fetchWithCsrf } from "../../lib/csrf-client";
 import { 
   saveCourseFormState, 
-  loadCourseFormState, 
   clearCourseFormState,
   type CourseFormState 
 } from "../../lib/course-form-persistence";
@@ -42,6 +41,7 @@ export interface Chapter {
   description?: string;
   learning_outcomes: string[];
   order_number: number;
+  [key: string]: unknown;
 }
 
 interface CourseCreationWizardProps {
@@ -57,7 +57,7 @@ interface CourseCreationWizardProps {
     grades?: string[];
     chapters?: Chapter[];
   };
-  onComplete: (courseData: any) => void;
+  onComplete: (courseData: Record<string, unknown>) => void;
   onCancel: () => void;
 }
 
@@ -86,7 +86,7 @@ export function CourseCreationWizard({
     prerequisites_text: initialData?.prerequisites_text || "",
     prerequisites_course_ids: initialData?.prerequisites_course_ids || [] as string[],
     thumbnail_url: initialData?.thumbnail_url || "",
-    difficulty_level: (initialData as any)?.difficulty_level || "Beginner",
+    difficulty_level: (initialData as { difficulty_level?: string })?.difficulty_level || "Beginner",
   });
 
   // Step 2: School & Grade
@@ -110,6 +110,7 @@ export function CourseCreationWizard({
     if (currentStep === 1) {
       loadAvailableCourses();
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- load when step is 1 only */
   }, [currentStep]);
 
   // Auto-save form state
@@ -145,9 +146,10 @@ export function CourseCreationWizard({
       });
       if (response.ok) {
         const data = await response.json();
-        const courses = (data.courses || []).filter((c: any) => 
+        type CourseItem = { id: string; name?: string; course_name?: string; title?: string };
+        const courses = (data.courses || []).filter((c: CourseItem) => 
           !courseId || c.id !== courseId
-        ).map((c: any) => ({
+        ).map((c: CourseItem) => ({
           id: c.id,
           name: c.name || c.course_name || c.title || "Untitled Course",
         }));
@@ -286,7 +288,7 @@ export function CourseCreationWizard({
         difficulty_level: basicInfo.difficulty_level || "Beginner",
         school_ids: selectedSchoolIds,
         grades: selectedGrades,
-        chapters: chapters.map((ch: any) => ({
+        chapters: chapters.map((ch: Chapter) => ({
           ...ch,
           name: ch.name.trim(),
         })),
@@ -470,7 +472,7 @@ export function CourseCreationWizard({
                     {basicInfo.prerequisites_course_ids.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {basicInfo.prerequisites_course_ids.map((courseId) => {
-                          const course = availableCourses.find((c: any) => c.id === courseId);
+                          const course = availableCourses.find((c: { id: string; name: string }) => c.id === courseId);
                           return (
                             <Badge key={courseId} variant="secondary" className="flex items-center gap-1">
                               {course?.name || courseId}
@@ -479,7 +481,7 @@ export function CourseCreationWizard({
                                 onClick={() => {
                                   setBasicInfo({
                                     ...basicInfo,
-                                    prerequisites_course_ids: basicInfo.prerequisites_course_ids.filter((id: any) => id !== courseId),
+                                    prerequisites_course_ids: basicInfo.prerequisites_course_ids.filter((id: string) => id !== courseId),
                                   });
                                 }}
                                 className="ml-1"

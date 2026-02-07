@@ -158,7 +158,7 @@ try {
     const validation = validateRequestBody(createTeacherAttendanceSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher attendance creation', {
         endpoint: '/api/teacher/attendance',
         errors: errorMessages,
@@ -191,23 +191,22 @@ try {
     }
 
     // Insert or update attendance record (using admin client to bypass RLS)
+    const upsertPayload = {
+      user_id: teacherId,
+      school_id,
+      class_id,
+      date,
+      status,
+      remarks,
+      recorded_by: teacherId,
+      recorded_at: new Date().toISOString()
+    };
     const { data, error } = await supabaseAdmin
       .from('attendance')
-      .upsert({
-        user_id: teacherId, // Use authenticated teacher_id
-        school_id,
-        class_id,
-        date,
-        status,
-        remarks,
-        recorded_by: teacherId,
-        recorded_at: new Date().toISOString()
-       
-      } as any, {
+      .upsert(upsertPayload as unknown as never, {
         onConflict: 'user_id,school_id,date',
         ignoreDuplicates: false
-       
-      } as any) as any;
+      });
 
     if (error) {
       logger.error('Failed to create/update teacher attendance', {

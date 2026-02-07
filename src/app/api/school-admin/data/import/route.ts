@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { supabaseAdmin } from '../../../../../lib/supabase';
 import { getSchoolAdminSchoolId } from '../../../../../lib/school-admin-auth';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { dataImportSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
+
+type AuthUser = { id: string; email?: string };
 
 
 // POST: Import data from CSV
@@ -67,8 +69,7 @@ try {
     // Validate import type using schema
     const validation = validateRequestBody(dataImportSchema, { type: importType });
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -82,7 +83,7 @@ try {
 
     // Read file content
     const text = await file.text();
-    const lines = text.split('\n').filter((line: any) => line.trim());
+    const lines = text.split('\n').filter((line: string) => line.trim());
     
     if (lines.length < 2) {
       return NextResponse.json(
@@ -92,9 +93,9 @@ try {
     }
 
     // Parse CSV (simple parser - assumes comma-separated)
-    const headers = lines[0].split(',').map((h: any) => h.trim());
-    const rows = lines.slice(1).map((line: any) => {
-      const values = line.split(',').map((v: any) => v.trim());
+    const headers = lines[0].split(',').map((h: string) => h.trim());
+    const rows = lines.slice(1).map((line: string) => {
+      const values = line.split(',').map((v: string) => v.trim());
       const row: Record<string, string> = {};
       headers.forEach((header, index) => {
         row[header] = values[index] || '';
@@ -112,6 +113,7 @@ try {
           const email = row.email || row.Email || '';
           const fullName = row.name || row.full_name || row['Full Name'] || '';
           const grade = row.grade || row.Grade || '';
+          const section = (row.section || row.Section || '').toString().trim().toUpperCase() || null;
           const phone = row.phone || row.Phone || '';
 
           if (!email || !fullName) {
@@ -121,8 +123,7 @@ try {
 
           // Check if user already exists
           const { data: existingUser } = await supabaseAdmin.auth.admin.listUsers();
-           
-          const existing = existingUser?.users.find((u: any) => u.email === email);
+          const existing = existingUser?.users.find((u: AuthUser) => u.email === email);
 
           let userId: string;
           if (existing) {
@@ -144,7 +145,7 @@ try {
           }
 
           // Create or update profile
-          const { error: profileError } = await (supabaseAdmin
+          const { error: profileError } = await supabaseAdmin
             .from('profiles')
             .upsert({
               id: userId,
@@ -153,12 +154,10 @@ try {
               phone: phone || null,
               role: 'student',
               school_id: schoolId,
-              updated_at: new Date().toISOString()
-             
-            } as any, {
-              onConflict: 'id'
-             
-            }) as any);
+              updated_at: new Date().toISOString(),
+            } as never, {
+              onConflict: 'id',
+            });
 
           if (profileError) {
             errors.push(`Row ${imported + 1}: Failed to create profile - ${profileError.message}`);
@@ -166,19 +165,18 @@ try {
           }
 
           // Link to school
-          const { error: linkError } = await (supabaseAdmin
+          const { error: linkError } = await supabaseAdmin
             .from('student_schools')
             .upsert({
               student_id: userId,
               school_id: schoolId,
               grade: grade || null,
+              section: section || null,
               is_active: true,
-              assigned_at: new Date().toISOString()
-             
-            } as any, {
-              onConflict: 'student_id,school_id'
-             
-            }) as any);
+              assigned_at: new Date().toISOString(),
+            } as never, {
+              onConflict: 'student_id,school_id',
+            });
 
           if (linkError) {
             errors.push(`Row ${imported + 1}: Failed to link to school - ${linkError.message}`);
@@ -186,13 +184,13 @@ try {
           }
 
           imported++;
-         
-        } catch (error: any) {
+        } catch (error: unknown) {
           logger.warn(`Error importing row ${imported + 1} (non-critical)`, {
             endpoint: '/api/school-admin/data/import',
             row: imported + 1,
           }, error instanceof Error ? error : new Error(String(error)));
-          errors.push(`Row ${imported + 1}: ${error.message}`);
+          const msg = error instanceof Error ? error.message : String(error);
+          errors.push(`Row ${imported + 1}: ${msg}`);
         }
       }
     } else if (type === 'teachers') {
@@ -210,8 +208,7 @@ try {
 
           // Check if user already exists
           const { data: existingUser } = await supabaseAdmin.auth.admin.listUsers();
-           
-          const existing = existingUser?.users.find((u: any) => u.email === email);
+          const existing = existingUser?.users.find((u: AuthUser) => u.email === email);
 
           let userId: string;
           if (existing) {
@@ -233,7 +230,7 @@ try {
           }
 
           // Create or update profile
-          const { error: profileError } = await (supabaseAdmin
+          const { error: profileError } = await supabaseAdmin
             .from('profiles')
             .upsert({
               id: userId,
@@ -242,12 +239,10 @@ try {
               phone: phone || null,
               role: 'teacher',
               school_id: schoolId,
-              updated_at: new Date().toISOString()
-             
-            } as any, {
-              onConflict: 'id'
-             
-            }) as any);
+              updated_at: new Date().toISOString(),
+            } as never, {
+              onConflict: 'id',
+            });
 
           if (profileError) {
             errors.push(`Row ${imported + 1}: Failed to create profile - ${profileError.message}`);
@@ -255,18 +250,16 @@ try {
           }
 
           // Link to school
-          const { error: linkError } = await (supabaseAdmin
+          const { error: linkError } = await supabaseAdmin
             .from('teacher_schools')
             .upsert({
               teacher_id: userId,
               school_id: schoolId,
               is_active: true,
-              assigned_at: new Date().toISOString()
-             
-            } as any, {
-              onConflict: 'teacher_id,school_id'
-             
-            }) as any);
+              assigned_at: new Date().toISOString(),
+            } as never, {
+              onConflict: 'teacher_id,school_id',
+            });
 
           if (linkError) {
             errors.push(`Row ${imported + 1}: Failed to link to school - ${linkError.message}`);
@@ -274,13 +267,13 @@ try {
           }
 
           imported++;
-         
-        } catch (error: any) {
+        } catch (error: unknown) {
           logger.warn(`Error importing row ${imported + 1} (non-critical)`, {
             endpoint: '/api/school-admin/data/import',
             row: imported + 1,
           }, error instanceof Error ? error : new Error(String(error)));
-          errors.push(`Row ${imported + 1}: ${error.message}`);
+          const msg = error instanceof Error ? error.message : String(error);
+          errors.push(`Row ${imported + 1}: ${msg}`);
         }
       }
     }

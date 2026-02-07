@@ -15,6 +15,7 @@ export interface StudentProgressData {
   full_name: string;
   email: string;
   grade: string;
+  section?: string;
   school_id?: string;
   school_name?: string;
   total_courses: number;
@@ -109,6 +110,7 @@ export function useTeacherStudentProgress(
   filters?: {
     courseId?: string;
     studentId?: string;
+    section?: string;
   }
 ) {
   const queryClient = useQueryClient();
@@ -160,6 +162,7 @@ export function useTeacherStudentProgress(
       if (schoolId) params.append('school_id', schoolId);
       if (filters?.courseId) params.append('course_id', filters.courseId);
       if (filters?.studentId) params.append('student_id', filters.studentId);
+      if (filters?.section) params.append('section', filters.section);
 
       const url = `/api/teacher/student-progress${params.toString() ? '?' + params.toString() : ''}`;
 
@@ -194,6 +197,7 @@ export function useSchoolAdminStudentProgress(
     courseId?: string;
     grade?: string;
     teacherId?: string;
+    section?: string;
   }
 ) {
   const queryClient = useQueryClient();
@@ -243,6 +247,7 @@ export function useSchoolAdminStudentProgress(
       if (filters?.courseId) params.append('course_id', filters.courseId);
       if (filters?.grade) params.append('grade', filters.grade);
       if (filters?.teacherId) params.append('teacher_id', filters.teacherId);
+      if (filters?.section) params.append('section', filters.section);
 
       const url = `/api/school-admin/student-progress${params.toString() ? '?' + params.toString() : ''}`;
 
@@ -276,6 +281,7 @@ export function useAdminStudentProgress(
     schoolId?: string;
     courseId?: string;
     grade?: string;
+    section?: string;
     limit?: number;
     offset?: number;
   }
@@ -327,6 +333,7 @@ export function useAdminStudentProgress(
       if (filters?.schoolId) params.append('school_id', filters.schoolId);
       if (filters?.courseId) params.append('course_id', filters.courseId);
       if (filters?.grade) params.append('grade', filters.grade);
+      if (filters?.section) params.append('section', filters.section);
       if (filters?.limit) params.append('limit', filters.limit.toString());
       if (filters?.offset) params.append('offset', filters.offset.toString());
 
@@ -369,12 +376,12 @@ export function useCourseProgressStats(courseId: string, userRole: 'teacher' | '
     ...query,
     data: query.data ? {
       courseStats: userRole === 'admin' 
-        ? (query.data as any).courses?.find((c: any) => c.course_id === courseId)
+        ? (query.data as { courses?: Array<{ course_id?: string }> }).courses?.find((c: { course_id?: string }) => c.course_id === courseId)
         : userRole === 'school-admin'
-        ? (query.data as SchoolAdminProgressResponse).courses?.find((c: any) => c.course_id === courseId)
+        ? (query.data as SchoolAdminProgressResponse).courses?.find((c: { course_id?: string }) => c.course_id === courseId)
         : null,
-      students: (query.data as any).students?.filter((s: any) => 
-        s.courses?.some((c: any) => c.course_id === courseId)
+      students: (query.data as { students?: Array<{ courses?: Array<{ course_id?: string }> }> }).students?.filter((s: { courses?: Array<{ course_id?: string }> }) => 
+        s.courses?.some((c: { course_id?: string }) => c.course_id === courseId)
       ) || []
     } : undefined
   };
@@ -393,12 +400,12 @@ export function useGradeProgressStats(grade: string, userRole: 'teacher' | 'scho
     ...query,
     data: query.data ? {
       gradeStats: {
-        total_students: query.data.students.filter((s: any) => s.grade === grade).length,
+        total_students: query.data.students.filter((s: { grade?: string }) => s.grade === grade).length,
         average_progress: query.data.students
-          .filter((s: any) => s.grade === grade)
-          .reduce((sum, s, _, arr) => sum + s.average_progress / arr.length, 0)
+          .filter((s: { grade?: string }) => s.grade === grade)
+          .reduce((sum, s: { average_progress?: number }, _, arr) => sum + (s.average_progress || 0) / arr.length, 0)
       },
-      students: query.data.students.filter((s: any) => s.grade === grade)
+      students: query.data.students.filter((s: { grade?: string }) => s.grade === grade)
     } : undefined
   };
 }

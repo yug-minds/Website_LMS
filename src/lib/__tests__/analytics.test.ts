@@ -12,8 +12,8 @@ import {
 // Extend Window interface for tests
 declare global {
   interface Window {
-    gtag?: (...args: any[]) => void;
-    dataLayer?: any[];
+    gtag?: (...args: unknown[]) => void;
+    dataLayer?: unknown[];
   }
 }
 
@@ -24,11 +24,11 @@ describe('Google Analytics', () => {
       ...global.window,
       gtag: vi.fn(),
       dataLayer: [],
-    } as any;
-    
+    } as Window & typeof global.window;
+
     global.document = {
       title: 'Test Page',
-    } as any;
+    } as Document;
   });
 
   afterEach(() => {
@@ -55,7 +55,7 @@ describe('Google Analytics', () => {
     });
 
     it('should not throw if gtag is not available', () => {
-      delete (window as any).gtag;
+      delete (window as Window & { gtag?: unknown }).gtag;
       
       expect(() => trackPageView('/test-page')).not.toThrow();
     });

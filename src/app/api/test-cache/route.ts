@@ -6,7 +6,6 @@ import {
     invalidateCache,
     invalidateCachePattern,
     getCacheStats,
-    clearCache,
     getDebugLogs
 } from '@/lib/cache';
 
@@ -16,8 +15,9 @@ import {
  * Performs a series of cache operations to verify functionality
  * and measure performance.
  */
-export async function GET(request: Request) {
-    const results: any[] = [];
+export async function GET(_request: Request) {
+    type ResultItem = { operation: string; key?: string; success: boolean; latency?: string; value?: unknown; pattern?: string; stats?: unknown };
+    const results: ResultItem[] = [];
     const startTotal = performance.now();
 
     // Check configuration
@@ -114,7 +114,7 @@ export async function GET(request: Request) {
         const endTotal = performance.now();
 
         return NextResponse.json({
-            success: results.every((r: any) => r.success),
+            success: results.every((r: ResultItem) => r.success),
             config: {
                 hasServiceKey,
                 serviceKeyLength

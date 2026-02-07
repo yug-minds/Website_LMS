@@ -133,7 +133,7 @@ export async function POST(
       queryType: 'single',
     });
 
-    const { data: course, error: courseError } = await supabaseAdmin
+    const { data: rawCourse, error: courseError } = await supabaseAdmin
       .from('courses')
       .select(`
         id,
@@ -159,6 +159,8 @@ export async function POST(
       .eq('id', courseId)
       .single();
 
+    const course = rawCourse as CourseData | null;
+
     logger.info('Course query result', {
       endpoint: '/api/admin/courses/[id]/publish',
       courseId,
@@ -169,7 +171,7 @@ export async function POST(
       courseName: course?.course_name || course?.name || course?.title,
     });
 
-    let finalCourse = course;
+    let finalCourse: CourseData | null = course;
     
     if (courseError || !course) {
       logger.error('Error fetching course for publish', {
@@ -244,7 +246,7 @@ export async function POST(
         .order('order_index', { ascending: true });
       
       // Combine results
-      finalCourse = { ...courseRetry, chapters: chaptersData || [] };
+      finalCourse = { ...(courseRetry as CourseData), chapters: chaptersData || [] };
     }
 
     if (!finalCourse) {
@@ -372,6 +374,7 @@ export async function POST(
 
     const { data: updatedCourse, error: updateError } = await supabaseAdmin
       .from('courses')
+      // @ts-expect-error - courses table row type not in schema
       .update(updateData)
       .eq('id', courseId)
       .select()
@@ -405,9 +408,9 @@ export async function POST(
           .limit(1)
           .single();
 
-        const nextVersion = maxVersion?.version_number 
-          ? maxVersion.version_number + 1 
-          : 1;
+        type VersionRow = { version_number?: number };
+        const maxV = maxVersion as VersionRow | null;
+        const nextVersion = maxV?.version_number != null ? maxV.version_number + 1 : 1;
 
         // Create version record with course data snapshot
         const { error: versionError } = await supabaseAdmin
@@ -418,8 +421,8 @@ export async function POST(
             published_at: new Date().toISOString(),
             published_by: publishedBy,
             changes_summary: changes_summary || null,
-            course_data: updatedCourse,
-          });
+            course_data: updatedCourse as never,
+          } as never);
 
         if (versionError) {
           logger.warn('Failed to create version record (non-critical)', {
@@ -437,18 +440,19 @@ export async function POST(
       }
     }
 
+    const updatedCourseTyped = updatedCourse as CourseData | null;
     logger.info('Course publish status updated', {
       endpoint: '/api/admin/courses/[id]/publish',
       courseId,
       publish,
-      courseName: updatedCourse?.course_name || updatedCourse?.name || updatedCourse?.title,
+      courseName: updatedCourseTyped?.course_name || updatedCourseTyped?.name || updatedCourseTyped?.title,
       assignedSchools: assignedSchools.length,
       assignedGrades: assignedGrades,
     });
 
     return NextResponse.json({
       success: true,
-      course: updatedCourse,
+      course: updatedCourseTyped ?? updatedCourse,
       message: publish ? 'Course published successfully' : 'Course unpublished successfully',
     });
   } catch (error) {

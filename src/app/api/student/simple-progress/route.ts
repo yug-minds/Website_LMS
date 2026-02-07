@@ -2,8 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   const maxRetries = 3;
-  let lastError: any = null;
+  let lastError: unknown = null;
   
   // Read request body once at the beginning
   let requestData;
@@ -59,13 +68,15 @@ export async function POST(request: NextRequest) {
       console.log(`📝 [simple-progress API] Attempt ${attempt} - Upserting progress data:`, progressData);
 
       // First, try to check if record exists
-      const { data: existingProgress, error: selectError } = await supabaseAdmin
+      type ProgressRow = { id?: string; completed?: boolean };
+      const { data: existingProgressData, error: selectError } = await supabaseAdmin
         .from('course_progress')
         .select('id, completed')
         .eq('student_id', studentId)
         .eq('chapter_id', chapterId)
         .maybeSingle();
 
+      const existingProgress = existingProgressData as ProgressRow | null;
       if (selectError) {
         console.error(`❌ [simple-progress API] Attempt ${attempt} - Select error:`, selectError);
         throw new Error(`Select error: ${selectError.message}`);
@@ -76,29 +87,31 @@ export async function POST(request: NextRequest) {
       if (existingProgress) {
         // Update existing record
         console.log(`📝 [simple-progress API] Attempt ${attempt} - Updating existing record (id: ${existingProgress.id})...`);
+        const updatePayload = {
+          completed: progressData.completed,
+          progress_percent: progressData.progress_percent,
+          completed_at: progressData.completed_at,
+          updated_at: progressData.updated_at
+        };
         progressResult = await supabaseAdmin
           .from('course_progress')
-          .update({
-            completed: progressData.completed,
-            progress_percent: progressData.progress_percent,
-            completed_at: progressData.completed_at,
-            updated_at: progressData.updated_at
-          })
-          .eq('id', existingProgress.id)
+          .update(updatePayload as unknown as never)
+          .eq('id', existingProgress.id ?? '')
           .select();
       } else {
         // Insert new record
         console.log(`📝 [simple-progress API] Attempt ${attempt} - Inserting new record...`);
+        const insertPayload = {
+          student_id: progressData.student_id,
+          course_id: progressData.course_id,
+          chapter_id: progressData.chapter_id,
+          completed: progressData.completed,
+          progress_percent: progressData.progress_percent,
+          completed_at: progressData.completed_at
+        };
         progressResult = await supabaseAdmin
           .from('course_progress')
-          .insert({
-            student_id: progressData.student_id,
-            course_id: progressData.course_id,
-            chapter_id: progressData.chapter_id,
-            completed: progressData.completed,
-            progress_percent: progressData.progress_percent,
-            completed_at: progressData.completed_at
-          })
+          .insert(insertPayload as unknown as never)
           .select();
       }
 

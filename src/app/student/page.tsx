@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabase";
 import { frontendLogger } from "../../lib/frontend-logger";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
 import { 
@@ -13,13 +11,9 @@ import {
   FileText,
   Calendar,
   Award,
-  TrendingUp,
-  AlertCircle,
   CheckCircle,
   Clock,
-  Users,
   Bell,
-  BarChart,
   Play,
   Upload
 } from "lucide-react";
@@ -34,20 +28,30 @@ import {
 import { useSmartRefresh } from "../../hooks/useSmartRefresh";
 import { useQueryClient } from "@tanstack/react-query";
 
+interface Assignment {
+  id?: string;
+  title?: string;
+  course_title?: string;
+  due_date?: string;
+  status?: string;
+  is_overdue?: boolean;
+  days_until_due?: number;
+}
+
 export default function StudentDashboard() {
   const router = useRouter();
-  const queryClient = useQueryClient();
+  const _queryClient = useQueryClient();
   const [greeting, setGreeting] = useState("Hello");
   const [isMounted, setIsMounted] = useState(false);
   
   // OPTIMIZATION: Request deduplication - Track ongoing requests to prevent duplicates
-  const ongoingRequests = useRef<Map<string, Promise<any>>>(new Map());
+  const _ongoingRequests = useRef<Map<string, Promise<unknown>>>(new Map());
   
   // OPTIMIZATION: Incremental Loading - Load critical data first, defer non-critical
   // Critical: profile, stats (needed for header/stats cards)
   // Non-critical: notifications (can be deferred)
-  const { data: profile, isLoading: profileLoading } = useStudentProfile();
-  const { data: stats, isLoading: statsLoading } = useStudentDashboardStats();
+  const { data: profile, isLoading: _profileLoading } = useStudentProfile();
+  const { data: stats, isLoading: _statsLoading } = useStudentDashboardStats();
   const { data: courses, isLoading: coursesLoading } = useStudentCourses();
   const { data: assignments, isLoading: assignmentsLoading } = useStudentAssignments();
   
@@ -91,7 +95,11 @@ export default function StudentDashboard() {
 
   // Check for force password change using profile data from hook (no duplicate query)
   useEffect(() => {
-    if ((profile as any)?.force_password_change) {
+    interface Profile {
+      force_password_change?: boolean;
+    }
+    
+    if (profile && 'force_password_change' in profile && (profile as Profile).force_password_change) {
       router.push('/student/settings?force_change=true');
     }
   }, [profile, router]);
@@ -118,17 +126,21 @@ export default function StudentDashboard() {
 
   // Get pending assignments (due soon)
   const pendingAssignments = Array.isArray(assignments)
-    ? (assignments as any[]).filter((a: any) => 
+    ? (assignments as Array<{ status?: string }>).filter((a: { status?: string }) => 
         a.status === 'not_started' || a.status === 'in_progress'
       ).slice(0, 3)
     : [];
 
   // Get recent notifications
-  const recentNotifications = notifications?.filter(n => !n.is_read).slice(0, 5) || [];
+  const recentNotifications = (notifications as Array<{ is_read?: boolean }> | undefined)?.filter((n) => !n.is_read).slice(0, 5) || [];
 
   // Get active courses - a course is "active" if it exists and is not 100% complete
   // This matches the logic in useStudentDashboardStats
-  const activeCourses = courses?.filter((c: any) => {
+  interface Course {
+    progress_percentage?: number;
+  }
+  
+  const activeCourses = courses?.filter((c: Course) => {
     const progress = c.progress_percentage || 0
     return progress < 100
   }).slice(0, 3) || [];
@@ -139,10 +151,10 @@ export default function StudentDashboard() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900">
-            {greeting}, {profile?.full_name?.split(' ')[0] || 'Student'}! 👋
+            {greeting}, {(profile as { full_name?: string } | null)?.full_name?.split(' ')[0] || 'Student'}! 👋
           </h1>
           <p className="text-gray-600 mt-2">
-            {profile?.students?.[0]?.schools?.[0]?.name} • Grade {profile?.students?.[0]?.grade}
+            {(profile as { students?: Array<{ schools?: Array<{ name?: string }>; grade?: string; section?: string }> } | null)?.students?.[0]?.schools?.[0]?.name} • {(profile as { students?: Array<{ grade?: string; section?: string }> } | null)?.students?.[0]?.grade}{(profile as { students?: Array<{ section?: string }> } | null)?.students?.[0]?.section ? ` - Section ${(profile as { students?: Array<{ section?: string }> } | null)?.students?.[0]?.section}` : ''}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -230,7 +242,7 @@ export default function StudentDashboard() {
                 </div>
               ) : activeCourses.length > 0 ? (
                 <div className="space-y-4">
-                  {activeCourses.map((course: any) => (
+                  {activeCourses.map((course: Course & { id?: string; title?: string; name?: string; grade?: string; subject?: string; thumbnail_url?: string }) => (
                     <div key={course.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -283,7 +295,7 @@ export default function StudentDashboard() {
                 </div>
               ) : pendingAssignments.length > 0 ? (
                 <div className="space-y-4">
-                  {pendingAssignments.map((assignment: any) => (
+                  {pendingAssignments.map((assignment: Assignment) => (
                     <div key={assignment.id} className="border rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -292,19 +304,19 @@ export default function StudentDashboard() {
                           <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
                             <div className="flex items-center">
                               <Calendar className="h-4 w-4 mr-1" />
-                              Due: {new Date(assignment.due_date).toLocaleDateString()}
+                              Due: {new Date(String(assignment.due_date ?? '')).toLocaleDateString()}
                             </div>
                             <div className="flex items-center">
                               <Clock className="h-4 w-4 mr-1" />
-                              {assignment.days_until_due > 0 
-                                ? `${assignment.days_until_due} days left`
+                              {(assignment.days_until_due ?? 0) > 0 
+                                ? `${assignment.days_until_due ?? 0} days left`
                                 : 'Due today'
                               }
                             </div>
                           </div>
                         </div>
                         <Link href={`/student/assignments/${assignment.id}`}>
-                          <Button size="sm" variant={assignment.days_until_due <= 2 ? "default" : "outline"}>
+                          <Button size="sm" variant={(assignment.days_until_due ?? 0) <= 2 ? "default" : "outline"}>
                             <Upload className="h-4 w-4 mr-2" />
                             Start
                           </Button>
@@ -371,7 +383,7 @@ export default function StudentDashboard() {
                   </div>
                 ) : recentNotifications.length > 0 ? (
                   <div className="space-y-3">
-                    {recentNotifications.map((notification: any) => (
+                    {recentNotifications.map((notification: { id: string; title?: string; message?: string; created_at?: string }) => (
                       <div key={notification.id} className="p-3 border rounded-lg bg-blue-50">
                         <div className="flex items-start gap-2">
                           <Bell className="h-4 w-4 text-blue-600 mt-0.5" />
@@ -422,14 +434,14 @@ export default function StudentDashboard() {
                     <span className="font-medium">
                       {courses && courses.length > 0
                          
-                        ? Math.round(courses.reduce((acc: number, c: any) => acc + (c.progress_percentage || 0), 0) / courses.length)
+                        ? Math.round(courses.reduce((acc: number, c: { progress_percentage?: number }) => acc + (c.progress_percentage || 0), 0) / courses.length)
                         : 0}%
                     </span>
                   </div>
                   <Progress 
                     value={courses && courses.length > 0
                        
-                      ? courses.reduce((acc: number, c: any) => acc + (c.progress_percentage || 0), 0) / courses.length
+                      ? courses.reduce((acc: number, c: { progress_percentage?: number }) => acc + (c.progress_percentage || 0), 0) / courses.length
                       : 0
                     } 
                     className="h-2" 

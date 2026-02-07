@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       .select('id, name')
       .eq('is_active', true)
 
-      .order('name') as any;
+      .order('name');
 
     if (error) {
       logger.error('Error fetching schools from database', {

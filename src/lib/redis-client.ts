@@ -6,17 +6,36 @@
  */
 
 // Optional import - only use if package is installed
-let Redis: any = null;
+interface RedisPipeline {
+  incr(key: string): void;
+  expire(key: string, seconds: number): void;
+  exec(): Promise<unknown[]>;
+}
+type RedisClientInstance = {
+  get: (key: string) => Promise<unknown>;
+  set: (key: string, value: string, options?: { ex?: number }) => Promise<unknown>;
+  setex: (key: string, seconds: number, value: string | number) => Promise<unknown>;
+  del: (key: string) => Promise<unknown>;
+  exists: (key: string) => Promise<number>;
+  expire: (key: string, seconds: number) => Promise<unknown>;
+  pipeline: () => RedisPipeline;
+  zadd: (key: string, opts: { score: number; member: string }) => Promise<number>;
+  zremrangebyscore: (key: string, min: number, max: number) => Promise<number>;
+  zcard: (key: string) => Promise<number>;
+  zrange: (key: string, start: number, stop: number, opts?: { withScores?: boolean }) => Promise<unknown>;
+};
+let RedisConstructor: (new (opts: { url: string; token: string }) => RedisClientInstance) | null = null;
 try {
+  // Optional dependency; dynamic require for serverless compatibility
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const upstashRedis = require('@upstash/redis');
-  Redis = upstashRedis.Redis;
-} catch (e) {
-  // @upstash/redis not installed, Redis will be disabled
+  RedisConstructor = upstashRedis.Redis as typeof RedisConstructor;
+} catch {
   console.log('[Redis] @upstash/redis not installed, Redis features will be disabled');
 }
 
-let redisClient: any = null;
-let redisEnabled = false;
+let redisClient: RedisClientInstance | null = null;
+let _redisEnabled = false;
 let redisLastHealthCheck: number = 0;
 let redisHealthStatus: 'healthy' | 'unhealthy' | 'unknown' = 'unknown';
 const REDIS_HEALTH_CHECK_INTERVAL = 60000; // Check health every 60 seconds
@@ -24,9 +43,8 @@ const REDIS_HEALTH_CHECK_INTERVAL = 60000; // Check health every 60 seconds
 /**
  * Initialize Redis client
  */
-function getRedisClient(): any | null {
-  // Check if Redis package is installed
-  if (!Redis) {
+function getRedisClient(): RedisClientInstance | null {
+  if (!RedisConstructor) {
     return null;
   }
 
@@ -44,11 +62,11 @@ function getRedisClient(): any | null {
 
   if (!redisClient) {
     try {
-      redisClient = new Redis({
+      redisClient = new RedisConstructor({
         url: redisUrl,
         token: redisToken,
       });
-      redisEnabled = true;
+      _redisEnabled = true;
       redisHealthStatus = 'healthy';
       console.log('[Redis] Client initialized successfully');
 
@@ -94,8 +112,7 @@ export function isRedisAvailable(): boolean {
     return false;
   }
 
-  // Check if Redis package is installed
-  if (!Redis) {
+  if (!RedisConstructor) {
     return false;
   }
 
@@ -116,7 +133,7 @@ export function isRedisAvailable(): boolean {
 /**
  * Get Redis client (returns null if unavailable)
  */
-export function getRedis(): any | null {
+export function getRedis(): RedisClientInstance | null {
   return getRedisClient();
 }
 

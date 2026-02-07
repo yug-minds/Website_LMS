@@ -7,9 +7,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
+    type ProgressRow = { student_id?: string; course_id?: string; completed?: boolean; courses?: { name?: string | null; title?: string | null } | null; profiles?: { full_name?: string | null } | null };
+    type ChapterRow = { id?: string; course_id?: string };
+    type CertRow = { certificate_url?: string | null };
     // Find all students with course progress
-    const { data: allProgress, error: progressError } = await supabaseAdmin
+    const { data: allProgressData, error: progressError } = await supabaseAdmin
       .from('course_progress')
       .select(`
         student_id,
@@ -26,6 +38,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const allProgress = (allProgressData || []) as ProgressRow[]
     // Group by student and course
     const studentCourseMap = new Map<string, {
       studentId: string
@@ -36,37 +49,45 @@ export async function POST(request: NextRequest) {
       total: number
     }>()
 
-    for (const progress of allProgress || []) {
-      const key = `${progress.student_id}-${progress.course_id}`
-      if (!studentCourseMap.has(key)) {
+    for (const progress of allProgress) {
+      const sid = progress.student_id ?? '';
+      const cid = progress.course_id ?? '';
+      const key = `${sid}-${cid}`
+      if (sid && cid && !studentCourseMap.has(key)) {
         studentCourseMap.set(key, {
-          studentId: progress.student_id,
-          courseId: progress.course_id,
-          studentName: (progress as any).profiles?.full_name || 'Student',
-          courseName: (progress as any).courses?.name || (progress as any).courses?.title || 'Course',
+          studentId: sid,
+          courseId: cid,
+          studentName: (progress.profiles?.full_name ?? 'Student') as string,
+          courseName: (progress.courses?.name ?? progress.courses?.title ?? 'Course') as string,
           completed: 0,
           total: 0,
         })
       }
-      const entry = studentCourseMap.get(key)!
-      entry.total++
-      if (progress.completed) {
-        entry.completed++
+      if (sid && cid) {
+        const entry = studentCourseMap.get(key)!
+        entry.total++
+        if (progress.completed) {
+          entry.completed++
+        }
       }
     }
 
     // Get total chapters for each course
     const courseIds = Array.from(new Set(Array.from(studentCourseMap.values()).map(e => e.courseId)))
-    const { data: chapters } = await supabaseAdmin
+    const { data: chaptersData } = await supabaseAdmin
       .from('chapters')
       .select('id, course_id')
       .in('course_id', courseIds)
       .eq('is_published', true)
 
+    const chapters = (chaptersData || []) as ChapterRow[]
     const courseChapterCounts = new Map<string, number>()
-    for (const chapter of chapters || []) {
-      const count = courseChapterCounts.get(chapter.course_id) || 0
-      courseChapterCounts.set(chapter.course_id, count + 1)
+    for (const chapter of chapters) {
+      const cid = chapter.course_id ?? '';
+      if (cid) {
+        const count = courseChapterCounts.get(cid) || 0
+        courseChapterCounts.set(cid, count + 1)
+      }
     }
 
     // Find eligible students (80%+ completion) without certificates
@@ -84,13 +105,14 @@ export async function POST(request: NextRequest) {
 
       if (completion >= 80) {
         // Check if certificate exists with URL
-        const { data: existingCert } = await supabaseAdmin
+        const { data: existingCertData } = await supabaseAdmin
           .from('certificates')
           .select('certificate_url')
           .eq('student_id', entry.studentId)
           .eq('course_id', entry.courseId)
           .maybeSingle()
 
+        const existingCert = existingCertData as CertRow | null
         if (!existingCert?.certificate_url) {
           eligible.push({
             studentId: entry.studentId,
@@ -159,14 +181,14 @@ export async function POST(request: NextRequest) {
             error: result.error || 'Unknown error',
           })
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
         results.push({
           studentName: item.studentName,
           courseName: item.courseName,
           completion: item.completion,
           success: false,
-          error: error.message || 'Failed to generate',
+          error: error instanceof Error ? error.message : 'Failed to generate',
         })
       }
     }
@@ -179,10 +201,10 @@ export async function POST(request: NextRequest) {
       results,
       message: `Generated ${successCount} of ${eligible.length} certificates`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error:', error)
     return NextResponse.json(
-      { error: error.message },
+      { error: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

@@ -116,9 +116,9 @@ export default function AssignmentHierarchy({
   const filteredCourses = useMemo(() => {
     if (!searchQuery && filterStatus === 'all') return courses
 
-    return courses.map((course: any) => {
-      const filteredChapters = course.chapters.map((chapter: any) => {
-        const filteredAssignments = chapter.assignments.filter((assignment: any) => {
+    return courses.map((course: Course) => {
+      const filteredChapters = course.chapters.map((chapter: Chapter) => {
+        const filteredAssignments = chapter.assignments.filter((assignment: Assignment) => {
           // Search filter
           const matchesSearch = !searchQuery || 
             assignment.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -137,10 +137,10 @@ export default function AssignmentHierarchy({
         })
 
         return { ...chapter, assignments: filteredAssignments }
-      }).filter((chapter: any) => chapter.assignments.length > 0)
+      }).filter((chapter: Chapter) => chapter.assignments.length > 0)
 
       return { ...course, chapters: filteredChapters }
-    }).filter((course: any) => course.chapters.length > 0)
+    }).filter((course: Course) => course.chapters.length > 0)
   }, [courses, searchQuery, filterStatus])
 
   if (filteredCourses.length === 0) {
@@ -159,9 +159,9 @@ export default function AssignmentHierarchy({
 
   return (
     <div className="space-y-4">
-      {filteredCourses.map((course: any) => {
+      {filteredCourses.map((course: Course) => {
         const isCourseExpanded = expandedCourses.has(course.id)
-        const totalAssignments = course.chapters.reduce((sum: number, ch: any) => sum + ch.assignments.length, 0)
+        const totalAssignments = course.chapters.reduce((sum: number, ch: Chapter) => sum + ch.assignments.length, 0)
 
         return (
           <Card key={course.id} className="overflow-hidden">
@@ -189,7 +189,7 @@ export default function AssignmentHierarchy({
 
             {isCourseExpanded && (
               <div className="border-t border-gray-200">
-                {course.chapters.map((chapter: any) => {
+                {course.chapters.map((chapter: Chapter) => {
                   const isChapterExpanded = expandedChapters.has(chapter.id)
                   const hasAssignments = chapter.assignments.length > 0
 
@@ -221,7 +221,7 @@ export default function AssignmentHierarchy({
 
                       {isChapterExpanded && (
                         <div className="pl-12 pr-4 pb-3 space-y-2">
-                          {chapter.assignments.map((assignment: any) => (
+                          {chapter.assignments.map((assignment: Assignment) => (
                             <Card 
                               key={assignment.id} 
                               className="p-3 hover:shadow-md transition-shadow"

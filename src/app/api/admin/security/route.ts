@@ -34,10 +34,11 @@ async function getAdminUserId(request: NextRequest): Promise<string | null> {
       .from('profiles')
       .select('role')
       .eq('id', user.id)
-       
-      .single() as any;
+      .single();
 
-    if (!profile || profile.role !== 'admin') {
+    type ProfileRow = { role?: string };
+    const profileTyped = profile as ProfileRow | null;
+    if (!profileTyped || profileTyped.role !== 'admin') {
       return null;
     }
 
@@ -84,8 +85,7 @@ try {
       .from('profiles')
       .select('last_login')
       .eq('id', userId)
-       
-      .single() as any;
+      .single();
 
     // Get failed login attempts count (last 30 days)
     const thirtyDaysAgo = new Date();
@@ -124,7 +124,8 @@ try {
             const factorsData = await factorsResponse.json();
             const factors = Array.isArray(factorsData) ? factorsData : (factorsData.factors || []);
              
-            const totpFactors = factors.filter((f: any) => (f.factor_type === 'totp' || f.type === 'totp') && f.status === 'verified');
+            type FactorData = { factor_type?: string; type?: string; status?: string };
+            const totpFactors = (factors as FactorData[]).filter((f) => (f.factor_type === 'totp' || f.type === 'totp') && f.status === 'verified');
             if (totpFactors && totpFactors.length > 0) {
               mfaEnabled = true;
             }
@@ -139,8 +140,10 @@ try {
       }
     }
 
+    type ProfileSecurityRow = { last_login?: string | null };
+    const profileSecurity = profile as ProfileSecurityRow | null;
     return NextResponse.json({
-      last_login: profile?.last_login || null,
+      last_login: profileSecurity?.last_login ?? null,
       failed_login_attempts: failedAttemptsCount || 0,
       mfa_enabled: mfaEnabled
     });

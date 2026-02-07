@@ -43,10 +43,10 @@ try {
             .from('profiles')
             .select('role')
             .eq('id', user.id)
-             
-            .single() as any;
-          
-          if (profile && (profile.role === 'admin' || profile.role === 'super_admin')) {
+            .single();
+          type ProfileRow = { role?: string };
+          const profileTyped = profile as ProfileRow | null;
+          if (profileTyped && (profileTyped.role === 'admin' || profileTyped.role === 'super_admin')) {
             currentAdminId = user.id;
           }
         }
@@ -116,10 +116,10 @@ try {
     const { data: recipientsData } = await supabaseAdmin
       .from('notifications')
       .select('user_id')
-       
-      .order('created_at', { ascending: false }) as any;
+      .order('created_at', { ascending: false });
 
-    const uniqueRecipients = new Set(recipientsData?.map((n: { user_id: string }) => n.user_id) || []).size;
+    type NotificationWithUserId = { user_id: string };
+    const uniqueRecipients = new Set((recipientsData as NotificationWithUserId[] | null)?.map((n) => n.user_id) || []).size;
 
     return NextResponse.json({
       notifications: notifications || [],
@@ -175,7 +175,7 @@ try {
     const validation = validateRequestBody(createNotificationSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for notification creation', {
         endpoint: '/api/admin/notifications',
         errors: errorMessages,
@@ -211,12 +211,14 @@ try {
 
     let userIds: string[] = [];
 
+    type Profile = {
+      id: string;
+    };
     if (recipientType === 'all') {
       // Get all user IDs from profiles
       const { data: allProfiles, error: profilesError } = await supabaseAdmin
         .from('profiles')
-         
-        .select('id') as any;
+        .select('id');
 
       if (profilesError) {
         console.error('❌ Error fetching all profiles:', profilesError);
@@ -226,14 +228,13 @@ try {
         );
       }
 
-      userIds = allProfiles?.map((p: { id: string }) => p.id) || [];
+      userIds = ((allProfiles || []) as Profile[]).map((p) => p.id);
     } else if (recipientType === 'role') {
       // Get user IDs by role
       const { data: profilesByRole, error: roleError } = await supabaseAdmin
         .from('profiles')
         .select('id')
-         
-        .in('role', recipients) as any;
+        .in('role', recipients);
 
       if (roleError) {
         console.error('❌ Error fetching profiles by role:', roleError);
@@ -243,14 +244,13 @@ try {
         );
       }
 
-      userIds = profilesByRole?.map((p: { id: string }) => p.id) || [];
+      userIds = ((profilesByRole || []) as Profile[]).map((p) => p.id);
     } else if (recipientType === 'school') {
       // Get user IDs by school
       const { data: profilesBySchool, error: schoolError } = await supabaseAdmin
         .from('profiles')
         .select('id')
-         
-        .in('school_id', recipients) as any;
+        .in('school_id', recipients);
 
       if (schoolError) {
         console.error('❌ Error fetching profiles by school:', schoolError);
@@ -260,7 +260,7 @@ try {
         );
       }
 
-      userIds = profilesBySchool?.map((p: { id: string }) => p.id) || [];
+      userIds = ((profilesBySchool || []) as Profile[]).map((p) => p.id);
     } else if (recipientType === 'individual') {
       // Use provided user IDs directly
       userIds = recipients;
@@ -274,7 +274,14 @@ try {
     }
 
     // Create notifications for all recipients
-    const notificationsToInsert = userIds.map((userId: any) => ({
+    type NotificationInsert = {
+      user_id: string;
+      title: string;
+      message: string;
+      type: string;
+      is_read: boolean;
+    };
+    const notificationsToInsert: NotificationInsert[] = userIds.map((userId) => ({
       user_id: userId,
       title,
       message,
@@ -282,12 +289,11 @@ try {
       is_read: false
     }));
 
-    const { data: insertedNotifications, error: insertError } = await (supabaseAdmin
+    const { data: insertedNotifications, error: insertError } = await supabaseAdmin
       .from('notifications')
-       
-      .insert(notificationsToInsert as any)
-       
-      .select() as any);
+      // @ts-expect-error - notifications table insert type not in schema
+      .insert(notificationsToInsert)
+      .select();
 
     if (insertError) {
       console.error('❌ Error inserting notifications:', insertError);

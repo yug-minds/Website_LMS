@@ -13,7 +13,7 @@ type PageProps = {
 export default function ChapterRedirect(props: PageProps) {
   const router = useRouter()
   const params = React.use(props.params)
-  React.use(props.searchParams)
+  const _searchParams = React.use(props.searchParams) || {}
   const courseId = params.courseId
   const chapterId = params.chapterId
 

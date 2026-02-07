@@ -1,20 +1,18 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import Image from "next/image";
+import { useEffect, useState, useMemo } from "react";
 import { 
   Plus, Search, Filter, ArrowUpDown, MoreHorizontal, 
-  Edit, Trash2, Eye, EyeOff, Save, X, Image as ImageIcon,
-  History, RotateCcw, Check, AlertCircle, Layout, ArrowLeft
+  Edit, Trash2, Eye, Save, Image as ImageIcon,
+  History, RotateCcw, Layout, ArrowLeft
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Badge } from "../../../components/ui/badge";
-import { 
-  Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle 
-} from "../../../components/ui/card";
+import { Card } from "../../../components/ui/card";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, 
-  DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from "../../../components/ui/dropdown-menu";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -24,7 +22,6 @@ import {
 } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
 import { Label } from "../../../components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { withCsrfToken } from "../../../lib/csrf-client";
 import { getAuthenticatedFetch } from "../../../lib/api-client";
 
@@ -115,12 +112,9 @@ const PreviewSection = ({ section, imagePreview }: { section: Section; imagePrev
               style={{ maxHeight: '400px', maxWidth: '100%' }}
             />
           ) : (
-            <img 
-              src={imagePreview} 
-              alt={section.title} 
-              className="w-full h-auto object-contain rounded-lg"
-              style={{ maxHeight: '400px', maxWidth: '100%' }}
-            />
+            <div className="relative w-full min-h-[300px]" style={{ maxHeight: '400px' }}>
+              <Image src={imagePreview} alt={section.title} fill className="object-contain rounded-lg" unoptimized />
+            </div>
           )
         ) : (
           <div className="aspect-video text-center p-8 text-gray-400 flex flex-col items-center justify-center min-h-[300px]">
@@ -257,17 +251,25 @@ export default function SuccessStoriesAdminPage() {
     
     if (search) {
       const lower = search.toLowerCase();
-      result = result.filter((s: any) => s.title.toLowerCase().includes(lower) || s.body_primary.toLowerCase().includes(lower));
+      interface Section {
+        title: string;
+        body_primary: string;
+        is_published?: boolean;
+        order_index?: number;
+        updated_at?: string;
+      }
+      
+      result = result.filter((s: Section) => s.title.toLowerCase().includes(lower) || s.body_primary.toLowerCase().includes(lower));
     }
 
     if (statusFilter !== 'all') {
-      result = result.filter((s: any) => statusFilter === 'published' ? s.is_published : !s.is_published);
+      result = result.filter((s: Section) => statusFilter === 'published' ? s.is_published : !s.is_published);
     }
 
     if (sortOrder === 'order') {
-      result.sort((a: any, b: any) => a.order_index - b.order_index);
+      result.sort((a: Section, b: Section) => (a.order_index || 0) - (b.order_index || 0));
     } else {
-      result.sort((a: any, b: any) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
+      result.sort((a: Section, b: Section) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
     }
 
     return result;
@@ -303,7 +305,7 @@ export default function SuccessStoriesAdminPage() {
     setView('edit');
   };
 
-  const handleBack = () => {
+  const _handleBack = () => {
     if (window.confirm("Unsaved changes will be lost. Are you sure?")) {
       setView('list');
       setEditingId(null);
@@ -437,7 +439,7 @@ export default function SuccessStoriesAdminPage() {
       const options = await withCsrfToken({ method: 'DELETE' });
       await authed(`/api/admin/success-stories/${id}`, options);
       fetchSections();
-    } catch (e) {
+    } catch {
       alert("Failed to delete");
     }
   };
@@ -456,7 +458,7 @@ export default function SuccessStoriesAdminPage() {
       setSelectedIds(new Set());
       fetchSections();
       alert("Deleted selected stories");
-    } catch (e) {
+    } catch {
       alert("Failed to delete some stories");
     }
   };
@@ -497,7 +499,7 @@ export default function SuccessStoriesAdminPage() {
       } else {
         alert("Failed to revert");
       }
-    } catch (e) {
+    } catch {
       alert("Error reverting version");
     }
   };
@@ -544,7 +546,7 @@ export default function SuccessStoriesAdminPage() {
               className="pl-10"
             />
           </div>
-          <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+          <Select value={statusFilter} onValueChange={(v: string) => setStatusFilter(v as 'all' | 'draft' | 'published')}>
             <SelectTrigger className="w-[180px]">
               <Filter className="h-4 w-4 mr-2 text-gray-400" />
               <SelectValue placeholder="Status" />
@@ -555,7 +557,7 @@ export default function SuccessStoriesAdminPage() {
               <SelectItem value="draft">Draft</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={sortOrder} onValueChange={(v: any) => setSortOrder(v)}>
+          <Select value={sortOrder} onValueChange={(v: string) => setSortOrder(v as 'order' | 'newest')}>
             <SelectTrigger className="w-[180px]">
               <ArrowUpDown className="h-4 w-4 mr-2 text-gray-400" />
               <SelectValue placeholder="Sort by" />
@@ -613,7 +615,7 @@ export default function SuccessStoriesAdminPage() {
                           playsInline
                         />
                       ) : (
-                        <img src={section.image_url} alt="" className="w-full h-full object-cover" />
+                        <Image src={section.image_url} alt="" fill className="object-cover" unoptimized />
                       )
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -769,7 +771,7 @@ export default function SuccessStoriesAdminPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Theme</Label>
-                <Select value={formData?.background} onValueChange={(v: any) => setFormData(prev => prev ? ({...prev, background: v}) : null)}>
+                <Select value={formData?.background} onValueChange={(v: string) => setFormData(prev => prev ? ({...prev, background: v as 'blue' | 'white'}) : null)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -782,7 +784,7 @@ export default function SuccessStoriesAdminPage() {
 
               <div className="space-y-2">
                 <Label>Image Layout</Label>
-                <Select value={formData?.image_position} onValueChange={(v: any) => setFormData(prev => prev ? ({...prev, image_position: v}) : null)}>
+                <Select value={formData?.image_position} onValueChange={(v: string) => setFormData(prev => prev ? ({...prev, image_position: v as 'left' | 'right'}) : null)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

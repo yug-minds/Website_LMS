@@ -61,6 +61,7 @@ export default function Book3D({
       >
         {/* Cover Page */}
         <div className="relative w-full h-full bg-transparent border-2 border-gray-300 rounded-lg overflow-hidden shadow-lg cursor-grab active:cursor-grabbing">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={book.coverImage}
             alt={book.title}
@@ -92,7 +93,7 @@ export default function Book3D({
                         // Use setTimeout to ensure the flip book is ready
                         setTimeout(() => {
                           try {
-                            const flipBook = bookRef.current as any;
+                            const flipBook = bookRef.current as { pageFlip?: () => { flip?: (n: number) => void }; turnPage?: (n: number) => void } | null;
                             if (flipBook) {
                               const pageFlip = flipBook.pageFlip?.();
                               if (pageFlip && typeof pageFlip.flip === 'function') {
@@ -116,7 +117,7 @@ export default function Book3D({
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
                           setTimeout(() => {
-                            const flipBook = bookRef.current as any;
+                            const flipBook = bookRef.current as { pageFlip?: () => { flip?: (n: number) => void }; turnPage?: (n: number) => void } | null;
                             if (flipBook) {
                               const pageFlip = flipBook.pageFlip?.();
                               if (pageFlip && typeof pageFlip.flip === 'function') {
@@ -161,6 +162,7 @@ export default function Book3D({
               
               {/* Page Content */}
               <div className="flex-1 flex items-center justify-center p-4 overflow-hidden bg-white">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={page.imageUrl}
                   alt={page.alt || `Page ${page.pageNumber || index + 1}`}

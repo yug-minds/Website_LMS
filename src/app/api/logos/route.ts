@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../lib/rate-limit';
-import { logger, handleApiError } from '../../../lib/logger';
+import { handleApiError } from '../../../lib/logger';
 import { getOrSetCache, CacheKeys, CacheTTL } from '../../../lib/cache';
 import { addCacheHeaders, CachePresets } from '../../../lib/http-cache';
 
@@ -28,7 +28,8 @@ export async function GET(request: NextRequest) {
           .order('upload_date', { ascending: false })
           .limit(200);
         if (error) throw error;
-        return (data || []).map((l: any) => ({
+        type LogoRow = { id?: string; school_name?: string; image_url?: string };
+        return ((data || []) as LogoRow[]).map((l: LogoRow) => ({
           id: l.id,
           description: l.school_name,
           image: l.image_url,

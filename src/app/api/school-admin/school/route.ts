@@ -7,7 +7,7 @@ import { schoolAdminSchoolUpdateSchema, validateRequestBody } from '../../../../
 import { logger, handleApiError } from '../../../../lib/logger';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 // GET - Get school admin's school info
@@ -33,10 +33,11 @@ export async function GET(request: NextRequest) {
     let schoolId: string | null = null;
     try {
       schoolId = await getSchoolAdminSchoolId(request);
-    } catch (schoolIdError: any) {
+    } catch (schoolIdError: unknown) {
+      const errMsg = schoolIdError instanceof Error ? schoolIdError.message : String(schoolIdError);
       logger.error('Error getting school admin school_id', {
         endpoint: '/api/school-admin/school',
-        error: schoolIdError?.message || String(schoolIdError),
+        error: errMsg,
       });
       return NextResponse.json(
         { error: 'Unauthorized: School admin access required', details: 'Failed to get school_id' },
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
             .from('schools')
             .select('id, name, address, contact_phone, contact_email, principal_name, created_at, updated_at')
             .eq('id', schoolId)
-            .single() as any;
+            .single();
           
           if (error) {
             logger.error('Error fetching school from database', {
@@ -83,22 +84,23 @@ export async function GET(request: NextRequest) {
         },
         CacheTTL.LONG // Cache for 15 minutes
       );
-    } catch (cacheError: any) {
-      const errorMessage = cacheError?.message || String(cacheError);
-      const errorDetails = cacheError?.code || cacheError?.hint || '';
+    } catch (cacheError: unknown) {
+      const errObj = cacheError as { message?: string; code?: string; hint?: string; stack?: string };
+      const errorMessage = errObj?.message || String(cacheError);
+      const errorDetails = errObj?.code || errObj?.hint || '';
       logger.error('Error in cache operation for school', {
         endpoint: '/api/school-admin/school',
         schoolId,
         error: errorMessage,
         details: errorDetails,
-        stack: cacheError?.stack,
+        stack: errObj?.stack,
       });
       return NextResponse.json(
         { 
           error: 'Failed to fetch school', 
           details: errorMessage,
-          code: cacheError?.code,
-          hint: cacheError?.hint,
+          code: errObj?.code,
+          hint: errObj?.hint,
         },
         { status: 500 }
       );
@@ -116,12 +118,12 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ school });
-  } catch (error: any) {
-    const errorMessage = error?.message || String(error);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Unexpected error in GET /api/school-admin/school', {
       endpoint: '/api/school-admin/school',
       error: errorMessage,
-      stack: error?.stack,
+      stack: error instanceof Error ? error.stack : undefined,
     }, error instanceof Error ? error : new Error(String(error)));
     
     const errorInfo = await handleApiError(
@@ -175,7 +177,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    let body: any;
+    let body: Record<string, unknown>;
     try {
       body = await request.json();
     } catch (parseError) {
@@ -196,7 +198,8 @@ export async function PUT(request: NextRequest) {
     const validation = validateRequestBody(schoolAdminSchoolUpdateSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school update', {
         endpoint: '/api/school-admin/school',
         schoolId,
@@ -216,7 +219,7 @@ export async function PUT(request: NextRequest) {
 
     // Update school info (bypasses RLS using admin client)
      
-    const { data: school, error: schoolError } = await ((supabaseAdmin as any)
+    const { data: school, error: schoolError } = await supabaseAdmin
       .from('schools')
       .update({
         name,
@@ -226,12 +229,10 @@ export async function PUT(request: NextRequest) {
         principal_name,
         joining_codes,
         updated_at: new Date().toISOString()
-       
-      } as any)
+      } as never)
       .eq('id', schoolId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (schoolError) {
       console.error('Error updating school:', schoolError);

@@ -6,20 +6,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
+type ProfileRow = { id?: string; full_name?: string | null; email?: string | null };
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const email = searchParams.get('email') || 'sharma@dawnbudsmodelschool.edu'
 
     // Get student
-    const { data: student } = await supabaseAdmin
+    const { data: studentData } = await supabaseAdmin
       .from('profiles')
       .select('id, full_name, email')
       .eq('email', email)
       .eq('role', 'student')
       .single()
 
-    if (!student) {
+    const student = studentData as ProfileRow | null
+    if (!student?.id) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 })
     }
 
@@ -34,7 +37,7 @@ export async function GET(request: NextRequest) {
         courses(id, name, title, grade, subject),
         profiles!certificates_issued_by_fkey(full_name)
       `)
-      .eq('student_id', student.id)
+      .eq('student_id', student.id as string)
       .order('issued_at', { ascending: false })
 
     return NextResponse.json({
@@ -54,9 +57,9 @@ export async function GET(request: NextRequest) {
       },
       certificates: data || [],
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message, stack: error.stack },
+      { error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined },
       { status: 500 }
     )
   }

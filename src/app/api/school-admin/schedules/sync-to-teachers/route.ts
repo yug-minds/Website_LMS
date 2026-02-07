@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSchoolAdminSchoolId } from '../../../../../lib/school-admin-auth';
 import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { logger, handleApiError } from '../../../../../lib/logger';
 import { emptyBodySchema, validateRequestBody } from '../../../../../lib/validation-schemas';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
-
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -47,7 +44,7 @@ try {
       const validation = validateRequestBody(emptyBodySchema, body);
       if (!validation.success) {
          
-        const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+        const errorMessages = validation.details?.issues?.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
         return NextResponse.json(
           { 
             error: 'Validation failed',
@@ -70,14 +67,14 @@ try {
 
     console.log('🔄 Syncing schedules to teacher_classes for school:', schoolId);
 
-    // Step 1: Get all active schedules for this school
+    // Step 1: Get all currently active schedules for this school (effective_to IS NULL)
     const { data: schedules, error: schedulesError } = await supabaseAdmin
       .from('class_schedules')
       .select('id, teacher_id, class_id, school_id, grade, subject, day_of_week, start_time, end_time')
       .eq('school_id', schoolId)
       .eq('is_active', true)
-       
-      .not('teacher_id', 'is', null) as any;
+      .is('effective_to', null) // Only sync currently active schedules (no end date)
+      .not('teacher_id', 'is', null);
 
     if (schedulesError) {
       console.error('❌ Error fetching schedules:', schedulesError);
@@ -126,24 +123,16 @@ try {
           .eq('subject', schedule.subject || '')
           .eq('is_active', true)
           .limit(1)
-           
-          .single() as any;
+          .single();
 
         if (existingClass) {
           classId = existingClass.id;
-          
-          // Update the schedule to link it to the class
-           
-          await ((supabaseAdmin as any)
+          await supabaseAdmin
             .from('class_schedules')
-             
-            .update({ class_id: classId } as any)
-             
-            .eq('id', schedule.id)) as any;
+            .update({ class_id: classId } as never)
+            .eq('id', schedule.id);
         } else {
-          // Create a new class if it doesn't exist
-           
-          const { data: newClass, error: createClassError } = await ((supabaseAdmin as any)
+          const { data: newClass, error: createClassError } = await supabaseAdmin
             .from('classes')
             .insert({
               school_id: schedule.school_id,
@@ -151,12 +140,10 @@ try {
               grade: schedule.grade,
               subject: schedule.subject || null,
               academic_year: '2024-25',
-              is_active: true
-             
-            } as any)
+              is_active: true,
+            } as never)
             .select('id')
-             
-            .single() as any) as any;
+            .single();
 
           if (createClassError || !newClass) {
             console.warn(`⚠️ Could not create class for schedule ${schedule.id}:`, createClassError);
@@ -165,25 +152,18 @@ try {
           }
 
           classId = newClass.id;
-          
-          // Update the schedule to link it to the class
-           
-          await ((supabaseAdmin as any)
+          await supabaseAdmin
             .from('class_schedules')
-             
-            .update({ class_id: classId } as any)
-             
-            .eq('id', schedule.id)) as any;
+            .update({ class_id: classId } as never)
+            .eq('id', schedule.id);
         }
       }
 
-      // Check if teacher_classes entry already exists
       const { data: existingAssignments } = await supabaseAdmin
         .from('teacher_classes')
         .select('id')
         .eq('teacher_id', schedule.teacher_id)
-         
-        .eq('class_id', classId) as any;
+        .eq('class_id', classId);
 
       if (existingAssignments && existingAssignments.length > 0) {
         // Already exists, skip
@@ -199,9 +179,8 @@ try {
           class_id: classId,
           school_id: schedule.school_id,
           grade: schedule.grade,
-          subject: schedule.subject || null
-         
-        } as any);
+          subject: schedule.subject || null,
+        } as never);
 
       if (insertError) {
         // Check if it's a duplicate key error (unique constraint violation)

@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle, Lock, Circle } from 'lucide-react'
+import { CheckCircle, Lock } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 
 interface ChapterProgressProps {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { addTokensToHeaders } from "../../../lib/csrf-client";
+import { fetchWithCsrf } from "../../../lib/csrf-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { useSmartRefresh } from "../../../hooks/useSmartRefresh";
 import { Button } from "../../../components/ui/button";
@@ -43,7 +43,7 @@ export default function AnalyticsDashboard() {
     totalTeachers: 0,
     totalStudents: 0,
     activeCourses: 0,
-    systemHealth: 99.9,
+    systemHealth: 100, // Will be calculated from real metrics
     avgAttendance: 0,
     completionRate: 0
   });
@@ -66,18 +66,39 @@ export default function AnalyticsDashboard() {
     try {
       // Fetch from API route with cache-busting for real-time data
       const timestamp = new Date().getTime();
-      const headers = await addTokensToHeaders();
-      const response = await fetch(`/api/admin/analytics?t=${timestamp}`, {
+      const response = await fetchWithCsrf(`/api/admin/analytics?t=${timestamp}`, {
         cache: 'no-store',
         headers: {
-          ...headers,
           'Cache-Control': 'no-cache'
-        }
+        },
+        credentials: 'include'
       });
 
       if (!response.ok) {
-        console.error('Failed to load analytics');
+        // Get error details from response - read as text first, then try to parse
+        const responseText = await response.text();
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        
+        try {
+          if (responseText && responseText.trim()) {
+            const errorData = JSON.parse(responseText);
+            errorMessage = errorData.error || errorData.details || errorData.message || errorMessage;
+          }
+        } catch {
+          // If JSON parsing fails, use the raw text or default message
+          errorMessage = responseText || errorMessage;
+        }
+        
+        console.error('Failed to load analytics:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          responseText: responseText
+        });
+        
         setIsLoading(false);
+        // Show user-friendly error message
+        alert(`Failed to load analytics: ${errorMessage}. Please try refreshing the page.`);
         return;
       }
 
@@ -255,7 +276,7 @@ export default function AnalyticsDashboard() {
                       <div className="flex items-center justify-center h-[300px]">
                         <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
                       </div>
-                    ) : (
+                    ) : monthlyGrowth.length > 0 ? (
                       <ResponsiveContainer width="100%" height={300}>
                         <AreaChart data={monthlyGrowth}>
                           <CartesianGrid strokeDasharray="3 3" />
@@ -267,6 +288,13 @@ export default function AnalyticsDashboard() {
                           <Area type="monotone" dataKey="students" stackId="1" stroke="#ffc658" fill="#ffc658" name="Students" />
                         </AreaChart>
                       </ResponsiveContainer>
+                    ) : (
+                      <div className="flex items-center justify-center h-[300px] text-gray-500">
+                        <div className="text-center">
+                          <BarChart3 className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                          <p>No growth data available</p>
+                        </div>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -282,7 +310,7 @@ export default function AnalyticsDashboard() {
                       <div className="flex items-center justify-center h-[300px]">
                         <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
                       </div>
-                    ) : (
+                    ) : schoolDistribution.length > 0 ? (
                       <ResponsiveContainer width="100%" height={300}>
                         <RechartsPieChart>
                           <Pie
@@ -290,7 +318,7 @@ export default function AnalyticsDashboard() {
                             cx="50%"
                             cy="50%"
                             labelLine={false}
-                            label={(props: any) => {
+                            label={(props: { name?: string; percentage?: number }) => {
                               const name = props.name || '';
                               const percentage = props.percentage || 0;
                               return `${name}: ${percentage}%`;
@@ -303,13 +331,19 @@ export default function AnalyticsDashboard() {
                               <Cell key={`cell-${index}`} fill={entry.color} />
                             ))}
                           </Pie>
-                          { }
-                          <Tooltip formatter={(value: number, name: string, props: any) => [
-                            `${value} schools (${props.payload.percentage}%)`,
+                          <Tooltip formatter={(value: number, name: string, props: { payload?: { percentage?: number } }) => [
+                            `${value} schools (${props.payload?.percentage || 0}%)`,
                             name
                           ]} />
                         </RechartsPieChart>
                       </ResponsiveContainer>
+                    ) : (
+                      <div className="flex items-center justify-center h-[300px] text-gray-500">
+                        <div className="text-center">
+                          <School className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                          <p>No school distribution data available</p>
+                        </div>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -364,7 +398,7 @@ export default function AnalyticsDashboard() {
                     <div className="flex items-center justify-center h-[400px]">
                       <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
-                  ) : (
+                  ) : monthlyGrowth.length > 0 ? (
                     <ResponsiveContainer width="100%" height={400}>
                       <BarChart data={monthlyGrowth}>
                         <CartesianGrid strokeDasharray="3 3" />
@@ -377,6 +411,13 @@ export default function AnalyticsDashboard() {
                         <Bar dataKey="courses" fill="#ff8042" name="Courses" />
                       </BarChart>
                     </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-[400px] text-gray-500">
+                      <div className="text-center">
+                        <BarChart3 className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                        <p>No growth data available</p>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -395,15 +436,15 @@ export default function AnalyticsDashboard() {
                       <div className="flex items-center justify-center h-[300px]">
                         <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
                       </div>
-                    ) : (
+                    ) : teacherPerformance.length > 0 && teacherPerformance.some(p => p.value > 0) ? (
                       <ResponsiveContainer width="100%" height={300}>
                         <RechartsPieChart>
                           <Pie
-                            data={teacherPerformance}
+                            data={teacherPerformance.filter(p => p.value > 0)}
                             cx="50%"
                             cy="50%"
                             labelLine={false}
-                            label={(props: any) => {
+                            label={(props: { name?: string; value?: number }) => {
                               const name = props.name || '';
                               const value = props.value || 0;
                               return `${name}: ${value}`;
@@ -412,13 +453,20 @@ export default function AnalyticsDashboard() {
                             fill="#8884d8"
                             dataKey="value"
                           >
-                            {teacherPerformance.map((entry, index) => (
+                            {teacherPerformance.filter(p => p.value > 0).map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={entry.color} />
                             ))}
                           </Pie>
                           <Tooltip formatter={(value: number) => `${value} teachers`} />
                         </RechartsPieChart>
                       </ResponsiveContainer>
+                    ) : (
+                      <div className="flex items-center justify-center h-[300px] text-gray-500">
+                        <div className="text-center">
+                          <Users className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                          <p>No teacher performance data available</p>
+                        </div>
+                      </div>
                     )}
                   </CardContent>
                 </Card>

@@ -2,6 +2,84 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { logger } from '../../../../lib/logger';
 
+// Type definitions
+interface Student {
+  student_id: string;
+  school_id: string;
+  grade: string;
+  section?: string;
+  profiles: {
+    id: string;
+    full_name: string;
+    email: string;
+  };
+  schools: {
+    id: string;
+    name: string;
+  };
+}
+
+interface Enrollment {
+  student_id: string;
+  course_id: string;
+  last_accessed?: string;
+  enrolled_on?: string;
+  courses: {
+    id: string;
+    course_name?: string;
+    name?: string;
+  };
+}
+
+interface Chapter {
+  id: string;
+  course_id: string;
+}
+
+interface CourseProgress {
+  student_id: string;
+  chapter_id: string;
+  completed: boolean;
+}
+
+interface CourseProgressData {
+  course_id: string;
+  course_name: string | undefined;
+  total_chapters: number;
+  completed_chapters: number;
+  progress_percentage: number;
+  last_accessed?: string;
+  enrolled_on?: string;
+  status: 'completed' | 'in_progress' | 'not_started';
+}
+
+interface StudentWithProgress {
+  student_id: string;
+  full_name: string;
+  email: string;
+  grade: string;
+  school_id: string;
+  school_name: string;
+  total_courses: number;
+  completed_courses: number;
+  in_progress_courses: number;
+  average_progress: number;
+  courses: CourseProgressData[];
+  last_activity: Date | null;
+}
+
+interface School {
+  id: string;
+  name: string;
+}
+
+interface Course {
+  id: string;
+  course_name?: string;
+  name?: string;
+  num_chapters?: number;
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Get the authenticated user from the request
@@ -30,6 +108,7 @@ export async function GET(request: NextRequest) {
     const schoolId = searchParams.get('school_id');
     const courseId = searchParams.get('course_id');
     const grade = searchParams.get('grade');
+    const section = searchParams.get('section');
     const limit = parseInt(searchParams.get('limit') || '100');
     const offset = parseInt(searchParams.get('offset') || '0');
 
@@ -55,6 +134,7 @@ export async function GET(request: NextRequest) {
         student_id,
         school_id,
         grade,
+        section,
         profiles!inner(
           id,
           full_name,
@@ -75,6 +155,11 @@ export async function GET(request: NextRequest) {
     // Filter by grade if specified
     if (grade) {
       studentsQuery = studentsQuery.eq('grade', grade);
+    }
+
+    // Filter by section if specified
+    if (section) {
+      studentsQuery = studentsQuery.eq('section', section);
     }
 
     // Apply pagination
@@ -113,7 +198,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Get student IDs for progress queries
-    const studentIds = students.map((s: any) => s.student_id);
+    type StudentData = { student_id: string; school_id: string | null; grade: string | null; section: string | null };
+    const studentIds = (students as StudentData[]).map((s) => s.student_id);
 
     // Get enrollments for all students
     let enrollmentsQuery = supabaseAdmin
@@ -154,8 +240,9 @@ export async function GET(request: NextRequest) {
 
     // ALSO get course_access based courses for students who may not have explicit enrollments
     // This ensures we capture progress for students accessing courses via school/grade access
-    const schoolIds = [...new Set(students.map((s: any) => s.school_id))];
-    const grades = [...new Set(students.map((s: any) => s.grade))];
+    const typedStudents = students as StudentData[];
+    const schoolIds = [...new Set(typedStudents.map((s) => s.school_id).filter((id): id is string => id !== null))];
+    const grades = [...new Set(typedStudents.map((s) => s.grade).filter((grade): grade is string => grade !== null))];
 
     const { data: courseAccessEntries } = await supabaseAdmin
       .from('course_access')
@@ -177,19 +264,79 @@ export async function GET(request: NextRequest) {
       .eq('courses.is_published', true);
 
     // Create virtual enrollments for students with course_access but no explicit enrollment
-    const virtualEnrollments: any[] = [];
+    // IMPORTANT: Only create virtual enrollments when there's an explicit course_access entry
+    // matching both school_id AND grade - this ensures only eligible students get enrolled
+    type EnrollmentWithCourse = {
+      student_id: string;
+      course_id: string;
+      progress_percentage?: number | null;
+      last_accessed?: string | null;
+      status?: string | null;
+      enrolled_on?: string | null;
+      courses?: {
+        id: string;
+        course_name?: string | null;
+        name?: string | null;
+        num_chapters?: number | null;
+        status?: string | null;
+        is_published?: boolean | null;
+      } | null;
+    };
+    type CourseAccessEntry = {
+      course_id: string;
+      school_id: string | null;
+      grade: string | null;
+      courses?: {
+        id: string;
+        course_name?: string | null;
+        name?: string | null;
+        num_chapters?: number | null;
+        status?: string | null;
+        is_published?: boolean | null;
+      } | null;
+    };
+    type VirtualEnrollment = {
+      student_id: string;
+      course_id: string;
+      progress_percentage: number;
+      last_accessed: null;
+      status: string;
+      enrolled_on: null;
+      courses?: {
+        id: string;
+        course_name?: string | null;
+        name?: string | null;
+        num_chapters?: number | null;
+        status?: string | null;
+        is_published?: boolean | null;
+      } | null;
+    };
+    const virtualEnrollments: VirtualEnrollment[] = [];
+    const typedEnrollments = (enrollments || []) as EnrollmentWithCourse[];
     if (courseAccessEntries && courseAccessEntries.length > 0) {
-      for (const student of students) {
-        const studentEnrollmentCourseIds = enrollments
-          ?.filter((e: any) => e.student_id === student.student_id)
-          .map((e: any) => e.course_id) || [];
+      const typedCourseAccessEntries = (courseAccessEntries || []) as CourseAccessEntry[];
+      for (const student of typedStudents) {
+        const studentEnrollmentCourseIds = typedEnrollments
+          .filter((e) => e.student_id === student.student_id)
+          .map((e) => e.course_id);
 
-        // Find course_access entries matching this student's school and grade
-        const matchingAccess = courseAccessEntries.filter((ca: any) => 
-          ca.school_id === student.school_id && 
-          (ca.grade === student.grade || 
-           ca.grade.toLowerCase().replace(/^grade\s*/i, '') === student.grade.toLowerCase().replace(/^grade\s*/i, ''))
-        );
+        // Normalize grade strings for comparison
+        const normalizeGrade = (grade: string) => {
+          if (!grade) return '';
+          return grade.toLowerCase().replace(/^grade\s*/i, '').trim();
+        };
+        
+        const studentGradeNormalized = normalizeGrade(student.grade || '');
+
+        // Find course_access entries matching this student's school and grade EXACTLY
+        const matchingAccess = typedCourseAccessEntries.filter((ca) => {
+          const gradeMatch = ca.grade === student.grade || 
+                           normalizeGrade(ca.grade || '') === studentGradeNormalized;
+          const schoolMatch = ca.school_id === student.school_id;
+          
+          // Only match if BOTH school and grade match exactly
+          return schoolMatch && gradeMatch && ca.courses?.is_published === true;
+        });
 
         for (const access of matchingAccess) {
           // Only add if student doesn't already have an enrollment for this course
@@ -207,12 +354,19 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+    
+    logger.info('Virtual enrollments created', {
+      totalStudents: typedStudents.length,
+      courseAccessEntries: courseAccessEntries?.length || 0,
+      virtualEnrollmentsCreated: virtualEnrollments.length,
+      realEnrollments: enrollments?.length || 0
+    });
 
     // Combine real enrollments with virtual enrollments
-    const allEnrollments = [...(enrollments || []), ...virtualEnrollments];
+    const allEnrollments: Array<EnrollmentWithCourse | VirtualEnrollment> = [...(typedEnrollments || []), ...virtualEnrollments];
 
     // Get course IDs for chapter progress (from combined enrollments)
-    const courseIds = [...new Set(allEnrollments?.map((e: any) => e.course_id) || [])];
+    const courseIds = [...new Set(allEnrollments.map((e) => e.course_id))];
 
     // Get chapters for progress calculation
     const { data: chapters } = await supabaseAdmin
@@ -240,17 +394,17 @@ export async function GET(request: NextRequest) {
       .eq('is_published', true);
 
     // Process and enrich student data with progress
-    const studentsWithProgress = students.map((student: any) => {
-      const studentEnrollments = allEnrollments?.filter((e: any) => e.student_id === student.student_id) || [];
+    const studentsWithProgress = students.map((student: Student) => {
+      const studentEnrollments = (allEnrollments as Enrollment[] | undefined)?.filter((e: Enrollment) => e.student_id === student.student_id) || [];
       
-      const coursesProgress = studentEnrollments.map((enrollment: any) => {
+      const coursesProgress = studentEnrollments.map((enrollment: Enrollment) => {
         const course = enrollment.courses;
-        const courseChapters = chapters?.filter((ch: any) => ch.course_id === course.id) || [];
+        const courseChapters = (chapters as Chapter[] | undefined)?.filter((ch: Chapter) => ch.course_id === course.id) || [];
         const totalChapters = courseChapters.length;
         
         // Get completed chapters for this student and course
-        const chapterIds = courseChapters.map((ch: any) => ch.id);
-        const completedChapters = courseProgress?.filter((cp: any) => 
+        const chapterIds = courseChapters.map((ch: Chapter) => ch.id);
+        const completedChapters = (courseProgress as CourseProgress[] | undefined)?.filter((cp: CourseProgress) => 
           cp.student_id === student.student_id && 
           chapterIds.includes(cp.chapter_id) && 
           cp.completed
@@ -259,6 +413,10 @@ export async function GET(request: NextRequest) {
         // Calculate actual progress percentage
         const actualProgress = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
 
+        const status: 'completed' | 'in_progress' | 'not_started' = 
+          actualProgress === 100 ? 'completed' : 
+          actualProgress > 0 ? 'in_progress' : 'not_started';
+        
         return {
           course_id: course.id,
           course_name: course.course_name || course.name,
@@ -267,17 +425,16 @@ export async function GET(request: NextRequest) {
           progress_percentage: actualProgress,
           last_accessed: enrollment.last_accessed,
           enrolled_on: enrollment.enrolled_on,
-          status: actualProgress === 100 ? 'completed' : 
-                  actualProgress > 0 ? 'in_progress' : 'not_started'
-        };
+          status
+        } as CourseProgressData;
       });
 
       // Calculate overall progress for the student
       const totalCourses = coursesProgress.length;
-      const completedCourses = coursesProgress.filter((cp: any) => cp.status === 'completed').length;
-      const inProgressCourses = coursesProgress.filter((cp: any) => cp.status === 'in_progress').length;
+      const completedCourses = coursesProgress.filter((cp: CourseProgressData) => cp.status === 'completed').length;
+      const inProgressCourses = coursesProgress.filter((cp: CourseProgressData) => cp.status === 'in_progress').length;
       const averageProgress = totalCourses > 0 
-        ? Math.round(coursesProgress.reduce((sum: number, cp: any) => sum + cp.progress_percentage, 0) / totalCourses)
+        ? Math.round(coursesProgress.reduce((sum: number, cp: CourseProgressData) => sum + cp.progress_percentage, 0) / totalCourses)
         : 0;
 
       return {
@@ -293,40 +450,61 @@ export async function GET(request: NextRequest) {
         average_progress: averageProgress,
         courses: coursesProgress,
         last_activity: coursesProgress.length > 0 
-          ? new Date(Math.max(...coursesProgress.map((cp: any) => new Date(cp.last_accessed || 0).getTime())))
+          ? new Date(Math.max(...coursesProgress.map((cp: CourseProgressData) => new Date(cp.last_accessed || 0).getTime())))
           : null
       };
     });
 
+    // Filter out students with no enrollments (no courses) - only show students who are actually enrolled
+    const studentsWithEnrollments = studentsWithProgress.filter((student: StudentWithProgress) => student.total_courses > 0);
+    
+    logger.info('Filtered students with enrollments', {
+      totalStudents: studentsWithProgress.length,
+      studentsWithEnrollments: studentsWithEnrollments.length,
+      studentsWithoutEnrollments: studentsWithProgress.length - studentsWithEnrollments.length
+    });
+
     // Sort by average progress (highest first) then by name
-    studentsWithProgress.sort((a: any, b: any) => {
+    studentsWithEnrollments.sort((a: StudentWithProgress, b: StudentWithProgress) => {
       if (a.average_progress !== b.average_progress) {
         return b.average_progress - a.average_progress;
       }
       return a.full_name.localeCompare(b.full_name);
     });
 
-    // Get total count for pagination
-    let countQuery = supabaseAdmin
-      .from('student_schools')
-      .select('student_id', { count: 'exact', head: true })
-      .eq('is_active', true);
+    // Get total count for pagination - count only students with enrollments
+    // We need to count students who have enrollments or virtual enrollments
+    const enrolledStudentIds = [...new Set((allEnrollments as Enrollment[] | undefined)?.map((e: Enrollment) => e.student_id) || [])];
+    
+    let totalStudents = studentsWithEnrollments.length;
+    
+    // If we have enrolled student IDs and need pagination, get accurate count from DB
+    if (enrolledStudentIds.length > 0) {
+      let countQuery = supabaseAdmin
+        .from('student_schools')
+        .select('student_id', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .in('student_id', enrolledStudentIds);
 
-    if (schoolId) {
-      countQuery = countQuery.eq('school_id', schoolId);
+      if (schoolId) {
+        countQuery = countQuery.eq('school_id', schoolId);
+      }
+      if (grade) {
+        countQuery = countQuery.eq('grade', grade);
+      }
+
+      const { count } = await countQuery;
+      if (count !== null && count !== undefined) {
+        totalStudents = count;
+      }
     }
-    if (grade) {
-      countQuery = countQuery.eq('grade', grade);
-    }
 
-    const { count: totalStudents } = await countQuery;
-
-    // Process schools data
-    const schoolsData = allSchools?.map((school: any) => {
-      const studentsInSchool = studentsWithProgress.filter((s: any) => s.school_id === school.id);
+    // Process schools data - only count students with enrollments
+    const schoolsData = (allSchools as School[] | undefined)?.map((school: School) => {
+      const studentsInSchool = studentsWithEnrollments.filter((s: StudentWithProgress) => s.school_id === school.id);
       const totalStudentsInSchool = studentsInSchool.length;
       const averageSchoolProgress = totalStudentsInSchool > 0
-        ? Math.round(studentsInSchool.reduce((sum: number, s: any) => sum + s.average_progress, 0) / totalStudentsInSchool)
+        ? Math.round(studentsInSchool.reduce((sum: number, s: StudentWithProgress) => sum + s.average_progress, 0) / totalStudentsInSchool)
         : 0;
 
       return {
@@ -337,20 +515,20 @@ export async function GET(request: NextRequest) {
       };
     }) || [];
 
-    // Process courses data
-    const coursesData = allCourses?.map((course: any) => {
-      const studentsInCourse = studentsWithProgress.filter((s: any) => 
-        s.courses.some((c: any) => c.course_id === course.id)
+    // Process courses data - only count students with enrollments
+    const coursesData = (allCourses as Course[] | undefined)?.map((course: Course) => {
+      const studentsInCourse = studentsWithEnrollments.filter((s: StudentWithProgress) => 
+        s.courses.some((c: CourseProgressData) => c.course_id === course.id)
       );
       
       const totalStudentsInCourse = studentsInCourse.length;
-      const completedStudents = studentsInCourse.filter((s: any) => 
-        s.courses.find((c: any) => c.course_id === course.id)?.status === 'completed'
+      const completedStudents = studentsInCourse.filter((s: StudentWithProgress) => 
+        s.courses.find((c: CourseProgressData) => c.course_id === course.id)?.status === 'completed'
       ).length;
       
       const averageCourseProgress = totalStudentsInCourse > 0
-        ? Math.round(studentsInCourse.reduce((sum: number, s: any) => {
-            const courseProgress = s.courses.find((c: any) => c.course_id === course.id);
+        ? Math.round(studentsInCourse.reduce((sum: number, s: StudentWithProgress) => {
+            const courseProgress = s.courses.find((c: CourseProgressData) => c.course_id === course.id);
             return sum + (courseProgress?.progress_percentage || 0);
           }, 0) / totalStudentsInCourse)
         : 0;
@@ -369,15 +547,15 @@ export async function GET(request: NextRequest) {
     }) || [];
 
     return NextResponse.json({
-      students: studentsWithProgress,
+      students: studentsWithEnrollments, // Only return students with enrollments
       schools: schoolsData,
       courses: coursesData,
       summary: {
-        total_students: totalStudents || 0,
-        students_with_progress: studentsWithProgress.filter((s: any) => s.average_progress > 0).length,
-        students_completed: studentsWithProgress.filter((s: any) => s.average_progress === 100).length,
-        average_system_progress: studentsWithProgress.length > 0 
-          ? Math.round(studentsWithProgress.reduce((sum: number, s: any) => sum + s.average_progress, 0) / studentsWithProgress.length)
+        total_students: totalStudents || studentsWithEnrollments.length,
+        students_with_progress: studentsWithEnrollments.filter((s: StudentWithProgress) => s.average_progress > 0).length,
+        students_completed: studentsWithEnrollments.filter((s: StudentWithProgress) => s.average_progress === 100).length,
+        average_system_progress: studentsWithEnrollments.length > 0 
+          ? Math.round(studentsWithEnrollments.reduce((sum: number, s: StudentWithProgress) => sum + s.average_progress, 0) / studentsWithEnrollments.length)
           : 0,
         total_schools: schoolsData.length,
         total_courses: coursesData.length
@@ -385,8 +563,8 @@ export async function GET(request: NextRequest) {
       pagination: {
         limit,
         offset,
-        total: totalStudents || 0,
-        hasMore: (offset + limit) < (totalStudents || 0)
+        total: totalStudents || studentsWithEnrollments.length,
+        hasMore: (offset + limit) < (totalStudents || studentsWithEnrollments.length)
       }
     });
 

@@ -7,7 +7,6 @@ import Footer from "../../components/Footer";
 import FAQAccordion from "../../components/FAQAccordion";
 import { 
   BookOpen,
-  Cpu,
   Rocket,
   Check,
   RefreshCw,
@@ -126,9 +125,11 @@ export default function ForParentsPage() {
                   Robo Coders™ helps children develop critical 21st-century skills through engaging coding and robotics programs. Join thousands of parents who trust us with their child&apos;s future.
                 </p>
                 <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-                  <Button size="lg" className="w-full sm:w-auto px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white">
-                    Book Free Trial Class <ArrowRight className="ml-2 h-5 w-5" />
-                  </Button>
+                  <Link href="/contact" className="w-full sm:w-auto">
+                    <Button size="lg" className="w-full sm:w-auto px-8 text-lg bg-blue-600 hover:bg-blue-700 text-white">
+                      Book Free Trial Class <ArrowRight className="ml-2 h-5 w-5" />
+                    </Button>
+                  </Link>
                   <Link href="/programs" className="w-full sm:w-auto">
                     <Button variant="outline" className="w-full sm:w-auto px-8 text-lg border-blue-600 text-blue-600 hover:bg-blue-50" size="lg">
                       View Programs

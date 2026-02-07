@@ -10,6 +10,15 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Validate CSRF protection
+  const { validateCsrf } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
   if (!rateLimitResult.success) {
@@ -29,21 +38,48 @@ export async function PATCH(
     const { id: notificationId } = await params;
     const body = await request.json();
     
+    console.log('🔍 [API] Received teacher notification update request:', {
+      notificationId,
+      body: body,
+      is_read: body?.is_read
+    });
+    
     // Validate request body
     const validation = validateRequestBody(notificationUpdateByIdSchema, body);
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
-      logger.warn('Validation failed for notification update', {
+      // Extract error messages from ZodError
+      let errorMessages = validation.error || 'Invalid request data';
+      if (validation.details && validation.details.issues && Array.isArray(validation.details.issues)) {
+        type ZodIssue = { path?: (string | number)[]; message?: string; code?: string };
+        const formattedErrors = validation.details.issues.map((e: ZodIssue) => {
+          const path = Array.isArray(e.path) ? e.path.join('.') : String(e.path || 'unknown');
+          return `${path}: ${e.message || 'Invalid value'}`;
+        });
+        errorMessages = formattedErrors.length > 0 ? formattedErrors.join(', ') : errorMessages;
+      }
+      
+      logger.warn('Validation failed for teacher notification update', {
         endpoint: '/api/teacher/notifications/[id]',
         notificationId,
+        body: body,
         errors: errorMessages,
+        validationDetails: validation.details?.issues ? validation.details.issues.map((e: ZodIssue) => ({
+          path: e.path,
+          message: e.message,
+          code: e.code
+        })) : 'none'
+      });
+      
+      console.error('❌ [API] Validation failed:', {
+        errorMessages,
+        body,
+        notificationId
       });
       
       return NextResponse.json(
         { 
           error: 'Validation failed',
-          details: errorMessages,
+          details: errorMessages || 'Invalid request data',
         },
         { status: 400 }
       );
@@ -51,20 +87,27 @@ export async function PATCH(
 
     const { is_read } = validation.data;
 
-     
-    const { data: updatedNotification, error } = await ((supabaseAdmin as any)
+    // Update notification
+    const { data: updatedNotification, error: updateError } = await supabaseAdmin
       .from('notifications')
-       
-      .update({ is_read } as any)
+      .update({ is_read } as never)
       .eq('id', notificationId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
-    if (error) {
-      console.error('❌ Error updating notification:', error);
+    if (updateError) {
+      console.error('❌ Error updating teacher notification:', updateError);
+      logger.error('Failed to update teacher notification', {
+        endpoint: '/api/teacher/notifications/[id]',
+        notificationId,
+        error: updateError
+      });
+      
       return NextResponse.json(
-        { error: 'Failed to update notification', details: error.message },
+        { 
+          error: 'Failed to update notification', 
+          details: updateError.message || 'Database update failed'
+        },
         { status: 500 }
       );
     }

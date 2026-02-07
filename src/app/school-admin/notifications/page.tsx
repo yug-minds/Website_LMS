@@ -189,7 +189,7 @@ export default function SchoolAdminNotifications() {
         // Load reply counts for each notification
         const { data: { session: replySession } } = await supabase.auth.getSession();
         const notificationsWithReplies = await Promise.all(
-          normalizedNotifications.map(async (notif: any) => {
+          normalizedNotifications.map(async (notif: Notification) => {
             const repliesResponse = await fetch(`/api/notifications/reply?notification_id=${notif.id}`, {
               credentials: 'include',
               headers: {
@@ -209,9 +209,10 @@ export default function SchoolAdminNotifications() {
         showToast(`Failed to load notifications: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading notifications:', error);
-      showToast(`Error loading notifications: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error loading notifications: ${msg}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -242,9 +243,10 @@ export default function SchoolAdminNotifications() {
         showToast(`Failed to load replies: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading replies:', error);
-      showToast(`Error loading replies: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error loading replies: ${msg}`, 'error');
     } finally {
       setLoadingReplies(false);
     }
@@ -291,7 +293,7 @@ export default function SchoolAdminNotifications() {
         setUsers(data.users || []);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading recipients:', error);
     } finally {
       setLoadingRecipients(false);
@@ -383,9 +385,10 @@ export default function SchoolAdminNotifications() {
         showToast(`Failed to send notification: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error sending notification:', error);
-      showToast(`Error sending notification: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error sending notification: ${msg}`, 'error');
     } finally {
       setSending(false);
     }
@@ -397,11 +400,24 @@ export default function SchoolAdminNotifications() {
       
       if (!session?.access_token) {
         console.warn('No session available for marking as read');
+        showToast('Session expired. Please refresh the page.', 'error');
         return;
       }
       
+      // Find the notification to update optimistically
+      const notification = notifications.find((n: Notification) => n.id === notificationId);
+      setNotifications(prev =>
+        prev.map((n: Notification) => n.id === notificationId ? { ...n, is_read: true } : n)
+      );
+      
+      console.log('Marking school-admin notification as read:', {
+        notificationId,
+        notification: notification
+      });
+      
       const response = await fetchWithCsrf(`/api/school-admin/notifications/${notificationId}`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
@@ -409,29 +425,67 @@ export default function SchoolAdminNotifications() {
         body: JSON.stringify({ is_read: true })
       });
 
-      const data = await response.json().catch(() => ({}));
-      if (response.ok) {
+      const responseText = await response.text();
+      console.log('Response status:', response.status, response.statusText);
+      console.log('Response body:', responseText);
+      
+      if (!response.ok) {
         setNotifications(prev =>
-          prev.map((n: any) => n.id === notificationId ? { ...n, is_read: true } : n)
+          prev.map((n: Notification) => n.id === notificationId ? { ...n, is_read: false } : n)
         );
+        
+        // Try to get error details from response
+        let errorMessage = 'Unknown error';
+        try {
+          if (responseText && responseText.trim()) {
+            try {
+              const errorData = JSON.parse(responseText);
+              // Extract error message from various possible fields
+              errorMessage = errorData.details || errorData.error || errorData.message || JSON.stringify(errorData);
+              console.error('Error details from API:', errorData);
+            } catch (parseError) {
+              console.error('Failed to parse error response as JSON:', parseError);
+              errorMessage = responseText || `HTTP ${response.status}: ${response.statusText}`;
+            }
+          } else {
+            errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+          }
+        } catch (parseError) {
+          console.error('Error parsing error response:', parseError);
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        
+        console.error('Failed to mark school-admin notification as read:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorMessage,
+          notificationId,
+          responseBody: responseText
+        });
+        
+        showToast(`Failed to mark as read: ${errorMessage}`, 'error');
       } else {
-        showToast(`Failed to mark as read: ${data.error || data.details || 'Unknown error'}`, 'error');
+        console.log('Successfully marked school-admin notification as read');
       }
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-      showToast('Failed to mark as read', 'error');
+    } catch (error: unknown) {
+      setNotifications(prev =>
+        prev.map((n: Notification) => n.id === notificationId ? { ...n, is_read: false } : n)
+      );
+      console.error('Error marking school-admin notification as read:', error);
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error marking as read: ${msg}`, 'error');
     }
   };
 
   const handleRecipientToggle = (id: string) => {
     setSelectedRecipients(prev =>
       prev.includes(id)
-        ? prev.filter((r: any) => r !== id)
+        ? prev.filter((r: string) => r !== id)
         : [...prev, id]
     );
   };
 
-  const filteredNotifications = notifications.filter((notification: any) => {
+  const filteredNotifications = notifications.filter((notification: Notification) => {
     const matchesSearch = !searchQuery || 
       notification.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       notification.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -703,9 +757,9 @@ export default function SchoolAdminNotifications() {
                             <Badge className={getTypeColor(notification.type)}>
                               {notification.type}
                             </Badge>
-                            {(notification as any).recipient_count && (notification as any).recipient_count > 1 && (
+                            {(notification as Notification & { recipient_count?: number }).recipient_count != null && (notification as Notification & { recipient_count?: number }).recipient_count! > 1 && (
                               <Badge variant="outline" className="bg-gray-50 text-gray-700">
-                                {(notification as any).recipient_count} recipients
+                                {(notification as Notification & { recipient_count?: number }).recipient_count ?? 0} recipients
                               </Badge>
                             )}
                             {!notification.is_read && (

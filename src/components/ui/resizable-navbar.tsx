@@ -52,7 +52,7 @@ interface MobileNavMenuProps {
 export const Navbar = ({ children, className }: NavbarProps) => {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState<boolean>(false);
-  const [isMounted, setIsMounted] = useState<boolean>(false);
+  const [_isMounted, setIsMounted] = useState<boolean>(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -182,7 +182,7 @@ export const NavBody = ({ children, className, visible }: NavBodyProps) => {
             return child;
           }
           // It's a React component - safe to pass visible prop
-          return React.cloneElement(child as React.ReactElement<any>, { visible });
+          return React.cloneElement(child as React.ReactElement<Record<string, unknown>>, { visible });
         }
         return child;
       })}
@@ -198,8 +198,10 @@ export const NavItems = ({ items, className, onItemClick, visible }: NavItemsPro
   // Trigger animation when navbar visible state changes (scrolling)
   useEffect(() => {
     if (visible !== undefined) {
-      // Trigger animation by incrementing the key
-      setAnimationTrigger(prev => prev + 1);
+      const id = requestAnimationFrame(() => {
+        setAnimationTrigger(prev => prev + 1);
+      });
+      return () => cancelAnimationFrame(id);
     }
   }, [visible]);
 
@@ -360,7 +362,7 @@ export const MobileNavMenu = ({
   children,
   className,
   isOpen,
-  onClose,
+  onClose: _onClose,
 }: MobileNavMenuProps) => {
   return (
     <AnimatePresence>

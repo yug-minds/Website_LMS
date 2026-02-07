@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSchoolAdminSchoolId } from '../../../../lib/school-admin-auth';
 import { logger, handleApiError } from '../../../../lib/logger';
-import { supabaseAdmin, createAuthenticatedClient } from '../../../../lib/supabase';
+import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
+import type { ZodIssue } from 'zod';
 import { createStudentSchemaSchoolAdmin, validateRequestBody } from '../../../../lib/validation-schemas';
 import { parseCursorParams, applyCursorPagination, createCursorResponse } from '../../../../lib/pagination';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
@@ -45,6 +46,7 @@ try {
     const offset = parseInt(searchParams.get('offset') || '0', 10);
     const search = searchParams.get('search') || '';
     const grade = searchParams.get('grade') || '';
+    const section = searchParams.get('section') || '';
     const status = searchParams.get('status') || '';
 
     // Use admin client to ensure student profile fields are returned even if RLS
@@ -69,6 +71,10 @@ try {
     // Apply filters
     if (grade && grade !== 'all') {
       query = query.eq('grade', grade);
+    }
+
+    if (section && section !== 'all') {
+      query = query.eq('section', section);
     }
 
     if (status && status !== 'all') {
@@ -112,14 +118,41 @@ try {
 
     // Filter by search term if provided (client-side filtering for nested data)
     // Normalize embedded relationship key to `profile` (frontend expects `profile`)
-    let filteredStudents = (students || []).map((s: any) => {
-      const { profiles, ...rest } = s || {};
-      return { ...rest, profile: profiles || null };
+    type StudentWithProfile = {
+      student_id?: string;
+      school_id?: string | null;
+      grade?: string | null;
+      section?: string | null;
+      is_active?: boolean | null;
+      enrolled_at?: string | null;
+      created_at?: string | null;
+      profiles?: {
+        id: string;
+        full_name?: string | null;
+        email?: string | null;
+        phone?: string | null;
+        parent_name?: string | null;
+        parent_phone?: string | null;
+        created_at?: string | null;
+      } | null;
+      profile?: {
+        id: string;
+        full_name?: string | null;
+        email?: string | null;
+        phone?: string | null;
+        parent_name?: string | null;
+        parent_phone?: string | null;
+        created_at?: string | null;
+      } | null;
+    };
+    let filteredStudents = ((students || []) as StudentWithProfile[]).map((s) => {
+      const { profiles, ...rest } = s;
+      return { ...rest, profile: profiles || null } as StudentWithProfile;
     });
     if (search) {
       const searchLower = search.toLowerCase();
        
-      filteredStudents = filteredStudents.filter((student: any) => {
+      filteredStudents = filteredStudents.filter((student) => {
         const profile = student.profile;
         return (
           profile?.full_name?.toLowerCase().includes(searchLower) ||
@@ -137,21 +170,38 @@ try {
     });
 
     // For cursor pagination, create response with cursor
-    let responseData: any;
+    interface StudentResponse {
+      students: Array<Record<string, unknown>>;
+      pagination?: {
+        nextCursor?: string;
+        prevCursor?: string;
+        hasMore: boolean;
+      };
+    }
+    
+    let responseData: StudentResponse;
     if (useCursor) {
       // Map enrolled_at to created_at for cursor response
-      const mappedStudents = filteredStudents.map((s: any) => ({
+      interface Student {
+        enrolled_at?: string;
+        created_at?: string;
+        id?: string;
+        student_id?: string;
+      }
+      
+      type StudentWithProfile = Student & { enrolled_at?: string; created_at?: string; id?: string; student_id?: string };
+      const mappedStudents = (filteredStudents as StudentWithProfile[]).map((s) => ({
         ...s,
-        created_at: s.enrolled_at || s.created_at,
-        id: s.id || s.student_id
+        created_at: s.enrolled_at || s.created_at || '',
+        id: s.id || s.student_id || ''
       }));
       const cursorResponse = createCursorResponse(
         mappedStudents as Array<{ created_at: string; id: string }>,
         limit
       );
       responseData = {
-        students: cursorResponse.data.map((s: any) => {
-          const { created_at, ...rest } = s;
+        students: cursorResponse.data.map((s: Record<string, unknown> & { created_at?: string }) => {
+          const { created_at: _created_at, ...rest } = s;
           return rest;
         }),
         pagination: {
@@ -265,8 +315,7 @@ try {
     // Validate request body
     const validation = validateRequestBody(createStudentSchemaSchoolAdmin, body);
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for student creation', {
         endpoint: '/api/school-admin/students',
         errors: errorMessages,
@@ -286,6 +335,7 @@ try {
       email,
       phone,
       grade,
+      section,
       joining_code,
       password,
       parent_name,
@@ -293,9 +343,9 @@ try {
     } = validation.data;
 
     // Validate required fields
-    if (!full_name || !email || !grade) {
+    if (!full_name || !email || !grade || !section) {
       return NextResponse.json(
-        { error: 'Full name, email, and grade are required' },
+        { error: 'Full name, email, grade, and section are required' },
         { status: 400 }
       );
     }
@@ -317,9 +367,18 @@ try {
       );
     }
 
+    // Normalize email for consistency
+    const normalizedEmail = email.toLowerCase().trim();
+
     // Step 1: Create auth user
+    logger.debug('Creating auth user', {
+      endpoint: '/api/school-admin/students',
+      email: normalizedEmail,
+      schoolId,
+    });
+
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: email,
+      email: normalizedEmail,
       password: password,
       email_confirm: true,
       user_metadata: {
@@ -333,7 +392,9 @@ try {
         endpoint: '/api/school-admin/students',
         method: 'POST',
         schoolId,
-        email,
+        email: normalizedEmail,
+        errorCode: authError.status,
+        errorMessage: authError.message,
       }, authError);
       
       const errorInfo = await handleApiError(
@@ -344,21 +405,41 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
+    if (!authData || !authData.user || !authData.user.id) {
+      logger.error('Auth user creation returned invalid data', {
+        endpoint: '/api/school-admin/students',
+        email: normalizedEmail,
+        authData,
+      });
+      return NextResponse.json({
+        error: 'Failed to create user account',
+        details: 'Auth user creation did not return a valid user ID',
+        status: 500,
+      }, { status: 500 });
+    }
+
     const userId = authData.user.id;
 
-    // Step 2: Create/update profile
+    logger.info('Auth user created successfully', {
+      endpoint: '/api/school-admin/students',
+      userId,
+      email: normalizedEmail,
+    });
+
+    // Step 2: Create/update profile (include school_id to link student to school)
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
+      // @ts-expect-error - Supabase generated types use never for untyped schema
       .upsert({
         id: userId,
         full_name: full_name,
-        email: email,
+        email: normalizedEmail,
         role: 'student',
+        school_id: schoolId,
         phone: phone || null,
         parent_name: parent_name || null,
         parent_phone: parent_phone || null
-       
-      } as any, {
+      }, {
         onConflict: 'id'
       });
 
@@ -388,11 +469,12 @@ try {
         student_id: userId,
         school_id: schoolId, // Automatically assigned from admin's school
         grade: grade,
+        section: section || null,
         joining_code: joining_code || null,
         is_active: true,
         enrolled_at: new Date().toISOString()
        
-      } as any)
+      } as never)
       .select(`
         *,
         profiles:student_id (
@@ -405,7 +487,7 @@ try {
         )
       `)
        
-      .single() as any;
+      .single();
 
     if (studentError) {
       logger.error('Failed to create student record', {
@@ -435,9 +517,10 @@ try {
       grade,
     });
 
+    type StudentRecordWithProfile = Record<string, unknown> & { profiles?: unknown };
     const normalizedStudent = studentRecord
       ? (() => {
-          const { profiles, ...rest } = studentRecord as any;
+          const { profiles, ...rest } = studentRecord as StudentRecordWithProfile;
           return { ...rest, profile: profiles || null };
         })()
       : null;

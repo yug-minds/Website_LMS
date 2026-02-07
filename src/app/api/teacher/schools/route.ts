@@ -56,7 +56,7 @@ try {
       `)
       .eq('teacher_id', teacherId)
        
-      .order('is_primary', { ascending: false }) as any;
+      .order('is_primary', { ascending: false });
 
     if (error) {
       console.error('❌ Error fetching teacher schools:', error);
@@ -68,7 +68,9 @@ try {
 
     // Transform data to match expected format
      
-    const schoolsData = (teacherSchools || []).map((ts: any) => ({
+    type TeacherSchoolRow = { school_id?: string; grades_assigned?: unknown; subjects?: unknown; working_days_per_week?: number; max_students_per_session?: number; is_primary?: boolean; schools?: { id?: string; name?: string; school_code?: string; city?: string; state?: string; address?: string } };
+    type SchoolItem = { id?: string; name?: string; school_code?: string; city?: string; state?: string; address?: string; assignment?: unknown };
+    const schoolsData = (teacherSchools || []).map((ts: TeacherSchoolRow) => ({
       id: ts.schools?.id,
       name: ts.schools?.name,
       school_code: ts.schools?.school_code,
@@ -83,8 +85,7 @@ try {
         max_students_per_session: ts.max_students_per_session,
         is_primary: ts.is_primary
       }
-     
-    })).filter((school: any) => school.id); // Filter out null schools
+    })).filter((school: SchoolItem) => school.id);
 
     return NextResponse.json({
       schools: schoolsData,

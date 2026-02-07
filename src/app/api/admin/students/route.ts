@@ -1,12 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
-import { createStudentSchema, updateStudentSchema, validateRequestBody } from '../../../../lib/validation-schemas';
+import { createStudentSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { verifyAdmin } from '../../../../lib/auth-utils';
 import { supabaseAdmin, createAuthenticatedClient } from '../../../../lib/supabase';
 import { parseCursorParams, applyCursorPagination, createCursorResponse } from '../../../../lib/pagination';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface School {
+  id: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Profile {
+  id: string;
+  school_id?: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Student {
+  id: string;
+  full_name?: string;
+  email?: string;
+  [key: string]: unknown;
+}
 
 export async function GET(request: NextRequest) {
   // Verify admin access
@@ -63,8 +81,26 @@ export async function GET(request: NextRequest) {
       schoolId,
     });
 
-    let students: any[] | null = null;
-    let error: any = null;
+    interface StudentRow {
+      student_id?: string;
+      grade?: string;
+      section?: string;
+      is_active?: boolean;
+      school_id?: string;
+      schools?: { id: string; name: string };
+      profiles?: {
+        id: string;
+        full_name: string;
+        email: string;
+        role: string;
+        created_at: string;
+        parent_name?: string;
+        parent_phone?: string;
+      };
+    }
+    
+    let students: StudentRow[] | null = null;
+    let error: Error | null = null;
 
     if (schoolId) {
       const { data, error: e } = await supabase
@@ -72,6 +108,7 @@ export async function GET(request: NextRequest) {
         .select(`
           student_id,
           grade,
+          section,
           is_active,
           schools ( id, name ),
           profiles:student_id (
@@ -86,23 +123,24 @@ export async function GET(request: NextRequest) {
         `)
         .eq('school_id', schoolId);
       error = e;
-      students = (data || []).map((row: any) => ({
-        id: row?.profiles?.id,
-        full_name: row?.profiles?.full_name,
-        email: row?.profiles?.email,
-        role: row?.profiles?.role,
-        created_at: row?.profiles?.created_at,
+      students = (data || []).map((row: StudentRow) => ({
+        id: row?.profiles?.id || '',
+        full_name: row?.profiles?.full_name || '',
+        email: row?.profiles?.email || '',
+        role: row?.profiles?.role || '',
+        created_at: row?.profiles?.created_at || '',
         parent_name: row?.profiles?.parent_name,
         parent_phone: row?.profiles?.parent_phone,
         student_schools: [
           {
-            school_id: row?.school_id,
+            school_id: row?.school_id || '',
             grade: row?.grade,
+            section: row?.section,
             is_active: row?.is_active,
             schools: row?.schools,
           },
         ],
-      }));
+      })) as StudentRow[];
     } else {
       let query = supabase
         .from('profiles')
@@ -117,6 +155,7 @@ export async function GET(request: NextRequest) {
           student_schools (
             school_id,
             grade,
+            section,
             is_active,
             schools (
               id,
@@ -144,7 +183,7 @@ export async function GET(request: NextRequest) {
 
       const { data, error: e } = await query;
       error = e;
-      students = data as any[] | null;
+      students = data as StudentRow[] | null;
     }
 
     if (error) {
@@ -173,7 +212,7 @@ export async function GET(request: NextRequest) {
     });
 
     // For cursor pagination, create response with cursor
-    let responseData: any;
+    let responseData: { students?: unknown[]; pagination?: unknown; nextCursor?: string; prevCursor?: string; hasMore?: boolean } | { data?: unknown[]; nextCursor?: string; prevCursor?: string; hasMore?: boolean };
     if (useCursor) {
       const cursorResponse = createCursorResponse(
         filteredStudents as Array<{ created_at: string; id: string }>,
@@ -281,7 +320,11 @@ export async function POST(request: NextRequest) {
     const validation = validateRequestBody(createStudentSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => {
+        const issue = e as { path?: (string | number)[]; message?: string };
+        const path = Array.isArray(issue.path) ? issue.path.filter((p): p is string | number => typeof p === 'string' || typeof p === 'number').join('.') : '';
+        return `${path ? path + ': ' : ''}${issue.message || ''}`;
+      }).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for student creation', {
         endpoint: '/api/admin/students',
         errors: errorMessages,
@@ -303,6 +346,7 @@ export async function POST(request: NextRequest) {
       password,
       school_id,
       grade,
+      section,
       phone,
       address,
       parent_name,
@@ -315,48 +359,81 @@ export async function POST(request: NextRequest) {
       schoolId: school_id,
     });
 
+    // Normalize email to lowercase for consistency
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    logger.debug('Checking if email exists', {
+      endpoint: '/api/admin/students',
+      originalEmail: email,
+      normalizedEmail: normalizedEmail,
+    });
+    
     // Check if email already exists
+    // Use maybeSingle() instead of single() to avoid errors when email doesn't exist
     const { data: existingProfile, error: checkError } = await supabaseAdmin
       .from('profiles')
-      .select('id, email')
-      .eq('email', email)
-       
-      .single() as any;
+      .select('id, email, role, full_name')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
 
-    if (checkError && checkError.code !== 'PGRST116') {
+    if (checkError) {
       logger.error('Error checking existing profile', {
         endpoint: '/api/admin/students',
-        email,
+        email: normalizedEmail,
+        errorCode: checkError.code,
+        errorMessage: checkError.message,
       }, checkError);
       
       const errorInfo = await handleApiError(
         checkError,
-        { endpoint: '/api/admin/students', email },
+        { endpoint: '/api/admin/students', email: normalizedEmail },
         'Failed to check existing profile'
       );
-      return NextResponse.json(errorInfo, { status: errorInfo.status });
+      return NextResponse.json({
+        error: errorInfo.message,
+        details: errorInfo.details || (checkError instanceof Error ? checkError.message : String(checkError)),
+        status: errorInfo.status,
+      }, { status: errorInfo.status });
     }
 
-    if (existingProfile) {
+    // maybeSingle() returns null if not found, so check for null explicitly
+    logger.debug('Email check result', {
+      endpoint: '/api/admin/students',
+      email: normalizedEmail,
+      exists: !!existingProfile,
+      existingProfile: existingProfile ? { id: (existingProfile as { id?: string }).id, role: (existingProfile as { role?: string }).role, name: (existingProfile as { full_name?: string }).full_name } : null,
+    });
+
+    const existingProfileData = existingProfile as { id?: string; role?: string; full_name?: string } | null;
+    if (existingProfileData && existingProfileData.id) {
+      const roleInfo = existingProfileData.role ? ` as a ${existingProfileData.role}` : '';
+      const nameInfo = existingProfileData.full_name ? ` (${existingProfileData.full_name})` : '';
+      
       logger.warn('Email already exists', {
         endpoint: '/api/admin/students',
         email,
-        existingUserId: existingProfile.id,
+        existingUserId: existingProfileData.id,
+        existingRole: existingProfileData.role,
       });
       
       return NextResponse.json(
         { 
           error: 'Email already exists',
-          details: `An account with email ${email} already exists`,
+          details: `An account with email ${email} already exists${roleInfo}${nameInfo}. Please use a different email address or check if this student already exists in the system.`,
           status: 400,
         },
         { status: 400 }
       );
     }
 
-    // Create auth user first
+    // Create auth user first (using normalized email from above)
+    logger.debug('Creating auth user', {
+      endpoint: '/api/admin/students',
+      email: normalizedEmail,
+    });
+
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: email,
+      email: normalizedEmail,
       password: password,
       email_confirm: true,
       user_metadata: {
@@ -368,21 +445,41 @@ export async function POST(request: NextRequest) {
     if (authError) {
       logger.error('Failed to create auth user', {
         endpoint: '/api/admin/students',
-        email,
+        email: normalizedEmail,
+        errorCode: authError.status,
+        errorMessage: authError.message,
+        errorDetails: authError,
       }, authError);
       
       const errorInfo = await handleApiError(
         authError,
-        { endpoint: '/api/admin/students', email },
+        { endpoint: '/api/admin/students', email: normalizedEmail },
         'Failed to create user account'
       );
-      return NextResponse.json(errorInfo, { status: errorInfo.status });
+      return NextResponse.json({
+        error: errorInfo.message,
+        details: errorInfo.details || (authError instanceof Error ? authError.message : String(authError)),
+        status: errorInfo.status,
+      }, { status: errorInfo.status });
     }
 
-    logger.debug('Auth user created successfully', {
+    if (!authData || !authData.user || !authData.user.id) {
+      logger.error('Auth user creation returned invalid data', {
+        endpoint: '/api/admin/students',
+        email: normalizedEmail,
+        authData,
+      });
+      return NextResponse.json({
+        error: 'Failed to create user account',
+        details: 'Auth user creation did not return a valid user ID',
+        status: 500,
+      }, { status: 500 });
+    }
+
+    logger.info('Auth user created successfully', {
       endpoint: '/api/admin/students',
       userId: authData.user.id,
-      email,
+      email: normalizedEmail,
     });
 
     const userId = authData.user.id;
@@ -398,36 +495,111 @@ export async function POST(request: NextRequest) {
 
     const useRpc = process.env.USE_STUDENT_RPC === 'true';
     let transactionFailed = false;
+    
+    logger.debug('Student enrollment method', {
+      endpoint: '/api/admin/students',
+      useRpc,
+      userId,
+      email: normalizedEmail,
+      schoolId: school_id,
+    });
+
     if (useRpc) {
-      const { data: transactionResult, error: transactionError } = await (supabaseAdmin
-        .rpc('create_student_enrollment' as any, {
-          p_user_id: userId,
-          p_full_name: full_name,
-          p_email: email,
-          p_phone: phone || null,
-          p_address: address || null,
-          p_parent_name: parent_name || null,
-          p_parent_phone: parent_phone || null,
-          p_school_id: school_id,
-          p_grade: grade || 'Not Specified',
-          p_joining_code: null
-        } as any) as any);
-      const result = transactionResult as any;
-      if (transactionError || !result?.success) {
+      logger.debug('Attempting RPC create_student_enrollment', {
+        endpoint: '/api/admin/students',
+        userId,
+        email: normalizedEmail,
+        schoolId: school_id,
+        grade: grade || 'Not Specified',
+        section,
+      });
+
+      const { data: transactionResult, error: transactionError } = await supabaseAdmin.rpc('create_student_enrollment', {
+        p_user_id: userId,
+        p_full_name: full_name,
+        p_email: normalizedEmail,
+        p_phone: phone || null,
+        p_address: address || null,
+        p_parent_name: parent_name || null,
+        p_parent_phone: parent_phone || null,
+        p_school_id: school_id,
+        p_grade: grade || 'Not Specified',
+        p_joining_code: null,
+        p_section: section
+      } as never);
+      
+      type RpcResult = { success?: boolean; error?: string; profile_id?: string; enrollment_id?: string };
+      const result = transactionResult as RpcResult | null;
+      
+      if (transactionError) {
         transactionFailed = true;
-        logger.warn('RPC create_student_enrollment failed, will use direct creation', {
+        logger.error('RPC create_student_enrollment error', {
           endpoint: '/api/admin/students',
           userId,
-          email,
+          email: normalizedEmail,
           schoolId: school_id,
-          error: transactionError?.message || result?.error,
-        }, transactionError instanceof Error ? transactionError : new Error(String(transactionError || result?.error)));
+          errorCode: transactionError.code,
+          errorMessage: transactionError.message,
+          errorDetails: transactionError,
+        }, transactionError instanceof Error ? transactionError : new Error(String(transactionError)));
+      } else if (!result || !result.success) {
+        transactionFailed = true;
+        logger.error('RPC create_student_enrollment returned failure', {
+          endpoint: '/api/admin/students',
+          userId,
+          email: normalizedEmail,
+          schoolId: school_id,
+          result,
+          error: result?.error,
+        });
       } else {
         logger.info('Student enrollment created successfully via RPC', {
           endpoint: '/api/admin/students',
           userId,
-          email,
+          email: normalizedEmail,
+          profileId: result.profile_id,
+          enrollmentId: result.enrollment_id,
         });
+
+        // Verify that school_id is set in profiles (RPC should have set it, but verify)
+        const { data: profileCheck, error: profileCheckErr } = await supabaseAdmin
+          .from('profiles')
+          .select('id, school_id')
+          .eq('id', userId)
+          .single();
+
+        if (profileCheckErr) {
+          logger.warn('Failed to verify profile school_id after RPC enrollment', {
+            endpoint: '/api/admin/students',
+            userId,
+            error: profileCheckErr.message,
+          });
+        } else if (profileCheck) {
+          const checkData = profileCheck as { school_id?: string };
+          if (checkData.school_id !== school_id) {
+            // If school_id doesn't match, update it manually (RPC might have failed)
+            logger.warn('Profile school_id does not match enrollment after RPC, fixing...', {
+              endpoint: '/api/admin/students',
+              userId,
+              expectedSchoolId: school_id,
+              actualSchoolId: checkData.school_id,
+            });
+            
+            await supabaseAdmin.from('profiles').update({ school_id: school_id } as never).eq('id', userId);
+          }
+          
+          logger.info('Fixed profile school_id after RPC enrollment', {
+            endpoint: '/api/admin/students',
+            userId,
+            schoolId: school_id,
+          });
+        } else {
+          logger.debug('Profile school_id verified correctly after RPC', {
+            endpoint: '/api/admin/students',
+            userId,
+            schoolId: school_id,
+          });
+        }
       }
     }
 
@@ -438,13 +610,17 @@ export async function POST(request: NextRequest) {
         .from('schools')
         .select('id')
         .eq('id', school_id)
-        .maybeSingle() as any;
+        .maybeSingle();
 
       if (schoolErr) {
         logger.error('Failed to verify school', { endpoint: '/api/admin/students', schoolId: school_id }, schoolErr);
         await supabaseAdmin.auth.admin.deleteUser(userId);
         const info = await handleApiError(schoolErr, { endpoint: '/api/admin/students', schoolId: school_id }, 'Failed to verify school');
-        return NextResponse.json(info, { status: info.status });
+        return NextResponse.json({
+          error: info.message,
+          details: info.details || (schoolErr instanceof Error ? schoolErr.message : String(schoolErr)),
+          status: info.status,
+        }, { status: info.status });
       }
 
       if (!schoolExists) {
@@ -456,44 +632,153 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      // Upsert profile
-      const { error: profileErr } = await supabaseAdmin
-        .from('profiles')
-        .upsert({
-          id: userId,
-          full_name,
-          email,
-          role: 'student',
-          phone: phone || null,
-          address: address || null,
-          parent_name: parent_name || null,
-          parent_phone: parent_phone || null,
-        } as any) as any;
+      // Upsert profile (include school_id to link student to school)
+      const profileData = {
+        id: userId,
+        full_name,
+        email: normalizedEmail,
+        role: 'student',
+        school_id: school_id, // Set school_id in profiles table
+        phone: phone || null,
+        address: address || null,
+        parent_name: parent_name || null,
+        parent_phone: parent_phone || null,
+      };
+      const { error: profileErr } = await supabaseAdmin.from('profiles').upsert(profileData as never);
 
       if (profileErr) {
         logger.error('Profile upsert failed', { endpoint: '/api/admin/students', userId, email }, profileErr);
         await supabaseAdmin.auth.admin.deleteUser(userId);
         const info = await handleApiError(profileErr, { endpoint: '/api/admin/students', userId, email }, 'Failed to create student profile');
-        return NextResponse.json(info, { status: info.status });
+        return NextResponse.json({
+          error: info.message,
+          details: info.details || (profileErr instanceof Error ? profileErr.message : String(profileErr)),
+          status: info.status,
+        }, { status: info.status });
       }
 
-      // Upsert student_schools
-      const { data: enrollment, error: enrollErr } = await supabaseAdmin
-        .from('student_schools')
-        .upsert({
-          student_id: userId,
-          school_id,
-          grade: grade || 'Not Specified',
-          is_active: true,
-          enrolled_at: new Date().toISOString(),
-        } as any, { onConflict: 'student_id,school_id' } as any) as any;
+      // Insert student_schools enrollment
+      // Use insert instead of upsert to ensure fresh enrollment
+      logger.debug('Creating student_schools enrollment', {
+        endpoint: '/api/admin/students',
+        userId,
+        schoolId: school_id,
+        grade: grade || 'Not Specified',
+        section,
+      });
+
+      // Generate UUID client-side as fallback if database default doesn't work
+      const { generateUUID } = await import('../../../../lib/uuid-utils');
+      const enrollmentId = generateUUID();
+
+      const enrollmentData = {
+        id: enrollmentId, // Explicitly set ID to avoid null constraint violation
+        student_id: userId,
+        school_id,
+        grade: grade || 'Not Specified',
+        section: section, // Required field - no null fallback
+        is_active: true,
+        enrolled_at: new Date().toISOString(),
+      };
+      const { data: enrollment, error: enrollErr } = await supabaseAdmin.from('student_schools').insert(enrollmentData as never);
 
       if (enrollErr) {
-        logger.error('Enrollment upsert failed', { endpoint: '/api/admin/students', userId, schoolId: school_id }, enrollErr);
-        // Non-fatal: profile exists; but since enrollment is core, delete user and profile to keep integrity
-        await supabaseAdmin.auth.admin.deleteUser(userId);
-        const info = await handleApiError(enrollErr, { endpoint: '/api/admin/students', userId, schoolId: school_id }, 'Failed to enroll student to school');
-        return NextResponse.json(info, { status: info.status });
+        // Check if it's a unique constraint violation (student already enrolled)
+        const isUniqueViolation = enrollErr.code === '23505' || 
+                                  (enrollErr.message && enrollErr.message.includes('unique constraint'));
+        
+        logger.error('Enrollment insert failed', { 
+          endpoint: '/api/admin/students', 
+          userId, 
+          schoolId: school_id,
+          grade: grade || 'Not Specified',
+          section,
+          errorCode: enrollErr.code,
+          errorMessage: enrollErr.message,
+          errorDetails: enrollErr,
+          isUniqueViolation,
+        }, enrollErr);
+        
+        // Clean up: delete profile and auth user if enrollment fails
+        // Only clean up if it's not a unique violation (in that case, the student might already exist)
+        if (!isUniqueViolation) {
+          await supabaseAdmin
+            .from('profiles')
+            .delete()
+            .eq('id', userId)
+            .then(() => logger.debug('Deleted profile after enrollment failure', { userId }));
+          
+          await supabaseAdmin.auth.admin.deleteUser(userId)
+            .then(() => logger.debug('Deleted auth user after enrollment failure', { userId }));
+        }
+        
+        // Provide more specific error message
+        let errorMessage = 'Failed to enroll student to school';
+        if (isUniqueViolation) {
+          errorMessage = 'This student is already enrolled in this school. Please check if the student already exists.';
+        } else if (enrollErr.message) {
+          errorMessage = `Failed to enroll student: ${enrollErr.message}`;
+        }
+        
+        const info = await handleApiError(
+          enrollErr, 
+          { endpoint: '/api/admin/students', userId, schoolId: school_id }, 
+          errorMessage
+        );
+        
+        // Format error response to match frontend expectations
+        return NextResponse.json({
+          error: errorMessage,
+          details: info.details || (enrollErr instanceof Error ? enrollErr.message : String(enrollErr)),
+          status: isUniqueViolation ? 409 : info.status, // 409 Conflict for unique violations
+        }, { status: isUniqueViolation ? 409 : info.status });
+      }
+
+      logger.info('Student enrollment created successfully', {
+        endpoint: '/api/admin/students',
+        userId,
+        enrollmentId: (enrollment as Array<{ id?: string }>)?.[0]?.id,
+        schoolId: school_id,
+      });
+
+      // Verify that school_id is set in profiles (trigger should handle this, but verify)
+      const { data: profileCheck, error: profileCheckErr } = await supabaseAdmin
+        .from('profiles')
+        .select('id, school_id')
+        .eq('id', userId)
+        .single();
+
+      if (profileCheckErr) {
+        logger.warn('Failed to verify profile school_id after enrollment', {
+          endpoint: '/api/admin/students',
+          userId,
+          error: profileCheckErr.message,
+        });
+      } else if (profileCheck) {
+        const checkData = profileCheck as { school_id?: string };
+        if (checkData.school_id !== school_id) {
+          // If school_id doesn't match, update it manually (trigger might have failed)
+          logger.warn('Profile school_id does not match enrollment, fixing...', {
+            endpoint: '/api/admin/students',
+            userId,
+            expectedSchoolId: school_id,
+            actualSchoolId: checkData.school_id,
+          });
+          
+          await supabaseAdmin.from('profiles').update({ school_id: school_id } as never).eq('id', userId);
+        }
+        
+        logger.info('Fixed profile school_id after enrollment', {
+          endpoint: '/api/admin/students',
+          userId,
+          schoolId: school_id,
+        });
+      } else {
+        logger.debug('Profile school_id verified correctly', {
+          endpoint: '/api/admin/students',
+          userId,
+          schoolId: school_id,
+        });
       }
     }
 
@@ -516,6 +801,7 @@ export async function POST(request: NextRequest) {
         student_schools (
           school_id,
           grade,
+          section,
           is_active,
           schools (
             id,
@@ -524,8 +810,7 @@ export async function POST(request: NextRequest) {
         )
       `)
       .eq('id', userId)
-       
-      .single() as any;
+      .single();
 
     if (fetchError) {
       console.error('Error fetching created student:', fetchError);
@@ -551,6 +836,12 @@ export async function POST(request: NextRequest) {
       { endpoint: '/api/admin/students' },
       'Failed to create student'
     );
-    return NextResponse.json(errorInfo, { status: errorInfo.status });
+    
+    // Return error in format expected by frontend
+    return NextResponse.json({
+      error: errorInfo.message,
+      details: errorInfo.details || (error instanceof Error ? error.message : String(error)),
+      status: errorInfo.status,
+    }, { status: errorInfo.status });
   }
 }

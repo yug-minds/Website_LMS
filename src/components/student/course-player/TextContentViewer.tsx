@@ -1,14 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
 import { Badge } from '../../ui/badge'
 import { CheckCircle, Loader2, Clock } from 'lucide-react'
 import { supabase } from '../../../lib/supabase'
 import { useCourseProgressStore } from '../../../store/course-progress-store'
-import { useToast } from '../../ui/toast'
-import { useQueryClient } from '@tanstack/react-query'
 
 interface TextContentViewerProps {
   content: {
@@ -25,7 +23,7 @@ interface TextContentViewerProps {
 }
 
 // Debounce utility
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
+function debounce<T extends (...args: unknown[]) => unknown>(fn: T, delay: number) {
   let timeoutId: NodeJS.Timeout
   return (...args: Parameters<T>) => {
     clearTimeout(timeoutId)
@@ -42,20 +40,16 @@ export default function TextContentViewer({
   const textContent = content.content_text || 'No content available.'
   const [timeRemaining, setTimeRemaining] = useState(15)
   const [timerStarted, setTimerStarted] = useState(false)
+  const [hasCompleted, setHasCompleted] = useState(false)
   
-  const hasCompletedRef = useRef(false)
   const contentRef = useRef<HTMLDivElement>(null)
 
   // Global progress store
   const { 
     setContentCompleted, 
     isContentCompleted,
-    setSavingProgress,
     isSaving 
   } = useCourseProgressStore()
-
-  const toast = useToast()
-  const queryClient = useQueryClient()
 
   const isCompleted = isContentCompleted(content.id)
   const saving = isSaving(content.id)
@@ -71,16 +65,18 @@ export default function TextContentViewer({
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        const { data: progress } = await supabase
+        type ProgressRow = { is_completed?: boolean };
+        const { data: progressData } = await supabase
           .from('student_progress')
           .select('is_completed')
           .eq('student_id', user.id)
           .eq('content_id', content.id)
           .maybeSingle()
 
+        const progress = progressData as ProgressRow | null;
         if (progress?.is_completed) {
           setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
-          hasCompletedRef.current = true
+          setHasCompleted(true)
         }
       } catch (error) {
         console.warn('Failed to check completion:', error)
@@ -91,27 +87,30 @@ export default function TextContentViewer({
   }, [content.id, resolvedChapterId, resolvedCourseId, setContentCompleted])
 
   // Mark as complete - delegate to parent for database saving
-  const handleMarkComplete = useCallback(
-    debounce(() => {
-      if (hasCompletedRef.current) return
-      hasCompletedRef.current = true
+  const handleMarkComplete = useCallback(() => {
+    if (hasCompleted) return
+    setHasCompleted(true)
 
-      console.log('📖 [TextViewer] Marking as complete, calling parent onComplete...')
-      
-      // Call parent's onComplete which handles database saving
-      onComplete?.()
-      
-      // Update local UI state
-      setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
-      
-      console.log('✅ [TextViewer] Marked as complete')
-    }, 500),
-    [content.id, resolvedCourseId, resolvedChapterId, onComplete, setContentCompleted]
+    console.log('📖 [TextViewer] Marking as complete, calling parent onComplete...')
+    
+    // Call parent's onComplete which handles database saving
+    onComplete?.()
+    
+    // Update local UI state
+    setContentCompleted(content.id, resolvedChapterId, resolvedCourseId, true)
+    
+    console.log('✅ [TextViewer] Marked as complete')
+  }, [content.id, resolvedCourseId, resolvedChapterId, onComplete, setContentCompleted, hasCompleted])
+
+  // Debounced version for UI interactions
+  const debouncedMarkComplete = useMemo(
+    () => debounce(handleMarkComplete, 500),
+    [handleMarkComplete]
   )
 
   // Start timer when content becomes visible
   useEffect(() => {
-    if (isCompleted || hasCompletedRef.current) return
+    if (isCompleted || hasCompleted) return
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -127,17 +126,17 @@ export default function TextContentViewer({
     }
 
     return () => observer.disconnect()
-  }, [isCompleted, timerStarted])
+  }, [isCompleted, hasCompleted, timerStarted])
 
   // Countdown timer
   useEffect(() => {
-    if (!timerStarted || isCompleted || hasCompletedRef.current) return
+    if (!timerStarted || isCompleted || hasCompleted) return
 
     const interval = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(interval)
-          handleMarkComplete()
+          debouncedMarkComplete()
           return 0
         }
         return prev - 1
@@ -145,7 +144,7 @@ export default function TextContentViewer({
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [timerStarted, isCompleted, handleMarkComplete])
+  }, [timerStarted, isCompleted, hasCompleted, debouncedMarkComplete])
 
   return (
     <Card className="p-6" ref={contentRef}>
@@ -195,12 +194,12 @@ export default function TextContentViewer({
       />
 
       {/* Manual complete button */}
-      {!isCompleted && !hasCompletedRef.current && (
+      {!isCompleted && !hasCompleted && (
         <div className="mt-6 pt-6 border-t">
           <Button 
             onClick={() => {
               setTimeRemaining(0)
-              handleMarkComplete()
+              debouncedMarkComplete()
             }} 
             className="flex items-center gap-2"
             disabled={saving}

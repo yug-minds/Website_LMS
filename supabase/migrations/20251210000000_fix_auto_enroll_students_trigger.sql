@@ -8,7 +8,9 @@
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION auto_enroll_students_on_course_access_change()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SET search_path = ''
+AS $$
 DECLARE
   course_record RECORD;
   student_record RECORD;
@@ -76,7 +78,9 @@ $$ LANGUAGE plpgsql;
 
 -- Also fix the auto_enroll_students_on_course_publish function
 CREATE OR REPLACE FUNCTION auto_enroll_students_on_course_publish()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SET search_path = ''
+AS $$
 DECLARE
   course_record RECORD;
   student_record RECORD;

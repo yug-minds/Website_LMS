@@ -23,13 +23,29 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
     const { id } = await params;
     const form = await request.formData();
-    const updates: any = {};
+    type UpdateData = {
+      title?: string;
+      body_primary?: string;
+      body_secondary?: string;
+      body_tertiary?: string;
+      background?: string;
+      image_position?: string;
+      order_index?: number;
+      is_published?: boolean;
+      image_url?: string | null;
+      storage_path?: string | null;
+      published_at?: string;
+      updated_by?: string;
+      updated_at?: string;
+      [key: string]: string | number | boolean | null | undefined;
+    };
+    const updates: UpdateData = {};
     ['title','body_primary','body_secondary','body_tertiary','background','image_position','order_index','is_published'].forEach(k => {
       const v = form.get(k);
       if (v !== null) {
         if (k === 'order_index') updates[k] = Number(v);
         else if (k === 'is_published') updates[k] = String(v) === 'true';
-        else updates[k] = String(v);
+        else (updates as Record<string, unknown>)[k] = String(v);
       }
     });
 
@@ -81,48 +97,53 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     // If publishing, create a version snapshot
-    const insertedVersion: any = null;
     if (updates.is_published === true) {
       updates.published_at = new Date().toISOString();
     }
 
+    type SectionRow = { id: string; title?: string | null; body_primary?: string | null; body_secondary?: string | null; body_tertiary?: string | null; image_url?: string | null; background?: string | null; image_position?: string | null; order_index?: number | null; is_published?: boolean | null; published_at?: string | null };
     const { data: updated, error } = await supabaseAdmin
       .from('success_story_sections')
+      // @ts-expect-error - Supabase generated types use never for untyped schema
       .update({ ...updates, updated_by: auth.userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('id, title, body_primary, body_secondary, body_tertiary, image_url, background, image_position, order_index, is_published, published_at, created_at, updated_at')
       .single();
     if (error) throw error;
 
-    if (updated) {
+    const updatedRow = updated as SectionRow | null;
+    if (updatedRow) {
       const snapshot = {
-        id: updated.id,
-        title: updated.title,
-        body_primary: updated.body_primary,
-        body_secondary: updated.body_secondary,
-        body_tertiary: (updated as any).body_tertiary,
-        image_url: updated.image_url,
-        background: updated.background,
-        image_position: updated.image_position,
-        order_index: updated.order_index,
-        is_published: updated.is_published,
-        published_at: updated.published_at,
+        id: updatedRow.id,
+        title: updatedRow.title,
+        body_primary: updatedRow.body_primary,
+        body_secondary: updatedRow.body_secondary,
+        body_tertiary: updatedRow.body_tertiary,
+        image_url: updatedRow.image_url,
+        background: updatedRow.background,
+        image_position: updatedRow.image_position,
+        order_index: updatedRow.order_index,
+        is_published: updatedRow.is_published,
+        published_at: updatedRow.published_at,
       };
+      type VersionRow = { version_number?: number | null };
       const { data: versions } = await supabaseAdmin
         .from('success_story_versions')
         .select('version_number')
         .eq('section_id', id)
         .order('version_number', { ascending: false })
         .limit(1);
-      const nextVersion = (versions && versions[0]?.version_number) ? Number(versions[0].version_number) + 1 : 1;
+      const versionRows = (versions || []) as VersionRow[];
+      const nextVersion = (versionRows.length > 0 && versionRows[0]?.version_number != null) ? Number(versionRows[0].version_number) + 1 : 1;
       const { error: vErr } = await supabaseAdmin
         .from('success_story_versions')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .insert({ section_id: id, version_number: nextVersion, snapshot, created_by: auth.userId });
       if (vErr) logger.warn('Version insert error', { endpoint: '/api/admin/success-stories/[id]' }, vErr);
     }
 
     await invalidateCache(CacheKeys.successStories());
-    return NextResponse.json({ section: updated }, { status: 200, headers });
+    return NextResponse.json({ section: updatedRow ?? updated }, { status: 200, headers });
   } catch (error) {
     const errorInfo = await handleApiError(error, { endpoint: '/api/admin/success-stories/[id]' }, 'Failed to update section');
     return NextResponse.json(errorInfo, { status: errorInfo.status });

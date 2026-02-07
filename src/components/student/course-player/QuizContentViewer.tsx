@@ -8,8 +8,6 @@ import { Badge } from '../../ui/badge'
 import { CheckCircle, AlertCircle, Loader2, ClipboardList } from 'lucide-react'
 import { supabase } from '../../../lib/supabase'
 import { useCourseProgressStore } from '../../../store/course-progress-store'
-import { useToast } from '../../ui/toast'
-import { useQueryClient } from '@tanstack/react-query'
 
 interface QuizContentViewerProps {
   content: {
@@ -26,8 +24,32 @@ interface QuizContentViewerProps {
   onComplete?: () => void
 }
 
+interface Assignment {
+  id: string
+  title: string
+  description?: string
+  max_score?: number
+  auto_grading_enabled?: boolean
+  chapter_id?: string
+}
+
+interface Question {
+  id: string
+  question_text: string
+  question_type: string
+  options?: unknown
+  marks?: number
+}
+
+interface Submission {
+  id: string
+  status: string
+  score?: number
+  submitted_at?: string
+}
+
 // Debounce utility
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
+function debounce<T extends (...args: unknown[]) => unknown>(fn: T, delay: number) {
   let timeoutId: NodeJS.Timeout
   return (...args: Parameters<T>) => {
     clearTimeout(timeoutId)
@@ -42,10 +64,10 @@ export default function QuizContentViewer({
   onComplete 
 }: QuizContentViewerProps) {
   const router = useRouter()
-  const [assignment, setAssignment] = useState<any>(null)
+  const [assignment, setAssignment] = useState<Assignment | null>(null)
   const [loading, setLoading] = useState(true)
-  const [questions, setQuestions] = useState<any[]>([])
-  const [submission, setSubmission] = useState<any>(null)
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [submission, setSubmission] = useState<Submission | null>(null)
   
   const hasCompletedRef = useRef(false)
 
@@ -53,12 +75,8 @@ export default function QuizContentViewer({
   const { 
     setContentCompleted, 
     isContentCompleted,
-    setSavingProgress,
     isSaving 
   } = useCourseProgressStore()
-
-  const toast = useToast()
-  const queryClient = useQueryClient()
 
   const isCompleted = isContentCompleted(content.id)
   const saving = isSaving(content.id)
@@ -94,7 +112,7 @@ export default function QuizContentViewer({
         const { data: { user } } = await supabase.auth.getUser()
         
         let assignmentId: string | null = null
-        let assignmentData: any = null
+        let assignmentData: Assignment | null = null
 
         // Step 1: Get assignment data (optimized)
         if (content.source === 'assignments' && content.id) {
@@ -125,8 +143,17 @@ export default function QuizContentViewer({
           }
 
           if (assignments && assignments.length > 0) {
-            assignmentData = assignments[0]
-            assignmentId = assignments[0].id
+            type AssignmentRow = { id: string; title?: string; description?: string; max_score?: number; auto_grading_enabled?: boolean; chapter_id?: string };
+            const assignmentRow = assignments[0] as AssignmentRow;
+            assignmentData = {
+              id: assignmentRow.id,
+              title: assignmentRow.title ?? '',
+              description: assignmentRow.description,
+              max_score: assignmentRow.max_score,
+              auto_grading_enabled: assignmentRow.auto_grading_enabled,
+              chapter_id: assignmentRow.chapter_id,
+            }
+            assignmentId = assignmentRow.id
             console.log('✅ [QuizViewer] Found assignment via chapter query')
           }
         }
@@ -176,7 +203,7 @@ export default function QuizContentViewer({
         }
 
         if (submissionResult.data) {
-          setSubmission(submissionResult.data)
+          setSubmission(submissionResult.data as unknown as Submission)
           if (!hasCompletedRef.current) {
             setContentCompleted(content.id, chapterId, courseId, true)
             hasCompletedRef.current = true
@@ -205,7 +232,7 @@ export default function QuizContentViewer({
     } else {
       setLoading(false)
     }
-  }, [content.id, chapterId, setContentCompleted])
+  }, [content.id, content.auto_grading_enabled, content.content_text, content.max_score, content.source, content.title, chapterId, courseId, setContentCompleted])
 
   if (loading) {
     return (
@@ -332,16 +359,16 @@ export default function QuizContentViewer({
           <div className="mt-6">
             <h3 className="font-semibold mb-3">Preview Questions:</h3>
             <div className="space-y-3" role="list" aria-label="Question preview">
-              {questions.slice(0, 3).map((q: any, idx: number) => (
+              {questions.slice(0, 3).map((q, idx: number) => (
                 <div key={q.id} className="p-3 bg-gray-50 rounded-lg" role="listitem">
                   <p className="text-sm font-medium">
                     {idx + 1}. {q.question_text}
                   </p>
-                  {q.question_type === 'MCQ' && q.options && (
+                  {q.question_type === 'MCQ' && q.options && Array.isArray(q.options) ? (
                     <div className="mt-2 text-xs text-gray-600">
-                      Options: {q.options.length} choices
+                      Options: {String((q.options as unknown[]).length)} choices
                     </div>
-                  )}
+                  ) : null}
                 </div>
               ))}
               {questions.length > 3 && (

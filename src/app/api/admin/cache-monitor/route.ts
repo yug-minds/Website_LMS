@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdmin } from '../../../../lib/auth-utils';
-import { getHttpCacheHitRate, getCachePerformanceSummary } from '../../../../lib/http-cache-monitor';
+import { getHttpCacheHitRate } from '../../../../lib/http-cache-monitor';
 import { getCacheStats, getCacheHitRate } from '../../../../lib/cache';
 import { logger } from '../../../../lib/logger';
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       httpCache: {
         overall: httpCacheStats.overall,
         topEndpoints: Object.entries(httpCacheStats.byEndpoint)
-          .sort((a: any, b: any) => b[1].totalRequests - a[1].totalRequests)
+          .sort((a: [string, { totalRequests: number }], b: [string, { totalRequests: number }]) => b[1].totalRequests - a[1].totalRequests)
           .slice(0, 20)
           .map(([endpoint, stats]) => ({
             endpoint,
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
         },
         bySource: redisHitRate.bySource,
         topKeys: Object.entries(redisHitRate.byKey)
-          .sort((a: any, b: any) => (b[1].hits + b[1].misses) - (a[1].hits + a[1].misses))
+          .sort((a: [string, { hits: number; misses: number }], b: [string, { hits: number; misses: number }]) => (b[1].hits + b[1].misses) - (a[1].hits + a[1].misses))
           .slice(0, 20)
           .map(([key, stats]) => ({
             key,
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
       recommendations: {
         httpCache: httpCacheStats.recommendations,
         priority: httpCacheStats.recommendations
-          .filter((r: any) => r.endpoint.includes('dashboard') || r.endpoint.includes('stats'))
+          .filter((r: { endpoint: string }) => r.endpoint.includes('dashboard') || r.endpoint.includes('stats'))
           .slice(0, 5)
       }
     };

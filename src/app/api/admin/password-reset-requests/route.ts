@@ -115,6 +115,13 @@ try {
 
 // PATCH: Update password reset request status (approve/reject)
 export async function PATCH(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Verify admin access and get user ID
@@ -140,9 +147,9 @@ export async function PATCH(request: NextRequest) {
   }
 
 try {
-    let body: any;
+    let body: Record<string, unknown>;
     try {
-      body = await request.json();
+      body = await request.json() as Record<string, unknown>;
     } catch (parseError) {
       console.error('❌ Failed to parse request body:', parseError);
       return NextResponse.json(
@@ -169,7 +176,7 @@ try {
       const logPath = path.join(process.cwd(), '.cursor', 'debug.log');
       const logEntry = JSON.stringify({location:'route.ts:163',message:'Server: Request body received before validation',data:{body,bodyType:typeof body,bodyKeys:Object.keys(body||{}),idValue:body?.id,idType:typeof body?.id,statusValue:body?.status,statusType:typeof body?.status,approvedByValue:body?.approved_by,approvedByType:typeof body?.approved_by,notesValue:body?.notes,notesType:typeof body?.notes},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
       fs.appendFileSync(logPath, logEntry);
-    } catch (e) {}
+    } catch (_e) {}
     // #endregion
     
     // Validate request body
@@ -178,20 +185,21 @@ try {
     // #region agent log
     try {
       const logPath = path.join(process.cwd(), '.cursor', 'debug.log');
-      const logEntry = JSON.stringify({location:'route.ts:165',message:'Server: Validation result',data:{success:validation.success,errorCount:validation.success?0:validation.details?.issues?.length||0,issues:validation.success?[]:validation.details?.issues?.map((i:any)=>({path:i.path.join('.'),message:i.message,code:i.code,input:i.input}))||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
+      const logEntry = JSON.stringify({location:'route.ts:165',message:'Server: Validation result',data:{success:validation.success,errorCount:validation.success?0:validation.details?.issues?.length||0,issues:validation.success?[]:validation.details?.issues?.map((i)=>({path:(i.path as (string|number)[]).join('.'),message:i.message,code:i.code,input:i.input}))||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
       fs.appendFileSync(logPath, logEntry);
-    } catch (e) {}
+    } catch (_e) {}
     // #endregion
     if (!validation.success) {
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       
       // Log detailed validation errors
       console.error('❌ Validation failed for password reset request update');
       console.error('  Request body received:', JSON.stringify(body, null, 2));
       console.error('  Validation error count:', validation.details?.issues?.length || 0);
       console.error('  Validation issues:');
+      type ValidationIssue = { path: (string | number)[]; message: string; code?: string; input?: unknown };
       if (validation.details?.issues) {
-        validation.details.issues.forEach((issue: any, index: number) => {
+        (validation.details.issues as ValidationIssue[]).forEach((issue: ValidationIssue, index: number) => {
           console.error(`    ${index + 1}. Path: [${issue.path.join('.')}]`);
           console.error(`       Message: ${issue.message}`);
           console.error(`       Code: ${issue.code}`);
@@ -203,9 +211,9 @@ try {
       // #region agent log
       try {
         const logPath = path.join(process.cwd(), '.cursor', 'debug.log');
-        const logEntry = JSON.stringify({location:'route.ts:190',message:'Server: Validation failed - returning error',data:{errorMessages,issues:validation.details?.issues?.map((i:any)=>({path:i.path.join('.'),message:i.message,code:i.code,input:i.input})),body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
+        const logEntry = JSON.stringify({location:'route.ts:190',message:'Server: Validation failed - returning error',data:{errorMessages,issues:validation.details?.issues?.map((i: ValidationIssue)=>({path:i.path.join('.'),message:i.message,code:i.code,input:i.input})),body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
         fs.appendFileSync(logPath, logEntry);
-      } catch (e) {}
+      } catch {}
       // #endregion
       
       logger.warn('Validation failed for password reset request update', {
@@ -219,7 +227,7 @@ try {
         { 
           error: 'Validation failed',
           details: errorMessages,
-          validationIssues: validation.details?.issues?.map((issue: any) => ({
+          validationIssues: validation.details?.issues?.map((issue: ValidationIssue) => ({
             path: issue.path.join('.'),
             message: issue.message,
             code: issue.code
@@ -238,7 +246,7 @@ try {
       const logPath = path.join(process.cwd(), '.cursor', 'debug.log');
       const logEntry = JSON.stringify({location:'route.ts:200',message:'Server: Validation passed - extracted data',data:{id,status,approved_by:approved_by||'undefined',notes:notes||'undefined'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
       fs.appendFileSync(logPath, logEntry);
-    } catch (e) {}
+    } catch {}
     // #endregion
 
     // Get user ID from authenticated session if approved_by is not provided
@@ -267,11 +275,12 @@ try {
     console.log('🔍 Looking for password reset request with ID:', id, '(type:', typeof id, ')');
     
     // First, try to find the request
+    type ResetRequestRow = { id?: string; user_id?: string; email?: string; status?: string };
     const { data: resetRequest, error: fetchError } = await supabaseAdmin
       .from('password_reset_requests')
       .select('id, user_id, email, status, requested_at, approved_at, approved_by, school_id, notes, created_at, updated_at')
       .eq('id', id)
-      .maybeSingle() as any;
+      .maybeSingle() as { data: ResetRequestRow | null; error: unknown };
 
     if (fetchError) {
       console.error('❌ Error fetching password reset request:', fetchError);
@@ -293,14 +302,14 @@ try {
       console.error('❌ Password reset request not found with ID:', id);
       
       // Debug: Check if any requests exist at all
-      const { data: allRequests, error: debugError } = await supabaseAdmin
+      const { data: allRequests, error: _debugError } = await supabaseAdmin
         .from('password_reset_requests')
         .select('id, email, status')
-        .limit(5) as any;
+        .limit(5) as { data: { id?: string }[] | null; error: unknown };
       
       console.log('🔍 Debug: Found', allRequests?.length || 0, 'password reset requests in database');
       if (allRequests && allRequests.length > 0) {
-        console.log('🔍 Debug: Sample request IDs:', allRequests.map((r: any) => r.id));
+        console.log('🔍 Debug: Sample request IDs:', allRequests.map((r: { id?: string }) => r.id));
       }
       
       // Check if the ID format is correct
@@ -332,7 +341,7 @@ try {
 
     // Update the request
      
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       status,
       updated_at: new Date().toISOString()
     };
@@ -346,14 +355,12 @@ try {
       updateData.notes = notes;
     }
 
-    const { data: updatedRequest, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedRequest, error: updateError } = await supabaseAdmin
       .from('password_reset_requests')
-       
-      .update(updateData as any)
+      .update(updateData as never)
       .eq('id', id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (updateError) {
       console.error('❌ Error updating password reset request:', updateError);
@@ -386,27 +393,23 @@ try {
 
         // Set force_password_change flag on profile
          
-        await ((supabaseAdmin as any)
+        await supabaseAdmin
           .from('profiles')
-           
-          .update({ force_password_change: true } as any)
-           
-          .eq('id', resetRequest.user_id)) as any;
+          .update({ force_password_change: true } as never)
+          .eq('id', resetRequest.user_id);
 
         // Update the request with the temp password in notes
          
-        await ((supabaseAdmin as any)
+        await supabaseAdmin
           .from('password_reset_requests')
-          .update({ 
+          .update({
             notes: `Password reset completed. Temporary password: ${tempPassword}`,
             status: 'completed'
-           
-          } as any)
-           
-          .eq('id', id)) as any;
+          } as never)
+          .eq('id', id);
 
         // Send notification to the user
-        await (supabaseAdmin
+        await supabaseAdmin
           .from('notifications')
           .insert({
             user_id: resetRequest.user_id,
@@ -414,10 +417,9 @@ try {
             message: `Your password reset request has been approved. Your temporary password is: ${tempPassword}. Please log in and change your password immediately.`,
             type: 'success',
             is_read: false
-           
-          } as any) as any);
+          } as never);
        
-      } catch (authError: any) {
+      } catch (authError: unknown) {
         logger.error('Error in password reset', {
           endpoint: '/api/admin/password-reset-requests',
         }, authError instanceof Error ? authError : new Error(String(authError)));
@@ -436,7 +438,7 @@ try {
       const logPath = path.join(process.cwd(), '.cursor', 'debug.log');
       const logEntry = JSON.stringify({location:'route.ts:400',message:'Server: Success response being sent',data:{id,status,approved_by:finalApprovedBy||'undefined',hasUpdatedRequest:!!updatedRequest,tempPassword:tempPassword?'SET':'NOT SET'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}) + '\n';
       fs.appendFileSync(logPath, logEntry);
-    } catch (e) {}
+    } catch {}
     // #endregion
     
     return NextResponse.json({
@@ -460,6 +462,13 @@ try {
 
 // DELETE: Delete a password reset request
 export async function DELETE(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting

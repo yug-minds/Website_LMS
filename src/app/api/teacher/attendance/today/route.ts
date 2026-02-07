@@ -54,8 +54,7 @@ try {
         .select('school_id, is_primary')
         .eq('teacher_id', teacherId)
         .order('is_primary', { ascending: false })
-         
-        .limit(1) as any;
+        .limit(1);
 
       if (teacherSchoolsError) {
         logger.error('Failed to fetch teacher school assignment', {
@@ -71,8 +70,10 @@ try {
         return NextResponse.json(errorInfo, { status: errorInfo.status });
       }
 
-      if (teacherSchools && teacherSchools.length > 0) {
-        finalSchoolId = teacherSchools[0].school_id;
+      type TeacherSchoolRow = { school_id?: string | null; is_primary?: boolean | null };
+      const schoolsList = (teacherSchools || []) as TeacherSchoolRow[];
+      if (schoolsList.length > 0) {
+        finalSchoolId = schoolsList[0].school_id ?? undefined;
         logger.info('Teacher school assignment found', {
           userId: teacherId,
           schoolId: finalSchoolId,
@@ -116,15 +117,37 @@ try {
     const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayOfWeek = daysOfWeek[reportDate.getDay()];
 
-    // Get all scheduled periods for this teacher on this day (with grade for matching)
-    const { data: schedules, error: schedulesError } = await supabaseAdmin
+    // Get all scheduled periods for this teacher on this day using historical schedule lookup
+    // Use effective dates to find schedules that were active on this specific date
+    // For the current date, only get active schedules (is_active = true and effective_to IS NULL)
+    // For past dates, use historical lookup (effective_from <= date AND (effective_to IS NULL OR effective_to >= date))
+    const isToday = date === new Date().toISOString().split('T')[0];
+    
+    let scheduleQuery = supabaseAdmin
       .from('class_schedules')
       .select('period_id, class_id, grade, subject, start_time, end_time')
       .eq('teacher_id', teacherId)
       .eq('school_id', finalSchoolId)
-      .eq('day_of_week', dayOfWeek)
-       
-      .eq('is_active', true) as any;
+      .eq('day_of_week', dayOfWeek);
+    
+    if (isToday) {
+      // For today, only get currently active schedules (not deleted)
+      scheduleQuery = scheduleQuery
+        .eq('is_active', true)
+        .is('effective_to', null);
+    } else {
+      // For past dates, use historical lookup but exclude deleted schedules
+      // A schedule is considered active on a past date if:
+      // - effective_from <= date (was active from this date or before)
+      // - (effective_to IS NULL OR effective_to >= date) (hasn't ended yet, or ended after this date)
+      // - is_active = true (to exclude schedules that were deleted before this date)
+      scheduleQuery = scheduleQuery
+        .eq('is_active', true) // Exclude deleted schedules
+        .lte('effective_from', date) // Schedule was active from this date or before
+        .or(`effective_to.is.null,effective_to.gte.${date}`); // And hasn't ended yet, or ended after this date
+    }
+    
+    const { data: schedules, error: schedulesError } = await scheduleQuery;
 
     if (schedulesError) {
       console.error('Error fetching schedules:', schedulesError);
@@ -132,10 +155,11 @@ try {
 
     // Get unique period IDs from schedules
     const scheduledPeriodIds = new Set<string>();
-    const periodDetails = new Map<string, any>(); // period_id -> schedule details
+    type ScheduleRow = { period_id?: string; grade?: string; subject?: string; start_time?: string; end_time?: string; class_id?: string };
+    type PeriodDetail = { period_id: string; grade?: string; subject?: string; start_time?: string; end_time?: string; class_id?: string };
+    const periodDetails = new Map<string, PeriodDetail>();
     if (schedules && schedules.length > 0) {
-       
-      schedules.forEach((s: any) => {
+      (schedules as ScheduleRow[]).forEach((s: ScheduleRow) => {
         if (s.period_id) {
           scheduledPeriodIds.add(s.period_id);
           // Store period details for later use
@@ -162,7 +186,7 @@ try {
       .eq('teacher_id', teacherId)
       .eq('school_id', finalSchoolId)
        
-      .eq('date', date) as any;
+      .eq('date', date);
 
     if (reportsError) {
       console.error('Error fetching day reports:', reportsError);
@@ -173,14 +197,12 @@ try {
     // Match reports to periods by grade (primary) or class_id (fallback)
     const periodsWithReports = new Set<string>();
      
-    const submittedPeriodDetails: any[] = [];
+    type ReportRow = { id?: string; class_id?: string; grade?: string };
+    const submittedPeriodDetails: PeriodDetail[] = [];
     
     if (schedules && dayReports && scheduledPeriodIds.size > 0) {
-       
-      dayReports.forEach((report: any) => {
-        // Try to match by grade first (since reports use grade as primary identifier)
-         
-        const matchingSchedules = schedules.filter((s: any) => {
+      (dayReports as ReportRow[]).forEach((report: ReportRow) => {
+        const matchingSchedules = (schedules as ScheduleRow[]).filter((s: ScheduleRow) => {
           if (!s.period_id || !scheduledPeriodIds.has(s.period_id)) return false;
           
           // Match by grade (primary method)
@@ -196,8 +218,7 @@ try {
           return false;
         });
         
-         
-        matchingSchedules.forEach((s: any) => {
+        matchingSchedules.forEach((s: ScheduleRow) => {
           if (s.period_id && !periodsWithReports.has(s.period_id)) {
             periodsWithReports.add(s.period_id);
             submittedPeriodDetails.push({
@@ -214,7 +235,7 @@ try {
     
     // Get pending periods (periods without reports)
      
-    const pendingPeriods = Array.from(periodDetails.values()).filter((period: any) => 
+    const pendingPeriods = Array.from(periodDetails.values()).filter((period: PeriodDetail) => 
       !periodsWithReports.has(period.period_id)
     );
 
@@ -238,7 +259,7 @@ try {
       .eq('school_id', finalSchoolId)
       .eq('date', date)
        
-      .single() as any;
+      .single();
 
     if (attendanceError && attendanceError.code !== 'PGRST116') {
       logger.warn('Error fetching attendance (non-critical)', {

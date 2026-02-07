@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import { Button } from "../../../components/ui/button";
@@ -16,7 +16,6 @@ function ResetPasswordForm() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
     // Check if user is authenticated (they should be after clicking reset link)
@@ -67,7 +66,7 @@ function ResetPasswordForm() {
         await supabase.auth.signOut();
         router.push('/login');
       }, 2000);
-    } catch (error) {
+    } catch {
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);

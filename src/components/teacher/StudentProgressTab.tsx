@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Input } from "../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { 
@@ -14,7 +13,6 @@ import {
   Clock,
   Search,
   Filter,
-  Eye,
   CheckCircle,
   AlertCircle,
   PlayCircle
@@ -29,7 +27,8 @@ interface StudentProgressTabProps {
 export default function StudentProgressTab({ selectedSchoolId }: StudentProgressTabProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCourse, setSelectedCourse] = useState<string>("all");
-  const [selectedStudent, setSelectedStudent] = useState<string>("all");
+  const [selectedStudent, _setSelectedStudent] = useState<string>("all");
+  const [selectedSection, setSelectedSection] = useState<string>("all");
 
   // Fetch student progress data
   const { 
@@ -39,7 +38,8 @@ export default function StudentProgressTab({ selectedSchoolId }: StudentProgress
     refetch 
   } = useTeacherStudentProgress(selectedSchoolId, {
     courseId: selectedCourse !== "all" ? selectedCourse : undefined,
-    studentId: selectedStudent !== "all" ? selectedStudent : undefined
+    studentId: selectedStudent !== "all" ? selectedStudent : undefined,
+    section: selectedSection !== "all" ? selectedSection : undefined
   });
 
   // Fetch teacher's classes for course filter
@@ -100,18 +100,37 @@ export default function StudentProgressTab({ selectedSchoolId }: StudentProgress
   const students = progressData?.students || [];
   const summary = progressData?.summary;
 
-  // Filter students based on search term
-  const filteredStudents = students.filter((student: any) =>
-    student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter students based on search term and section
+  interface Student {
+    full_name?: string;
+    email?: string;
+    section?: string;
+  }
+  
+  const filteredStudents = students.filter((student: Student) => {
+    const matchesSearch = (student.full_name ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (student.email ?? '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSection = selectedSection === "all" || student.section === selectedSection;
+    return matchesSearch && matchesSection;
+  });
 
   // Get unique courses from classes for filter dropdown
-  const availableCourses = classes?.reduce((acc: any[], classItem: any) => {
-    if (classItem.course_name && !acc.find((c: any) => c.name === classItem.course_name)) {
+  interface ClassItem {
+    course_name?: string;
+    course_id?: string;
+    id?: string;
+  }
+  
+  interface CourseOption {
+    id: string;
+    name: string;
+  }
+  
+  const availableCourses = classes?.reduce((acc: CourseOption[], classItem: ClassItem) => {
+    if (classItem.course_name && !acc.find((c: CourseOption) => c.name === classItem.course_name)) {
       acc.push({
-        id: classItem.course_id || classItem.id,
-        name: classItem.course_name
+        id: (classItem.course_id || classItem.id) ?? '',
+        name: classItem.course_name ?? ''
       });
     }
     return acc;
@@ -217,13 +236,24 @@ export default function StudentProgressTab({ selectedSchoolId }: StudentProgress
                 />
               </div>
             </div>
+            <Select value={selectedSection} onValueChange={setSelectedSection}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="Section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sections</SelectItem>
+                {[...new Set(students.map((s: Student) => s.section).filter((s): s is string => typeof s === 'string'))].sort().map((section) => (
+                  <SelectItem key={section} value={section}>{section}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={selectedCourse} onValueChange={setSelectedCourse}>
               <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Filter by course" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Courses</SelectItem>
-                {availableCourses.map((course: any) => (
+                {availableCourses.map((course: CourseOption) => (
                   <SelectItem key={course.id} value={course.id}>
                     {course.name}
                   </SelectItem>
@@ -263,6 +293,9 @@ export default function StudentProgressTab({ selectedSchoolId }: StudentProgress
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="font-semibold">{student.full_name}</h3>
                         <Badge variant="outline">{student.grade}</Badge>
+                        {student.section && (
+                          <Badge variant="outline">Section {student.section}</Badge>
+                        )}
                         <Badge className={getStatusColor(
                           student.average_progress === 100 ? 'completed' :
                           student.average_progress > 0 ? 'in_progress' : 'not_started'

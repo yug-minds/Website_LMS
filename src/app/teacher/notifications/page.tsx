@@ -18,14 +18,6 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from "../../../components/ui/table";
-import { 
   Tabs,
   TabsContent,
   TabsList,
@@ -34,18 +26,13 @@ import {
 import { 
   Bell, 
   Send, 
-  Users, 
-  School, 
   User,
   Search,
-  Filter,
   CheckCircle,
   Clock,
   AlertCircle,
   Info,
   RefreshCw,
-  Trash2,
-  Eye,
   Reply,
   MessageSquare,
   Check
@@ -161,6 +148,7 @@ export default function TeacherNotifications() {
   useEffect(() => {
     loadNotifications();
     loadRecipients();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load when school changes only
   }, [selectedSchool]);
 
   // Use smart refresh for tab switching
@@ -222,7 +210,7 @@ export default function TeacherNotifications() {
 
         // Load reply counts for each notification
         const notificationsWithReplies = await Promise.all(
-          groupedNotifications.map(async (notif: any) => {
+          groupedNotifications.map(async (notif: Notification) => {
             const repliesResponse = await fetch(`/api/notifications/reply?notification_id=${notif.id}`, {
               credentials: 'include'
             });
@@ -239,9 +227,10 @@ export default function TeacherNotifications() {
         showToast(`Failed to load notifications: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading notifications:', error);
-      showToast(`Error loading notifications: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error loading notifications: ${msg}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -261,9 +250,10 @@ export default function TeacherNotifications() {
         showToast(`Failed to load replies: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading replies:', error);
-      showToast(`Error loading replies: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error loading replies: ${msg}`, 'error');
     } finally {
       setLoadingReplies(false);
     }
@@ -299,7 +289,7 @@ export default function TeacherNotifications() {
         setUsers(data.users || []);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading recipients:', error);
     } finally {
       setLoadingRecipients(false);
@@ -351,9 +341,10 @@ export default function TeacherNotifications() {
         showToast(`Failed to send notification: ${data.error || 'Unknown error'}`, 'error');
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error sending notification:', error);
-      showToast(`Error sending notification: ${error.message}`, 'error');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error sending notification: ${msg}`, 'error');
     } finally {
       setSending(false);
     }
@@ -364,55 +355,105 @@ export default function TeacherNotifications() {
       // Get all notification IDs in this group (if grouped) or just the single ID
       const notificationIds = notification.notification_ids || [notification.id];
       
+      // Optimistically update local state immediately
+      setNotifications(prev =>
+        prev.map((n: Notification) => 
+          n.id === notification.id 
+            ? { ...n, is_read: true } 
+            : n
+        )
+      );
+      
+      console.log('Marking teacher notification as read:', {
+        notificationId: notification.id,
+        notificationIds: notificationIds,
+        notification: notification
+      });
+      
       // Mark all notifications in the group as read
-      const updatePromises = notificationIds.map((id: string) =>
-        fetchWithCsrf(`/api/teacher/notifications/${id}`, {
+      const updatePromises = notificationIds.map(async (id: string) => {
+        const response = await fetchWithCsrf(`/api/teacher/notifications/${id}`, {
           method: 'PATCH',
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ is_read: true })
-        })
-      );
+        });
+        
+        const responseText = await response.text();
+        let errorData: { error?: string; details?: string; message?: string } = {};
+        
+        if (!response.ok && responseText) {
+          try {
+            errorData = JSON.parse(responseText);
+          } catch {
+            errorData = { error: responseText || `HTTP ${response.status}: ${response.statusText}` };
+          }
+        }
+        
+        return { response, errorData, id };
+      });
 
-      const responses = await Promise.all(updatePromises);
-      const allSuccessful = responses.every(r => r.ok);
+      const results = await Promise.all(updatePromises);
+      const allSuccessful = results.every(r => r.response.ok);
 
       if (allSuccessful) {
-        // Update the notification in the list
+        console.log('Successfully marked teacher notification as read');
+        showToast('Notification marked as read', 'success');
+      } else {
+        // Revert optimistic update on error
         setNotifications(prev =>
-          prev.map((n: any) => 
+          prev.map((n: Notification) => 
             n.id === notification.id 
-              ? { ...n, is_read: true } 
+              ? { ...n, is_read: false } 
               : n
           )
         );
-        showToast('Notification marked as read', 'success');
-      } else {
-        // Check if at least some succeeded
-        const failedCount = responses.filter(r => !r.ok).length;
-        if (failedCount < notificationIds.length) {
-          showToast('Some notifications could not be marked as read', 'error');
+        
+        // Extract error messages
+        const failedResults = results.filter(r => !r.response.ok);
+        const errorMessages = failedResults.map(r => 
+          r.errorData.details || r.errorData.error || r.errorData.message || 'Unknown error'
+        );
+        const uniqueErrors = [...new Set(errorMessages)];
+        
+        console.error('Failed to mark teacher notification as read:', {
+          failedCount: failedResults.length,
+          totalCount: notificationIds.length,
+          errors: uniqueErrors,
+          failedIds: failedResults.map(r => r.id)
+        });
+        
+        if (failedResults.length < notificationIds.length) {
+          showToast(`Some notifications could not be marked as read: ${uniqueErrors.join(', ')}`, 'error');
         } else {
-          showToast('Failed to mark as read', 'error');
+          showToast(`Failed to mark as read: ${uniqueErrors.join(', ') || 'Unknown error'}`, 'error');
         }
       }
-    } catch (error: any) {
-      console.error('Error marking notification as read:', error);
-      showToast(`Error marking as read: ${error.message}`, 'error');
+    } catch (error: unknown) {
+      setNotifications(prev =>
+        prev.map((n: Notification) => 
+          n.id === notification.id 
+            ? { ...n, is_read: false } 
+            : n
+        )
+      );
+      console.error('Error marking teacher notification as read:', error);
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      showToast(`Error marking as read: ${msg}`, 'error');
     }
   };
 
   const handleRecipientToggle = (id: string) => {
     setSelectedRecipients(prev =>
       prev.includes(id)
-        ? prev.filter((r: any) => r !== id)
+        ? prev.filter((r: string) => r !== id)
         : [...prev, id]
     );
   };
 
-  const filteredNotifications = notifications.filter((notification: any) => {
+  const filteredNotifications = notifications.filter((notification: Notification) => {
     const matchesSearch = !searchQuery || 
       notification.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       notification.message.toLowerCase().includes(searchQuery.toLowerCase()) ||

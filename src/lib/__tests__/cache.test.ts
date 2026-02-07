@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CacheTTL, getCacheHitRate } from '../cache';
-import * as redisClient from '../redis-client';
 
 // Mock Redis client
 vi.mock('../redis-client', () => ({

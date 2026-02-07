@@ -3,11 +3,10 @@
  * Pre-populates cache with frequently accessed data
  */
 
-import { getOrSetCache, setCache, getCache, CacheTTL } from './cache';
+import { setCache, getCache, CacheTTL } from './cache';
 import { supabaseAdmin } from './supabase';
 import { logger } from './logger';
 import { isRedisAvailable } from './redis-client';
-import { RefreshConfig } from './cache-config';
 
 /**
  * Warm cache for admin stats
@@ -44,12 +43,14 @@ export async function warmAdminStatsCache(): Promise<void> {
       return;
     }
 
+    type MaterializedViewRow = { total_schools?: number; total_teachers?: number; total_students?: number; active_courses?: number; pending_leaves?: number };
+    const mvDataTyped = mvData as MaterializedViewRow;
     const statsData = {
-      totalSchools: mvData.total_schools || 0,
-      totalTeachers: mvData.total_teachers || 0,
-      totalStudents: mvData.total_students || 0,
-      activeCourses: mvData.active_courses || 0,
-      pendingLeaves: mvData.pending_leaves || 0
+      totalSchools: mvDataTyped.total_schools || 0,
+      totalTeachers: mvDataTyped.total_teachers || 0,
+      totalStudents: mvDataTyped.total_students || 0,
+      activeCourses: mvDataTyped.active_courses || 0,
+      pendingLeaves: mvDataTyped.pending_leaves || 0
     };
 
     // Set cache directly (ensures it's stored in Redis)
@@ -118,7 +119,7 @@ export async function warmSchoolAdminStatsCache(schoolIds: string[]): Promise<vo
           // Call the function to populate cache
           try {
             const { data: statsData, error: functionError } = await supabaseAdmin
-              .rpc('get_school_admin_stats', { p_school_id: schoolId || undefined });
+              .rpc('get_school_admin_stats', { p_school_id: schoolId || undefined } as never);
             
             if (!functionError && statsData) {
               await setCache(cacheKey, statsData, CacheTTL.SCHOOL_STATS);
@@ -174,9 +175,10 @@ export async function warmActiveSchoolAdminDashboards(): Promise<void> {
     }
     
     // Extract unique school IDs
+    type SchoolAdminRow = { school_id: string | null };
     const schoolIds = [...new Set((activeSchoolAdmins || [])
-      .map((sa: any) => sa.school_id)
-      .filter((id: any): id is string => id !== null))];
+      .map((sa: SchoolAdminRow) => sa.school_id)
+      .filter((id: string | null): id is string => id !== null))];
     
     if (schoolIds.length === 0) {
       logger.info('No active schools found for cache warming');
@@ -199,7 +201,7 @@ export async function warmActiveSchoolAdminDashboards(): Promise<void> {
           // Call the function to populate cache
           try {
             const { data: statsData, error: functionError } = await supabaseAdmin
-              .rpc('get_school_admin_stats', { p_school_id: schoolId || undefined });
+              .rpc('get_school_admin_stats', { p_school_id: schoolId || undefined } as never);
             
             if (!functionError && statsData) {
               await setCache(cacheKey, statsData, CacheTTL.SCHOOL_STATS);
@@ -267,7 +269,8 @@ export async function warmActiveUserDashboards(): Promise<void> {
     }
     
     // Warm student dashboard caches in parallel (limited concurrency)
-    const studentIds = activeStudents?.map((p: any) => p.id) || [];
+    type ProfileRow = { id: string };
+    const studentIds = activeStudents?.map((p: ProfileRow) => p.id) || [];
     const BATCH_SIZE = 3; // Limit concurrency to avoid overwhelming database
     
     for (let i = 0; i < studentIds.length; i += BATCH_SIZE) {
@@ -284,7 +287,7 @@ export async function warmActiveUserDashboards(): Promise<void> {
           // Call the function to populate cache
           try {
             const { data: statsData, error: functionError } = await supabaseAdmin
-              .rpc('get_student_dashboard_stats_from_mv', { p_student_id: studentId });
+              .rpc('get_student_dashboard_stats_from_mv', { p_student_id: studentId } as never);
             
             if (!functionError && statsData) {
               await setCache(cacheKey, statsData, CacheTTL.USER_DASHBOARD);
@@ -297,7 +300,7 @@ export async function warmActiveUserDashboards(): Promise<void> {
     }
     
     // Warm teacher dashboard caches in parallel (limited concurrency)
-    const teacherIds = activeTeachers?.map((p: any) => p.id) || [];
+    const teacherIds = activeTeachers?.map((p: ProfileRow) => p.id) || [];
     
     for (let i = 0; i < teacherIds.length; i += BATCH_SIZE) {
       const batch = teacherIds.slice(i, i + BATCH_SIZE);
@@ -313,7 +316,7 @@ export async function warmActiveUserDashboards(): Promise<void> {
           // Call the function to populate cache
           try {
             const { data: statsData, error: functionError } = await supabaseAdmin
-              .rpc('get_teacher_dashboard_stats_from_mv', { p_teacher_id: teacherId });
+              .rpc('get_teacher_dashboard_stats_from_mv', { p_teacher_id: teacherId } as never);
             
             if (!functionError && statsData) {
               // Note: Teacher dashboard also needs classes and reports, but stats are the main bottleneck

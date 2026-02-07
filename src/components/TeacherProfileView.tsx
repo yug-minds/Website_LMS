@@ -11,18 +11,10 @@ import {
   Mail,
   Phone,
   Calendar,
-  MapPin,
-  GraduationCap,
   Briefcase,
   School,
   User,
-  Clock,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  Download,
-  ChevronLeft,
-  FileText
+  Download
 } from "lucide-react";
 
 interface Teacher {
@@ -45,6 +37,7 @@ interface TeacherSchool {
   teacher_id: string;
   school_id: string;
   grades_assigned: string[];
+  grade_sections_assigned?: string | Array<{ grade: string; sections: string[] }>;
   subjects: string[];
   working_days_per_week: number;
   max_students_per_session: number;
@@ -94,13 +87,14 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
     totalDays: 0
   });
   const [loading, setLoading] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [_selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   useEffect(() => {
     if (open && teacher) {
       setCurrentTeacher(teacher);
       loadTeacherData();
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- load when open/teacher, loadTeacherData stable */
   }, [open, teacher]);
 
   // Handle refresh trigger
@@ -108,6 +102,7 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
     if (open && teacher && refreshTrigger) {
       loadTeacherData();
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- load on refreshTrigger only */
   }, [refreshTrigger]);
 
   // Update current teacher when prop changes
@@ -142,9 +137,10 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
         
         // Calculate work summary
          
-        const presentDays = records.filter((r: any) => r.status === 'Present').length;
+        type AttendanceRecord = { status?: string };
+        const presentDays = (records as AttendanceRecord[]).filter((r: AttendanceRecord) => r.status === 'Present').length;
          
-        const leaveDays = records.filter((r: any) => r.status === 'Absent (Approved)').length;
+        const leaveDays = (records as AttendanceRecord[]).filter((r: AttendanceRecord) => r.status === 'Absent (Approved)').length;
         const totalDays = records.length;
         
         setWorkSummary({
@@ -206,7 +202,8 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
 
   const getDayStatus = (date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
-    const record = attendanceRecords.find((r: any) => r.date === dateStr);
+    type AttRecord = { date?: string; status?: string };
+    const record = attendanceRecords.find((r: AttRecord) => r.date === dateStr);
     
     if (record) {
       if (record.status === 'Present') return 'present';
@@ -225,7 +222,8 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
     if (!teacher) return;
     
     const headers = ['Date', 'Status', 'Check In', 'Check Out', 'Notes'];
-    const rows = attendanceRecords.map((r: any) => [
+    type CsvRecord = { date?: string; status?: string; check_in_time?: string; check_out_time?: string; notes?: string };
+    const rows = attendanceRecords.map((r: CsvRecord) => [
       r.date,
       r.status,
       r.check_in_time || 'N/A',
@@ -233,7 +231,7 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
       r.notes || ''
     ]);
     
-    const csv = [headers, ...rows].map((row: any) => row.join(',')).join('\n');
+    const csv = [headers, ...rows].map((row: (string | undefined)[]) => row.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -353,11 +351,40 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
                             </p>
                             <div className="mt-3 space-y-2">
                               <div>
-                                <p className="text-sm font-medium">Grades:</p>
+                                <p className="text-sm font-medium">Grades & Sections:</p>
                                 <div className="flex gap-2 mt-1">
-                                  {schoolAssignment.grades_assigned.map((grade) => (
-                                    <Badge key={grade} variant="outline">{grade}</Badge>
-                                  ))}
+                                  {(() => {
+                                    const gradeSections = schoolAssignment.grade_sections_assigned 
+                                      ? (typeof schoolAssignment.grade_sections_assigned === 'string' 
+                                          ? JSON.parse(schoolAssignment.grade_sections_assigned) 
+                                          : schoolAssignment.grade_sections_assigned)
+                                      : [];
+                                    
+                                    // Show "No grades assigned" if both are empty
+                                    if (gradeSections.length === 0 && schoolAssignment.grades_assigned.length === 0) {
+                                      return <span className="text-muted-foreground text-sm">No grades assigned</span>;
+                                    }
+                                    
+                                    // If grade_sections_assigned exists, use it; otherwise fall back to grades_assigned
+                                    if (gradeSections.length > 0) {
+                                      return gradeSections.map((gs: { grade: string; sections?: string[] }) => {
+                                        const sectionsStr = gs.sections && gs.sections.length > 0 
+                                          ? ` (${gs.sections.join(', ')})` 
+                                          : '';
+                                        return (
+                                          <Badge key={gs.grade} variant="outline" className="mr-1">
+                                            {gs.grade}{sectionsStr}
+                                          </Badge>
+                                        );
+                                      });
+                                    } else {
+                                      return schoolAssignment.grades_assigned.map((grade) => (
+                                        <Badge key={grade} variant="outline" className="mr-1">
+                                          {grade}
+                                        </Badge>
+                                      ));
+                                    }
+                                  })()}
                                 </div>
                               </div>
                               <div>
@@ -439,7 +466,7 @@ export default function TeacherProfileView({ teacher, open, onClose, refreshTrig
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-7 gap-2 p-4 bg-gray-50 rounded-lg">
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day: any) => (
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day: string) => (
                         <div key={day} className="text-center font-semibold text-sm text-gray-600 py-2">
                           {day}
                         </div>

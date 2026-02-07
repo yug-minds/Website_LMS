@@ -7,10 +7,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     // Check if bucket already exists
     const { data: buckets } = await supabaseAdmin.storage.listBuckets()
-    const existingBucket = buckets?.find((b: any) => b.id === 'certificates')
+    const existingBucket = buckets?.find((b: { id?: string }) => b.id === 'certificates')
 
     if (existingBucket) {
       return NextResponse.json({
@@ -56,19 +65,19 @@ export async function POST(request: NextRequest) {
         '4. Bucket name: "certificates", Public: true, File size limit: 5MB, Allowed types: image/png'
       ],
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   // Check if bucket exists
   try {
     const { data: buckets } = await supabaseAdmin.storage.listBuckets()
-    const certificatesBucket = buckets?.find((b: any) => b.id === 'certificates')
+    const certificatesBucket = buckets?.find((b: { id?: string }) => b.id === 'certificates')
 
     return NextResponse.json({
       exists: !!certificatesBucket,
@@ -77,9 +86,9 @@ export async function GET(request: NextRequest) {
         ? 'Certificates bucket exists' 
         : 'Certificates bucket not found. Please create it.',
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { exists: false, error: error.message },
+      { exists: false, error: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

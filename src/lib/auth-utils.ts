@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getTeacherUserId, validateTeacherSchoolAccess } from './teacher-auth';
+import { validateTeacherSchoolAccess } from './teacher-auth';
 import { getSchoolAdminSchoolId, validateSchoolAccess } from './school-admin-auth';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -149,8 +149,7 @@ export async function getUserProfile(userId: string): Promise<{ id: string; role
       .from('profiles')
       .select('id, role, school_id')
       .eq('id', userId)
-       
-      .single() as any;
+      .single();
 
     if (error || !profile) {
       // Cache null result to avoid repeated failed queries
@@ -161,7 +160,7 @@ export async function getUserProfile(userId: string): Promise<{ id: string; role
     // Cache successful result
     profileCache.set(userId, { data: profile, timestamp: Date.now() });
     return profile;
-  } catch (error) {
+  } catch {
     // Cache null result on error
     profileCache.set(userId, { data: null, timestamp: Date.now() });
     return null;
@@ -338,7 +337,7 @@ export async function verifyResourceAccess(
   request: NextRequest,
   resourceType: 'student' | 'teacher' | 'school',
   resourceId: string,
-  resourceOwnerField: string = 'id'
+  _resourceOwnerField: string = 'id'
 ): Promise<{ success: true; userId: string } | { success: false; response: NextResponse }> {
   const userId = await getAuthenticatedUserId(request);
   

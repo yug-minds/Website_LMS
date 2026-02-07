@@ -40,11 +40,12 @@ export async function GET(request: NextRequest) {
       .from('system_settings')
       .select('id, key, value, created_at, updated_at')
       .eq('key', 'main')
-       
-      .single() as any;
+      .single();
 
-    if (settings && settings.value) {
-      return NextResponse.json({ settings: { ...defaultSettings, ...settings.value } });
+    type SettingsRow = { value?: unknown };
+    const settingsTyped = settings as SettingsRow | null;
+    if (settingsTyped?.value) {
+      return NextResponse.json({ settings: { ...defaultSettings, ...(settingsTyped.value as Record<string, unknown>) } });
     }
 
     return NextResponse.json({ settings: defaultSettings });
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
     const validation = validateRequestBody(systemSettingsSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for system settings update', {
         endpoint: '/api/admin/settings',
         errors: errorMessages,
@@ -105,22 +106,21 @@ export async function POST(request: NextRequest) {
     // For now, we'll create/update a system_settings table entry
     
     // Ensure system_settings table exists (create if needed)
-    const { error: createError } = await supabaseAdmin.rpc('create_system_settings_table_if_not_exists');
+    await supabaseAdmin.rpc('create_system_settings_table_if_not_exists');
     
     // Try to upsert settings
-    const { data, error } = await (supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('system_settings')
+      // @ts-expect-error - system_settings table upsert type not in schema
       .upsert({
         key: 'main',
         value: body,
         updated_at: new Date().toISOString()
-       
-      } as any, {
+      }, {
         onConflict: 'key'
       })
       .select()
-       
-      .single() as any);
+      .single();
 
     if (error && error.code !== '42P01') { // 42P01 = table doesn't exist
       console.error('Error saving system settings:', error);

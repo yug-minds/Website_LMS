@@ -11,11 +11,8 @@ import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../../../components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { 
   Search,
-  Filter,
-  Eye,
   CheckCircle,
   XCircle,
   Clock,
@@ -24,7 +21,6 @@ import {
   User,
   BookOpen,
   Users,
-  AlertCircle,
   CheckSquare,
   Square
 } from "lucide-react";
@@ -64,7 +60,7 @@ export default function ReportsManagement() {
   });
   const [selectedReports, setSelectedReports] = useState<string[]>([]);
   const [isBulkApproveOpen, setIsBulkApproveOpen] = useState(false);
-  const [schoolId, setSchoolId] = useState<string>("");
+  const [_schoolId, setSchoolId] = useState<string>("");
 
   const loadReports = useCallback(async () => {
     try {
@@ -101,7 +97,7 @@ export default function ReportsManagement() {
       
       // Get school_id from school API response (uses school_admins table)
       try {
-        const session = await supabase.auth.getSession();
+        await supabase.auth.getSession();
         const schoolResponse = await fetchWithCsrf(`/api/school-admin/school`, {
           cache: 'no-store',
           headers: {
@@ -146,9 +142,9 @@ export default function ReportsManagement() {
     loadReports();
   }, [loadReports]);
 
-  const handleApproveReport = async (reportId: string) => {
+  const _handleApproveReport = async (reportId: string) => {
     try {
-      const session = await supabase.auth.getSession();
+      const _session = await supabase.auth.getSession();
       const response = await fetchWithCsrf(`/api/school-admin/reports/${reportId}`, {
         method: 'PATCH',
         headers: {
@@ -170,9 +166,9 @@ export default function ReportsManagement() {
     }
   };
 
-  const handleRejectReport = async (reportId: string) => {
+  const _handleRejectReport = async (reportId: string) => {
     try {
-      const session = await supabase.auth.getSession();
+      const _session = await supabase.auth.getSession();
       const response = await fetchWithCsrf(`/api/school-admin/reports/${reportId}`, {
         method: 'PATCH',
         headers: {
@@ -180,7 +176,7 @@ export default function ReportsManagement() {
         },
         body: JSON.stringify({ 
           action: 'reject',
-          notes: (reports.find((r: any) => r.id === reportId)?.notes || '') + ' [REJECTED]'
+          notes: (reports.find((r: TeacherReport) => r.id === reportId)?.notes || '') + ' [REJECTED]'
         })
       });
 
@@ -227,21 +223,21 @@ export default function ReportsManagement() {
   const handleSelectReport = (reportId: string) => {
     setSelectedReports(prev => 
       prev.includes(reportId) 
-        ? prev.filter((id: any) => id !== reportId)
+        ? prev.filter((id: string) => id !== reportId)
         : [...prev, reportId]
     );
   };
 
   const handleSelectAll = () => {
-    const pendingReports = filteredReports.filter((r: any) => r.status === 'Pending');
+    const pendingReports = filteredReports.filter((r: TeacherReport) => r.status === 'Pending');
     if (selectedReports.length === pendingReports.length) {
       setSelectedReports([]);
     } else {
-      setSelectedReports(pendingReports.map((r: any) => r.id));
+      setSelectedReports(pendingReports.map((r: TeacherReport) => r.id));
     }
   };
 
-  const filteredReports = reports.filter((report: any) => {
+  const filteredReports = reports.filter((report: TeacherReport) => {
     const matchesSearch = report.teacher.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          report.topics_taught.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          (report.grade || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -256,9 +252,9 @@ export default function ReportsManagement() {
   });
 
   const getTeachers = () => {
-    const teachers = [...new Set(reports.map((r: any) => r.teacher_id))];
-    return teachers.map((teacherId: any) => {
-      const report = reports.find((r: any) => r.teacher_id === teacherId);
+    const teachers = [...new Set(reports.map((r: TeacherReport) => r.teacher_id))];
+    return teachers.map((teacherId: string) => {
+      const report = reports.find((r: TeacherReport) => r.teacher_id === teacherId);
       return {
         id: teacherId,
         name: report?.teacher.full_name || 'Unknown'
@@ -267,14 +263,14 @@ export default function ReportsManagement() {
   };
 
   const getGrades = () => {
-    return [...new Set(reports.map((r: any) => r.grade))].sort();
+    return [...new Set(reports.map((r: TeacherReport) => r.grade))].sort();
   };
 
   const getStats = () => {
     const total = reports.length;
-    const pending = reports.filter((r: any) => r.status === 'Pending').length;
-    const approved = reports.filter((r: any) => r.status === 'Approved').length;
-    const rejected = reports.filter((r: any) => r.status === 'Rejected').length;
+    const pending = reports.filter((r: TeacherReport) => r.status === 'Pending').length;
+    const approved = reports.filter((r: TeacherReport) => r.status === 'Approved').length;
+    const rejected = reports.filter((r: TeacherReport) => r.status === 'Rejected').length;
     
     return { total, pending, approved, rejected };
   };
@@ -390,7 +386,7 @@ export default function ReportsManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Teachers</SelectItem>
-                  {getTeachers().map((teacher: any) => (
+                  {getTeachers().map((teacher: { id: string; name: string }) => (
                     <SelectItem key={teacher.id} value={teacher.id}>
                       {teacher.name}
                     </SelectItem>
@@ -407,7 +403,7 @@ export default function ReportsManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Grades</SelectItem>
-                  {getGrades().map((grade: any) => (
+                  {getGrades().map((grade: string) => (
                     <SelectItem key={grade} value={grade}>
                       Grade {grade}
                     </SelectItem>
@@ -494,7 +490,7 @@ export default function ReportsManagement() {
                     onClick={handleSelectAll}
                     className="h-8 w-8 p-0"
                   >
-                    {selectedReports.length === filteredReports.filter((r: any) => r.status === 'Pending').length ? 
+                    {selectedReports.length === filteredReports.filter((r: TeacherReport) => r.status === 'Pending').length ? 
                       <CheckSquare className="h-4 w-4" /> : 
                       <Square className="h-4 w-4" />
                     }

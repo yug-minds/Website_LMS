@@ -3,6 +3,32 @@ import { supabaseAdmin } from '../../../../../../lib/supabase'
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../../lib/rate-limit'
 import { gradeAssignment, Question, StudentAnswer } from '../../../../../../lib/assignment-grading'
 
+type AssignmentRow = {
+  id: string;
+  title?: string | null;
+  auto_grading_enabled?: boolean | null;
+  max_score?: number | null;
+  max_attempts?: number | null;
+  due_date?: string | null;
+  is_published?: boolean | null;
+};
+type QuestionRow = {
+  id: string;
+  question_type?: string | null;
+  question_text?: string | null;
+  correct_answer?: string | number | null;
+  marks?: number | null;
+  options?: string | Record<string, unknown> | unknown[] | null;
+  order_index?: number | null;
+};
+type SubmissionRow = {
+  id: string;
+  status: string;
+  grade: number | null;
+  feedback: string | null;
+  submitted_at: string | null;
+};
+
 /**
  * Table Structure Understanding:
  * 
@@ -31,6 +57,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ assignmentId: string }> }
 ) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     // Apply rate limiting
     const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE)
@@ -74,7 +109,7 @@ export async function POST(
 
     // Test database connection by checking if assignments table is accessible
     console.log('🔍 [Submit] Testing database connection...')
-    const { data: connectionTest, error: connectionError } = await supabaseAdmin
+    const { error: connectionError } = await supabaseAdmin
       .from('assignments')
       .select('id')
       .limit(1)
@@ -96,10 +131,15 @@ export async function POST(
     console.log('✅ [Submit] Database connection test passed')
 
     // Parse request body
-    let body: any
+    type SubmitBody = {
+      answers?: Record<string, unknown> | unknown[];
+      fileUrl?: string;
+      textContent?: string;
+    };
+    let body: SubmitBody;
     try {
-      body = await request.json()
-    } catch (jsonError: any) {
+      body = await request.json() as SubmitBody;
+    } catch (jsonError: unknown) {
       console.error('❌ [Submit] Error parsing request body:', jsonError)
       return NextResponse.json(
         { 
@@ -175,23 +215,25 @@ export async function POST(
       )
     }
     
-    if (!assignment) {
+    const assignmentRow = assignment as AssignmentRow | null
+    if (!assignmentRow) {
       return NextResponse.json(
         { error: 'Not Found', details: 'Assignment not found or not published' },
         { status: 404 }
       )
     }
     
-    console.log('✅ [Submit] Assignment found:', assignment.id, '-', assignment.title)
+    console.log('✅ [Submit] Assignment found:', assignmentRow.id, '-', assignmentRow.title)
 
     // STEP 2: Fetch questions from assignment_questions table
     console.log('🔍 [Submit] Step 2: Fetching questions from assignment_questions table...')
-    const { data: questions, error: questionsError } = await supabaseAdmin
+    const { data: questionsData, error: questionsError } = await supabaseAdmin
       .from('assignment_questions')
       .select('id, question_type, question_text, correct_answer, marks, options, order_index')
       .eq('assignment_id', assignmentId)
       .order('order_index', { ascending: true })
 
+    const questions = (questionsData || []) as QuestionRow[]
     if (questionsError) {
       console.warn('⚠️ [Submit] Error fetching questions (continuing anyway):', questionsError)
     } else {
@@ -201,19 +243,20 @@ export async function POST(
     // STEP 3: Check attempt limit from submissions table
     // First, check for existing submission to see if it's already submitted/graded
     console.log('🔍 [Submit] Step 3: Checking for existing submission and attempt limit...')
-    const { data: existingSubmissionCheck, error: existingSubmissionError } = await supabaseAdmin
+    const { data: existingSubmissionData, error: existingSubmissionError } = await supabaseAdmin
       .from('submissions')
       .select('id, status, submitted_at')
       .eq('assignment_id', assignmentId)
       .eq('student_id', user.id)
       .maybeSingle()
 
+    const existingSubmissionCheck = existingSubmissionData as SubmissionRow | null
     if (existingSubmissionError) {
       console.warn('⚠️ [Submit] Error checking existing submission (continuing anyway):', existingSubmissionError)
     }
 
     // If assignment has max_attempts limit, check if already submitted/graded
-    if (assignment.max_attempts && existingSubmissionCheck) {
+    if (assignmentRow.max_attempts && existingSubmissionCheck) {
       // Check if submission is already submitted or graded
       if (existingSubmissionCheck.status === 'submitted' || existingSubmissionCheck.status === 'graded') {
         // Count all submitted/graded submissions
@@ -224,11 +267,11 @@ export async function POST(
           .eq('student_id', user.id)
           .in('status', ['submitted', 'graded'])
 
-        if (!countError && submittedCount !== null && submittedCount >= assignment.max_attempts) {
+        if (!countError && submittedCount !== null && submittedCount >= (assignmentRow.max_attempts ?? 0)) {
           return NextResponse.json(
             { 
               error: 'Attempt Limit Exceeded', 
-              details: `Maximum ${assignment.max_attempts} attempt(s) allowed for this assignment. You have already submitted this assignment.` 
+              details: `Maximum ${assignmentRow.max_attempts ?? 0} attempt(s) allowed for this assignment. You have already submitted this assignment.` 
             },
             { status: 400 }
           )
@@ -243,7 +286,7 @@ export async function POST(
     let grade: number | null = null
     let feedback: string | null = null
 
-    if (assignment.auto_grading_enabled && questions && questions.length > 0) {
+    if (assignmentRow.auto_grading_enabled && questions && questions.length > 0) {
       console.log('🔍 [Submit] Step 4: Preparing auto-grading...')
       
       const studentAnswers: StudentAnswer[] = []
@@ -254,16 +297,16 @@ export async function POST(
           if (!isNaN(index) && questions[index]) {
             const question = questions[index]
             const questionType = question.question_type?.toLowerCase()
-            
+            const safeAnswer: string | number | string[] = Array.isArray(answer) ? answer as string[] : (typeof answer === 'number' ? answer : String(answer ?? ''))
             if (questionType === 'fillblank' || questionType === 'fill_blank') {
               studentAnswers.push({
                 questionId: question.id,
-                answer: Array.isArray(answer) ? answer as string[] : answer as string
+                answer: safeAnswer
               })
             } else {
               studentAnswers.push({
                 questionId: question.id,
-                answer: answer as number | string
+                answer: (typeof safeAnswer === 'string' || typeof safeAnswer === 'number') ? safeAnswer : (Array.isArray(safeAnswer) ? (safeAnswer[0] ?? '') : '')
               })
             }
           }
@@ -272,19 +315,20 @@ export async function POST(
         answers.forEach((answer, index) => {
           const question = questions[index]
           if (question) {
+            const val: string | number | string[] = typeof answer === 'number' ? answer : Array.isArray(answer) ? answer : String(answer ?? '')
             studentAnswers.push({
               questionId: question.id,
-              answer: answer
+              answer: val
             })
           }
         })
       }
       
       if (textContent && typeof textContent === 'string' && textContent.trim().length > 0) {
-        questions.forEach((question: any) => {
+        (questions || []).forEach((question: QuestionRow) => {
           const questionType = question.question_type?.toLowerCase()
           if (questionType === 'essay') {
-            const existingAnswer = studentAnswers.find((a: any) => a.questionId === question.id)
+            const existingAnswer = studentAnswers.find((a) => a.questionId === question.id)
             if (!existingAnswer) {
               studentAnswers.push({
                 questionId: question.id,
@@ -295,19 +339,19 @@ export async function POST(
         })
       }
 
-      const questionsForGrading: Question[] = questions.map((q: any) => ({
+      const questionsForGrading: Question[] = questions.map((q: QuestionRow) => ({
         id: q.id,
-        question_type: q.question_type,
-        question_text: q.question_text,
-        correct_answer: q.correct_answer,
-        marks: q.marks || 1,
-        options: q.options || []
+        question_type: q.question_type ?? '',
+        question_text: q.question_text ?? '',
+        correct_answer: q.correct_answer ?? '',
+        marks: q.marks ?? 1,
+        options: Array.isArray(q.options) ? (q.options as string[]) : (typeof q.options === 'object' && q.options && !Array.isArray(q.options) ? [] : [])
       }))
 
       gradingResult = gradeAssignment(
         questionsForGrading,
         studentAnswers,
-        assignment.auto_grading_enabled
+        !!assignmentRow.auto_grading_enabled
       )
 
       if (gradingResult.canAutoGrade) {
@@ -321,13 +365,13 @@ export async function POST(
     // STEP 5: Prepare submission data
     console.log('🔍 [Submit] Step 5: Preparing submission data...')
     
-    const answersJson: any = {}
+    const answersJson: Record<string, unknown> = {}
     if (answers && typeof answers === 'object' && !Array.isArray(answers)) {
       Object.assign(answersJson, answers)
     }
     
     if (textContent && typeof textContent === 'string' && textContent.trim().length > 0) {
-      const essayQuestionIndex = questions?.findIndex((q: any) => 
+      const essayQuestionIndex = questions?.findIndex((q: QuestionRow) => 
         q.question_type?.toLowerCase() === 'essay'
       )
       if (essayQuestionIndex !== undefined && essayQuestionIndex >= 0) {
@@ -335,10 +379,22 @@ export async function POST(
       }
     }
 
-    const submissionData: any = {
+    interface SubmissionData {
+      assignment_id: string;
+      student_id: string;
+      answers_json: Record<string, unknown> | null;
+      file_url: string | null;
+      text_content: string | null;
+      status: string;
+      submitted_at: string;
+      grade: number | null;
+      feedback: string | null;
+    }
+    
+    const submissionData: SubmissionData = {
       assignment_id: assignmentId,
       student_id: user.id,
-      answers_json: Object.keys(answersJson).length > 0 ? answersJson : (answers || null),
+      answers_json: Object.keys(answersJson).length > 0 ? answersJson : (answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : null),
       file_url: fileUrl || null,
       text_content: textContent || null,
       status: submissionStatus,
@@ -361,10 +417,10 @@ export async function POST(
     console.log('🔍 [Submit] Step 6: Using existing submission check...')
     const existingSubmission = existingSubmissionCheck
 
-    let submission
+    let submission: SubmissionRow
     if (existingSubmission) {
       // If submission is already submitted or graded and max_attempts is 1, prevent update
-      if (assignment.max_attempts === 1 && 
+      if (assignmentRow.max_attempts === 1 && 
           (existingSubmission.status === 'submitted' || existingSubmission.status === 'graded')) {
         return NextResponse.json(
           { 
@@ -376,9 +432,9 @@ export async function POST(
       }
       // STEP 7a: Update existing submission in submissions table
       console.log('🔄 [Submit] Step 7a: Updating existing submission...')
-      const { data: updatedSubmission, error: updateError } = await supabaseAdmin
+      const { data: updatedData, error: updateError } = await supabaseAdmin
         .from('submissions')
-        .update(submissionData)
+        .update(submissionData as unknown as never)
         .eq('id', existingSubmission.id)
         .select()
         .single()
@@ -412,15 +468,15 @@ export async function POST(
         )
       }
 
-      console.log('✅ [Submit] Submission updated successfully:', updatedSubmission.id)
-      submission = updatedSubmission
+      console.log('✅ [Submit] Submission updated successfully:', (updatedData as SubmissionRow)?.id)
+      submission = updatedData as SubmissionRow
     } else {
       // STEP 7b: Create new submission in submissions table
       console.log('➕ [Submit] Step 7b: Creating new submission...')
       
-      const { data: newSubmission, error: insertError } = await supabaseAdmin
+      const { data: newData, error: insertError } = await supabaseAdmin
         .from('submissions')
-        .insert(submissionData)
+        .insert(submissionData as unknown as never)
         .select()
         .single()
 
@@ -463,8 +519,8 @@ export async function POST(
         )
       }
 
-      console.log('✅ [Submit] Submission created successfully:', newSubmission.id)
-      submission = newSubmission
+      console.log('✅ [Submit] Submission created successfully:', (newData as SubmissionRow)?.id)
+      submission = newData as SubmissionRow
     }
 
     console.log('✅ [Submit] Submission flow completed successfully!')
@@ -485,25 +541,26 @@ export async function POST(
         canAutoGrade: gradingResult.canAutoGrade
       } : null
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as Error
     console.error('❌ [Submit] Unexpected error:', error)
-    console.error('   Error type:', error?.constructor?.name)
-    console.error('   Error message:', error?.message)
-    console.error('   Error stack:', error?.stack)
+    console.error('   Error type:', err?.constructor?.name)
+    console.error('   Error message:', err?.message)
+    console.error('   Error stack:', err?.stack)
     
     try {
       return NextResponse.json(
         { 
           error: 'Internal Server Error', 
-          details: error?.message || 'An unexpected error occurred',
+          details: err?.message || 'An unexpected error occurred',
           ...(process.env.NODE_ENV === 'development' && { 
-            stack: error?.stack,
-            type: error?.constructor?.name 
+            stack: err?.stack,
+            type: err?.constructor?.name 
           })
         },
         { status: 500 }
       )
-    } catch (responseError: any) {
+    } catch (responseError: unknown) {
       console.error('❌ [Submit] CRITICAL: Failed to create error response:', responseError)
       return new NextResponse(
         JSON.stringify({ 

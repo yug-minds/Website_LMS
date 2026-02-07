@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { logger, handleApiError } from '../../../../lib/logger';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 
 import { getOrSetCache, CacheTTL } from '../../../../lib/cache';
 import { getUserProfile, getAuthenticatedUserId } from '../../../../lib/auth-utils';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
-import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -99,7 +97,7 @@ try {
 
     return response;
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Unexpected error in GET /api/student/dashboard', {
       endpoint: '/api/student/dashboard',
     }, error instanceof Error ? error : new Error(String(error)));
@@ -119,8 +117,9 @@ async function getStudentDashboardStats(userId: string) {
   // Try using optimized function with indexes first (fastest - uses materialized approach)
   // Optimized functions should complete quickly, so we try without timeout first
   const functionStartTime = Date.now();
-  let statsData: any = null;
-  let functionError: any = null;
+  type DashboardStats = { activeCourses: number; pendingAssignments: number; attendancePercentage: number; averageGrade: number; completedAssignments: number };
+  let statsData: DashboardStats | null = null;
+  let functionError: { message?: string } | null = null;
   let timedOut = false;
   
   try {
@@ -128,8 +127,8 @@ async function getStudentDashboardStats(userId: string) {
     const result = await supabaseAdmin.rpc('get_student_dashboard_stats_from_mv', { p_student_id: userId });
     statsData = result.data;
     functionError = result.error;
-  } catch (error: any) {
-    functionError = error;
+  } catch (error: unknown) {
+    functionError = error instanceof Error ? { message: error.message } : { message: String(error) };
   }
   
   const functionDuration = Date.now() - functionStartTime;
@@ -172,8 +171,8 @@ async function getStudentDashboardStats(userId: string) {
   
   // Fallback to original function if new one doesn't exist or timed out
   const originalFunctionStartTime = Date.now();
-  let originalStatsData: any = null;
-  let originalFunctionError: any = null;
+  let originalStatsData: DashboardStats | null = null;
+  let originalFunctionError: { message?: string } | null = null;
   let originalTimedOut = false;
   
   try {
@@ -198,8 +197,8 @@ async function getStudentDashboardStats(userId: string) {
       originalStatsData = result.data;
       originalFunctionError = result.error;
     }
-  } catch (error: any) {
-    originalFunctionError = error;
+  } catch (error: unknown) {
+    originalFunctionError = error instanceof Error ? { message: error.message } : { message: String(error) };
   }
   
   const originalFunctionDuration = Date.now() - originalFunctionStartTime;
@@ -305,8 +304,10 @@ async function getStudentDashboardStats(userId: string) {
   const activeCoursesCount = courseIds.size || 0;
 
   // Get pending assignments and submissions in parallel (only if we have courses)
-  let pendingAssignments: any[] = [];
-  let allSubmissions: any[] = [];
+  type AssignmentRow = { id: string; due_date?: string; course_id?: string };
+  type SubmissionRow = { assignment_id: string };
+  let pendingAssignments: AssignmentRow[] = [];
+  let allSubmissions: SubmissionRow[] = [];
   
   if (courseIds.size > 0) {
     const [
@@ -343,17 +344,17 @@ async function getStudentDashboardStats(userId: string) {
     }
 
     allSubmissions = submissions || [];
-    const submittedIds = new Set(allSubmissions.map((s: any) => s.assignment_id));
-    pendingAssignments = assignments?.filter((a: any) => !submittedIds.has(a.id)) || [];
+    const submittedIds = new Set(allSubmissions.map((s: SubmissionRow) => s.assignment_id));
+    pendingAssignments = assignments?.filter((a: AssignmentRow) => !submittedIds.has(a.id)) || [];
   }
 
   // Calculate attendance stats
-  const presentCount = attendance?.filter((a: any) => a.status === 'Present').length || 0;
+  const presentCount = attendance?.filter((a: { status?: string }) => a.status === 'Present').length || 0;
   const totalCount = attendance?.length || 0;
 
   // Calculate average grade
   const avgGrade = gradedSubmissions && gradedSubmissions.length > 0
-    ? gradedSubmissions.reduce((sum: number, s: any) => sum + (s.grade || 0), 0) / gradedSubmissions.length
+    ? gradedSubmissions.reduce((sum: number, s: { grade?: number }) => sum + (s.grade || 0), 0) / gradedSubmissions.length
     : 0;
 
   const fallbackDuration = Date.now() - fallbackStartTime;

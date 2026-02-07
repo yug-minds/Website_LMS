@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
 
     // Get refresh history
     const { data: refreshHistory, error: historyError } = await supabaseAdmin
-      .rpc('get_refresh_history', { p_limit: 20 });
+      .rpc('get_refresh_history', { p_limit: 20 } as never);
 
     // Get error schools
     const { data: errorSchools } = await supabaseAdmin
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
 
     // Get recent cache operations
     const recentOperations = getCacheOperations(50);
-    const mvOperations = recentOperations.filter((op: any) => 
+    const mvOperations = recentOperations.filter((op: { key: string }) => 
       op.key.includes('admin:stats') || 
       op.key.includes('school-admin:stats')
     );

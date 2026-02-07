@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdmin } from '../../../../lib/auth-utils';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
-import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 import { logger } from '../../../../lib/logger';
 import { warmAllDashboardCaches } from '../../../../lib/cache-warming';
 
@@ -11,6 +10,13 @@ import { warmAllDashboardCaches } from '../../../../lib/cache-warming';
  * Manually warms the cache with frequently accessed data
  */
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting

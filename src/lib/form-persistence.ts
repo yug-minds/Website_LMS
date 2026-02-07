@@ -85,7 +85,8 @@ function cleanupStorage(useSession = false): void {
   }
   
   // Sort by timestamp (oldest first)
-  formKeys.sort((a: any, b: any) => a.timestamp - b.timestamp);
+  type FormKeyEntry = { key: string; timestamp: number };
+  formKeys.sort((a: FormKeyEntry, b: FormKeyEntry) => a.timestamp - b.timestamp);
   
   // Remove oldest 25% of forms
   const toRemove = Math.floor(formKeys.length * 0.25);
@@ -97,7 +98,7 @@ function cleanupStorage(useSession = false): void {
 /**
  * Save form data to storage (localStorage or sessionStorage)
  */
-export function saveFormData<T extends Record<string, any>>(
+export function saveFormData<T extends Record<string, unknown>>(
   formId: string,
   data: T,
   useSession = false
@@ -161,7 +162,7 @@ export function saveFormData<T extends Record<string, any>>(
  * Load form data from storage (localStorage or sessionStorage)
  * Tries sessionStorage first, then localStorage, then Zustand store
  */
-export function loadFormData<T extends Record<string, any>>(
+export function loadFormData<T extends Record<string, unknown>>(
   formId: string,
   useSession = false
 ): T | null {
@@ -351,7 +352,7 @@ export function hasFormData(formId: string): boolean {
  * React hook for form data persistence
  * Enhanced with Zustand store integration and session storage support
  */
-export function useFormPersistence<T extends Record<string, any>>(
+export function useFormPersistence<T extends Record<string, unknown>>(
   formId: string,
   formData: T,
   options: {

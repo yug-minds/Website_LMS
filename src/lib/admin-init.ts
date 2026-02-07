@@ -13,11 +13,11 @@ import { logger } from './logger';
 
 /**
  * Admin user configuration
- * Can be overridden via environment variables
+ * Must be set via environment variables in production. No fallbacks.
  */
 const ADMIN_CONFIG = {
-  email: process.env.ADMIN_EMAIL || 'likithkarnekota@gmail.com',
-  password: process.env.ADMIN_PASSWORD || 'Likith@1808',
+  email: process.env.ADMIN_EMAIL ?? '',
+  password: process.env.ADMIN_PASSWORD ?? '',
   full_name: process.env.ADMIN_FULL_NAME || 'Admin User',
   role: 'admin' as const,
 };
@@ -34,6 +34,10 @@ const ADMIN_CONFIG = {
  */
 export async function initializeAdminUser(): Promise<void> {
   try {
+    if (!ADMIN_CONFIG.email || !ADMIN_CONFIG.password) {
+      logger.info('Skipping admin init: ADMIN_EMAIL and ADMIN_PASSWORD must be set');
+      return;
+    }
     logger.info('Initializing admin user...', {
       email: ADMIN_CONFIG.email,
     });
@@ -49,7 +53,7 @@ export async function initializeAdminUser(): Promise<void> {
     }
 
     const existingUser = existingUsers?.users?.find(
-      (user: any) => user.email === ADMIN_CONFIG.email
+      (user: { email?: string }) => user.email === ADMIN_CONFIG.email
     );
 
     if (existingUser) {
@@ -85,7 +89,7 @@ export async function initializeAdminUser(): Promise<void> {
         .from('profiles')
         .select('id, role')
         .eq('id', existingUser.id)
-        .maybeSingle() as any;
+        .maybeSingle();
 
       if (profileError) {
         logger.warn('Failed to check admin profile', {
@@ -100,7 +104,7 @@ export async function initializeAdminUser(): Promise<void> {
               role: ADMIN_CONFIG.role,
               full_name: ADMIN_CONFIG.full_name,
               email: ADMIN_CONFIG.email,
-            })
+            } as never)
             .eq('id', existingUser.id);
 
           if (updateProfileError) {
@@ -121,8 +125,8 @@ export async function initializeAdminUser(): Promise<void> {
             email: ADMIN_CONFIG.email,
             role: ADMIN_CONFIG.role,
             school_id: null,
-          }, {
-            onConflict: 'id',
+          } as never, {
+            onConflict: 'id'
           });
 
         if (createProfileError) {

@@ -4,12 +4,12 @@ import { useState, useEffect, ReactNode } from "react";
 import { SkeletonChart } from "../ui/skeleton-chart";
 
 interface LazyChartProps {
-  children: (Charts: any) => ReactNode;
+  children: (Charts: typeof import('recharts')) => ReactNode;
   fallback?: ReactNode;
 }
 
 export default function LazyChart({ children, fallback }: LazyChartProps) {
-  const [Charts, setCharts] = useState<any>(null);
+  const [Charts, setCharts] = useState<typeof import('recharts') | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {

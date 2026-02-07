@@ -17,7 +17,7 @@ interface Section {
 // Character limit for title to fit in 2 lines (for large headings text-3xl to text-6xl)
 const TITLE_MAX_LENGTH = 85;
 
-export function SuccessSection({ s }: { s: Section }) {
+export function SuccessSection({ s, isFirst = false }: { s: Section; isFirst?: boolean }) {
   const isBlue = s.background === 'blue';
   const bgClass = isBlue ? 'bg-blue-600 text-white' : 'bg-white';
   const textClass = isBlue ? 'text-white/90' : 'text-gray-700';
@@ -35,28 +35,29 @@ export function SuccessSection({ s }: { s: Section }) {
   
   // Image container - matches reference with proper styling
   const imageEl = (
-    <div className="w-full">
+    <div className="w-full h-full flex items-start">
       {s.image_url ? (
-        <div className="w-full relative">
+        <div className="w-full h-full relative">
           {isVideo ? (
             <video
               src={s.image_url}
               controls
               playsInline
-              className="w-full h-auto object-contain bg-black rounded"
-              style={{ maxHeight: '600px', maxWidth: '100%' }}
+              className="w-full h-full object-contain bg-black rounded"
+              style={{ maxHeight: '300px', maxWidth: '100%' }}
             />
           ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
             <img 
               src={s.image_url} 
               alt={s.title} 
-              className="w-full h-auto object-contain" 
-              style={{ maxHeight: '600px', maxWidth: '100%' }}
+              className="w-full h-auto object-contain rounded" 
+              style={{ maxHeight: '300px', maxWidth: '100%' }}
             />
           )}
         </div>
       ) : (
-        <div className="w-full aspect-video bg-gray-100 rounded-lg flex items-center justify-center min-h-[400px] border-2 border-gray-200">
+        <div className="w-full bg-gray-100 rounded-lg flex items-center justify-center border-2 border-gray-200" style={{ minHeight: '200px', maxHeight: '300px' }}>
           <div className="text-center text-gray-400">
             <Award className="h-16 w-16 mx-auto mb-4 opacity-50" />
             <p className="text-sm">Media</p>
@@ -92,12 +93,12 @@ export function SuccessSection({ s }: { s: Section }) {
   );
   
   return (
-    <section className={`min-h-screen flex items-center ${bgClass} py-20 md:py-28`}>
+    <section className={`min-h-screen flex items-center ${bgClass} ${isFirst ? 'pt-1 pb-20 md:pb-28' : 'py-20 md:py-28'}`}>
       <div className="container mx-auto px-4 md:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           {/* Heading - large, bold, left-aligned with significant spacing below, limited to 2 lines */}
           <h2 
-            className={`text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-extrabold mb-12 md:mb-16 lg:mb-20 text-left ${titleClass} leading-tight max-w-5xl`}
+            className={`text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-extrabold mb-12 md:mb-16 lg:mb-20 text-left ${titleClass} leading-tight max-w-5xl`}
             style={{
               display: '-webkit-box',
               WebkitLineClamp: 2,
@@ -114,7 +115,7 @@ export function SuccessSection({ s }: { s: Section }) {
             {s.image_position === 'left' ? (
               <>
                 {/* Image on left - full width of column */}
-                <div className="w-full flex items-start">
+                <div className="w-full flex items-start self-start">
                   {imageEl}
                 </div>
                 {/* Text on right - full width of column, left-aligned */}
@@ -129,7 +130,7 @@ export function SuccessSection({ s }: { s: Section }) {
                   {textEl}
                 </div>
                 {/* Image on right - full width of column */}
-                <div className="w-full flex items-start">
+                <div className="w-full flex items-start self-start">
                   {imageEl}
                 </div>
               </>
@@ -146,8 +147,8 @@ export function DynamicSections({ sections, loading }: { sections: Section[]; lo
   if (!sections || sections.length === 0) return null;
   return (
     <>
-      {sections.map((s) => (
-        <SuccessSection key={s.id} s={s} />
+      {sections.map((s, index) => (
+        <SuccessSection key={s.id} s={s} isFirst={index === 0} />
       ))}
     </>
   );

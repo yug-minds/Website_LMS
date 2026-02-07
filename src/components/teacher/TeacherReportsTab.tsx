@@ -12,6 +12,16 @@ interface TeacherReportsTabProps {
   selectedSchoolId?: string;
 }
 
+interface Report {
+  id: string;
+  grade?: string;
+  date?: string;
+  created_at?: string;
+  report_status?: string;
+  topics_taught?: string;
+  classes?: Array<{ grade?: string }> | { grade?: string };
+}
+
 export default function TeacherReportsTab({ selectedSchoolId }: TeacherReportsTabProps) {
   const { data: reports, isLoading: reportsLoading } = useTeacherReports(selectedSchoolId, { limit: 10 });
 
@@ -36,7 +46,7 @@ export default function TeacherReportsTab({ selectedSchoolId }: TeacherReportsTa
         <CardContent>
           {reports && reports.length > 0 ? (
             <div className="space-y-3">
-              {reports.map((report: any) => (
+              {reports.map((report: Report) => (
                 <div
                   key={report.id}
                   className="flex items-center justify-between p-4 border rounded-lg"
@@ -52,7 +62,7 @@ export default function TeacherReportsTab({ selectedSchoolId }: TeacherReportsTa
                             {report.topics_taught?.substring(0, 100) || 'No topics listed'}
                           </p>
                           <p className="text-xs text-gray-400 mt-1">
-                            {new Date(report.date).toLocaleDateString()} • {new Date(report.created_at).toLocaleTimeString()}
+                            {report.date ? new Date(report.date).toLocaleDateString() : 'No date'} • {report.created_at ? new Date(report.created_at).toLocaleTimeString() : ''}
                           </p>
                         </>
                       );

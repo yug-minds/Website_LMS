@@ -3,13 +3,33 @@
 import { useState } from "react";
 import { useTeacherSchool } from "../context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
-import { useTeacherAttendance, useTeacherMonthlyAttendance, useTodayAttendanceStatus } from "../../../hooks/useTeacherData";
-import MonthlyAttendanceChart from "../../../components/teacher/MonthlyAttendanceChart";
+import { useTeacherAttendance, useTeacherMonthlyAttendance, useTeacherMonthlyAttendanceLog, useTodayAttendanceStatus } from "../../../hooks/useTeacherData";
 import { Calendar, CheckCircle, XCircle, Clock, AlertCircle, FileText } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { Progress as ProgressBar } from "../../../components/ui/progress";
 import Link from "next/link";
 import { Button } from "../../../components/ui/button";
+
+interface Period {
+  period_id?: string;
+  grade?: string;
+  subject?: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+interface MonthlyLog {
+  id?: string;
+  month?: string;
+  month_name?: string;
+  schools?: { name?: string };
+  total_working_days?: number;
+  present_days?: number;
+  absent_days?: number;
+  leave_days?: number;
+  unreported_days?: number;
+  attendance_percentage?: number;
+}
 
 /**
  * Attendance Page
@@ -23,40 +43,25 @@ export default function AttendancePage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const { data: monthlyAttendance, isLoading: monthlyLoading } = useTeacherMonthlyAttendance(
+  const { data: monthlyAttendance, isLoading: _monthlyLoading } = useTeacherMonthlyAttendance(
     selectedSchool?.id,
     6
   );
-  const { data: dailyAttendance, isLoading: dailyLoading } = useTeacherAttendance(
+  const { data: monthlyLogData, isLoading: monthlyLogLoading } = useTeacherMonthlyAttendanceLog(
+    selectedSchool?.id,
+    selectedMonth
+  );
+  const { data: dailyAttendance, isLoading: _dailyLoading } = useTeacherAttendance(
     selectedSchool?.id,
     selectedMonth
   );
 
   // Get today's attendance status and report progress
   const today = new Date().toISOString().split('T')[0];
-  const { data: todayStatus, isLoading: todayLoading } = useTodayAttendanceStatus(
+  const { data: todayStatus, isLoading: _todayLoading } = useTodayAttendanceStatus(
     selectedSchool?.id,
     today
   );
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'Present':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'Absent':
-        return <XCircle className="h-4 w-4 text-red-600" />;
-      case 'Leave-Approved':
-        return <Clock className="h-4 w-4 text-yellow-600" />;
-      case 'Leave-Rejected':
-        return <XCircle className="h-4 w-4 text-red-600" />;
-      case 'Pending':
-        return <Clock className="h-4 w-4 text-blue-600" />;
-      case 'Unreported':
-        return <AlertCircle className="h-4 w-4 text-gray-400" />;
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-400" />;
-    }
-  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -94,6 +99,55 @@ export default function AttendancePage() {
           <strong>Note:</strong> Your attendance is automatically marked as &quot;Present&quot; when you submit reports for all scheduled periods for the day.
         </p>
       </div>
+
+      {/* Current Month Stats */}
+      {currentMonthData && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Present</CardTitle>
+              <CheckCircle className="h-4 w-4 text-green-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-green-600">{currentMonthData.present_count}</div>
+              <p className="text-xs text-muted-foreground">Days present</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Absent</CardTitle>
+              <XCircle className="h-4 w-4 text-red-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600">{currentMonthData.absent_count}</div>
+              <p className="text-xs text-muted-foreground">Days absent</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Leave</CardTitle>
+              <Clock className="h-4 w-4 text-yellow-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-yellow-600">{currentMonthData.leave_count}</div>
+              <p className="text-xs text-muted-foreground">Days on leave</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Attendance %</CardTitle>
+              <Calendar className="h-4 w-4 text-blue-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-600">{attendancePercentage}%</div>
+              <p className="text-xs text-muted-foreground">This month</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Today's Attendance Status Card */}
       {todayStatus && (
@@ -148,7 +202,7 @@ export default function AttendancePage() {
                       Submitted Reports ({todayStatus.submittedPeriods.length})
                     </p>
                     <div className="space-y-1">
-                      {todayStatus.submittedPeriods.map((period: any, index: number) => {
+                      {todayStatus.submittedPeriods.map((period: Period, index: number) => {
                         const formatTime = (time: string) => {
                           if (!time) return '';
                           const [hours, minutes] = time.split(':');
@@ -185,7 +239,7 @@ export default function AttendancePage() {
                       Pending Reports ({todayStatus.pendingPeriods.length})
                     </p>
                     <div className="space-y-1">
-                      {todayStatus.pendingPeriods.map((period: any, index: number) => {
+                      {todayStatus.pendingPeriods.map((period: Period, index: number) => {
                         const formatTime = (time: string) => {
                           if (!time) return '';
                           const [hours, minutes] = time.split(':');
@@ -298,76 +352,14 @@ export default function AttendancePage() {
         </Card>
       )}
 
-      {/* Monthly Attendance Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Monthly Attendance Overview</CardTitle>
-          <CardDescription>
-            Attendance statistics for the last 6 months
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MonthlyAttendanceChart />
-        </CardContent>
-      </Card>
-
-      {/* Current Month Stats */}
-      {currentMonthData && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Present</CardTitle>
-              <CheckCircle className="h-4 w-4 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{currentMonthData.present_count}</div>
-              <p className="text-xs text-muted-foreground">Days present</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Absent</CardTitle>
-              <XCircle className="h-4 w-4 text-red-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-red-600">{currentMonthData.absent_count}</div>
-              <p className="text-xs text-muted-foreground">Days absent</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Leave</CardTitle>
-              <Clock className="h-4 w-4 text-yellow-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-yellow-600">{currentMonthData.leave_count}</div>
-              <p className="text-xs text-muted-foreground">Days on leave</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Attendance %</CardTitle>
-              <Calendar className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-blue-600">{attendancePercentage}%</div>
-              <p className="text-xs text-muted-foreground">This month</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Daily Attendance Calendar */}
+      {/* Monthly Attendance Log Table */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Daily Attendance</CardTitle>
+              <CardTitle>Monthly Attendance Log</CardTitle>
               <CardDescription>
-                Day-by-day attendance records for {new Date(selectedMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                Detailed monthly attendance breakdown
               </CardDescription>
             </div>
             <input
@@ -379,53 +371,158 @@ export default function AttendancePage() {
           </div>
         </CardHeader>
         <CardContent>
-          {dailyLoading ? (
+          {monthlyLogLoading ? (
             <div className="text-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <p className="text-sm text-gray-500 mt-4">Loading monthly attendance data...</p>
             </div>
-          ) : dailyAttendance && dailyAttendance.length > 0 ? (
-            <div className="grid grid-cols-7 gap-2">
-              {/* Calendar Grid */}
-              {Array.from({ length: new Date(selectedMonth + '-01').getDay() }, (_, i) => (
-                <div key={`empty-${i}`} className="h-16"></div>
-              ))}
-              {Array.from({ length: new Date(
-                new Date(selectedMonth + '-01').getFullYear(),
-                new Date(selectedMonth + '-01').getMonth() + 1,
-                0
-              ).getDate() }, (_, i) => {
-                const day = i + 1;
-                const dateStr = `${selectedMonth}-${String(day).padStart(2, '0')}`;
-                 
-                const attendanceRecord = dailyAttendance.find((a: any) => a.date === dateStr);
-                
-                return (
-                  <div
-                    key={day}
-                    className={`h-16 border rounded-lg p-2 flex flex-col items-center justify-center ${
-                      attendanceRecord?.status === 'Present' ? 'bg-green-50 border-green-200' :
-                      attendanceRecord?.status === 'Absent' ? 'bg-red-50 border-red-200' :
-                      attendanceRecord?.status === 'Leave-Approved' ? 'bg-yellow-50 border-yellow-200' :
-                      attendanceRecord?.status === 'Leave-Rejected' ? 'bg-red-50 border-red-200' :
-                      attendanceRecord?.status === 'Pending' ? 'bg-blue-50 border-blue-200' :
-                      'bg-gray-50 border-gray-200'
-                    }`}
-                  >
-                    <span className="text-sm font-medium">{day}</span>
-                    {attendanceRecord && (
-                      <div className="mt-1">
-                        {getStatusIcon(attendanceRecord.status)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+          ) : monthlyLogData?.monthlyData && monthlyLogData.monthlyData.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Month
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      School
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total Working Days
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Present Days
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Absent Days
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Leave Days
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Unreported Days
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Attendance %
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {monthlyLogData.monthlyData
+                    .filter((log: MonthlyLog) => {
+                      // Filter out entries with invalid month dates (defensive check)
+                      if (!log.month || !log.month_name) return false;
+                      const monthDate = new Date(log.month);
+                      return !isNaN(monthDate.getTime());
+                    })
+                    .map((log: MonthlyLog) => (
+                    <tr key={log.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {log.month_name || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                        {log.schools?.name || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {log.total_working_days ?? 0}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-green-600">
+                            {log.present_days ?? 0}
+                          </span>
+                          {(log.total_working_days ?? 0) > 0 && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({(((log.present_days ?? 0) / (log.total_working_days ?? 0)) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-red-600">
+                            {log.absent_days ?? 0}
+                          </span>
+                          {(log.total_working_days ?? 0) > 0 && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({(((log.absent_days ?? 0) / (log.total_working_days ?? 0)) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-blue-600">
+                            {log.leave_days ?? 0}
+                          </span>
+                          {(log.total_working_days ?? 0) > 0 && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({(((log.leave_days ?? 0) / (log.total_working_days ?? 0)) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium text-orange-600">
+                            {log.unreported_days ?? 0}
+                          </span>
+                          {(log.total_working_days ?? 0) > 0 && (log.unreported_days ?? 0) > 0 && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({(((log.unreported_days ?? 0) / (log.total_working_days ?? 0)) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <Badge className={
+                          (log.attendance_percentage ?? 0) >= 90 ? 'bg-green-500 text-white' :
+                          (log.attendance_percentage ?? 0) >= 75 ? 'bg-yellow-500 text-white' :
+                          (log.attendance_percentage ?? 0) >= 50 ? 'bg-orange-500 text-white' :
+                          'bg-red-500 text-white'
+                        }>
+                          {(log.attendance_percentage ?? 0).toFixed(1)}%
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {monthlyLogData.monthlyData.length > 1 && (
+                  <tfoot className="bg-gray-50">
+                    <tr>
+                      <td colSpan={2} className="px-4 py-3 text-sm font-semibold text-gray-900">
+                        Totals
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                        {monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.total_working_days || 0), 0)}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-green-600">
+                        {monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.present_days || 0), 0)}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-red-600">
+                        {monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.absent_days || 0), 0)}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-blue-600">
+                        {monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.leave_days || 0), 0)}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-orange-600">
+                        {monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.unreported_days || 0), 0)}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                        {monthlyLogData.monthlyData.length > 0
+                          ? (monthlyLogData.monthlyData.reduce((sum: number, log: MonthlyLog) => sum + (log.attendance_percentage || 0), 0) / monthlyLogData.monthlyData.length).toFixed(1)
+                          : '0.0'}%
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
             </div>
           ) : (
             <div className="text-center py-12 text-gray-500">
               <Calendar className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-              <p>No attendance records for this month</p>
-              <p className="text-sm mt-2">
+              <p>No monthly attendance data available for {new Date(`${selectedMonth}-01`).toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
+              <p className="text-sm mt-2 text-gray-400">
                 Submit reports for all scheduled periods each day to track your attendance
               </p>
               <Link href="/teacher/reports">
@@ -457,7 +554,7 @@ export default function AttendancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dailyAttendance.map((record: any) => (
+                  {dailyAttendance.map((record: { id: string; date: string; status: string; recorded_at?: string }) => (
                     <tr key={record.id} className="border-b hover:bg-gray-50">
                       <td className="p-3 text-sm">
                         {new Date(record.date).toLocaleDateString('en-US', { 

@@ -56,13 +56,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Update last_activity timestamp in database
-     
-    const { error: updateError } = await ((supabaseAdmin as any)
+    const { error: updateError } = await supabaseAdmin
       .from('profiles')
-       
-      .update({ last_activity: new Date().toISOString() } as any)
-       
-      .eq('id', userId)) as any;
+      // @ts-expect-error - Supabase generated types use never for untyped schema
+      .update({ last_activity: new Date().toISOString() })
+      .eq('id', userId);
 
     if (updateError) {
       logger.error('Error updating last_activity', {
@@ -136,27 +134,44 @@ export async function GET(request: NextRequest) {
     }
 
     // Get last_activity from database
+    type ProfileActivity = { last_activity?: string | null };
     const { data: profile, error: fetchError } = await supabaseAdmin
       .from('profiles')
       .select('last_activity')
       .eq('id', userId)
-       
-      .single() as any;
+      .single();
 
-    if (fetchError || !profile) {
+    const profileRow = profile as ProfileActivity | null;
+    if (fetchError) {
       logger.error('Error fetching last_activity', {
         endpoint: '/api/auth/activity',
         userId,
-      }, fetchError);
+        error: fetchError
+      });
       
-      return NextResponse.json(
-        { error: 'Failed to fetch activity' },
-        { status: 500 }
-      );
+      // Return null activity instead of error to prevent error spam
+      return NextResponse.json({
+        last_activity: null,
+        timestamp: new Date().toISOString(),
+        message: 'Failed to fetch activity'
+      });
+    }
+    
+    if (!profileRow) {
+      logger.warn('Profile not found for user', {
+        endpoint: '/api/auth/activity',
+        userId
+      });
+      
+      return NextResponse.json({
+        last_activity: null,
+        timestamp: new Date().toISOString(),
+        message: 'Profile not found'
+      });
     }
 
     return NextResponse.json({
-      last_activity: profile.last_activity,
+      last_activity: profileRow.last_activity ?? null,
       timestamp: new Date().toISOString()
     });
 

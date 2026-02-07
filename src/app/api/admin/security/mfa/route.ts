@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
-import { mfaActionSchema, validateRequestBody, idSchema } from '../../../../../lib/validation-schemas';
+import { mfaActionSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
 import { getRequiredEnv } from '../../../../../lib/env';
 import { z } from 'zod';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 // Local uuidSchema since it's not exported from validation-schemas
 const uuidSchema = z.string().uuid('Invalid UUID format');
@@ -32,9 +31,11 @@ async function getAdminUserId(request: NextRequest): Promise<string | null> {
       .select('role')
       .eq('id', user.id)
        
-      .single() as any;
+      .single();
 
-    if (!profile || profile.role !== 'admin') {
+    type ProfileRow = { role?: string };
+    const profileTyped = profile as ProfileRow | null;
+    if (!profileTyped || profileTyped.role !== 'admin') {
       return null;
     }
 
@@ -89,7 +90,7 @@ try {
     const validation = validateRequestBody(mfaActionSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for MFA action', {
         endpoint: '/api/admin/security/mfa',
         errors: errorMessages,
@@ -104,7 +105,7 @@ try {
       );
     }
 
-    const { action, code } = validation.data;
+    const { action, code: _code } = validation.data; // code only used for verify action
 
     const authHeader = request.headers.get('authorization');
     const token = authHeader?.replace('Bearer ', '') || null;
@@ -205,7 +206,7 @@ try {
           factorId: responseData.id || null
         });
        
-      } catch (error: any) {
+      } catch (error: unknown) {
         logger.error('Error in MFA enrollment', {
           endpoint: '/api/admin/security/mfa',
         }, error instanceof Error ? error : new Error(String(error)));
@@ -251,7 +252,14 @@ try {
 
         // Filter TOTP factors
          
-        const totpFactors = factors.filter((f: any) => f.factor_type === 'totp' || f.type === 'totp');
+        interface Factor {
+          factor_type?: string;
+          type?: string;
+          id?: string;
+          factor_id?: string;
+        }
+        
+        const totpFactors = factors.filter((f: Factor) => f.factor_type === 'totp' || f.type === 'totp');
         
         if (totpFactors && totpFactors.length > 0) {
           for (const factor of totpFactors) {
@@ -292,7 +300,7 @@ try {
           message: '2FA disabled successfully'
         });
        
-      } catch (error: any) {
+      } catch (error: unknown) {
         logger.error('Error in MFA unenrollment', {
           endpoint: '/api/admin/security/mfa',
         }, error instanceof Error ? error : new Error(String(error)));
@@ -326,7 +334,14 @@ try {
 
 // PUT: Verify and complete 2FA enrollment
 export async function PUT(request: NextRequest) {
-  const { ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -364,7 +379,7 @@ try {
     const validation = validateRequestBody(verifySchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for MFA verification', {
         endpoint: '/api/admin/security/mfa',
         method: 'PATCH',
@@ -439,7 +454,6 @@ try {
 
     const verifyData = await verifyResponse.json();
     const error = !verifyResponse.ok ? { message: verifyData.error || verifyData.message || 'Verification failed' } : null;
-    const data = verifyResponse.ok ? verifyData : null;
 
     if (error) {
       return NextResponse.json(

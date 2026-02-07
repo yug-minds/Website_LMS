@@ -17,7 +17,7 @@ export default function AdminAnalyticsTab({
   courseProgressData,
   isLoading = false
 }: AdminAnalyticsTabProps) {
-  const [Charts, setCharts] = useState<any>(null);
+  const [Charts, setCharts] = useState<typeof import("recharts") | null>(null);
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
   useEffect(() => {

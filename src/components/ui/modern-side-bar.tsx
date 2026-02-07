@@ -59,8 +59,6 @@ const getNavigationItems = (role: string, assignmentCount?: number, notification
       return [
         { id: "dashboard", name: "Overview", icon: Home, href: "/admin" },
         { id: "schools", name: "Schools Management", icon: School, href: "/admin/schools" },
-        { id: "logos", name: "School Logo Management", icon: School, href: "/admin/logos" },
-        { id: "success-stories", name: "Success Stories Management", icon: FileText, href: "/admin/success-stories" },
         { id: "school-admins", name: "School Admin Management", icon: Shield, href: "/admin/school-admins" },
         { id: "teachers", name: "Teachers Management", icon: Users, href: "/admin/teachers" },
         { id: "students", name: "Students Management", icon: User, href: "/admin/students" },
@@ -68,6 +66,8 @@ const getNavigationItems = (role: string, assignmentCount?: number, notification
         { id: "notifications", name: "Notifications", icon: Bell, href: "/admin/notifications", badge: notificationCount && notificationCount > 0 ? String(notificationCount) : undefined },
         { id: "password-reset-requests", name: "Password Reset Requests", icon: KeyRound, href: "/admin/password-reset-requests" },
         { id: "reports", name: "Teacher Reports", icon: ClipboardList, href: "/admin/reports" },
+        { id: "logos", name: "School Logo Management", icon: School, href: "/admin/logos" },
+        { id: "success-stories", name: "Success Stories Management", icon: FileText, href: "/admin/success-stories" },
         { id: "analytics", name: "Performance Analytics", icon: TrendingUp, href: "/admin/analytics" },
         { id: "monitoring", name: "System Monitoring", icon: Activity, href: "/admin/monitoring" },
         { id: "settings", name: "Settings", icon: Settings, href: "/admin/settings" },
@@ -79,8 +79,8 @@ const getNavigationItems = (role: string, assignmentCount?: number, notification
         { id: "teachers", name: "Teachers Management", icon: Users, href: "/school-admin/teachers" },
         { id: "schedules", name: "Class Scheduling", icon: Calendar, href: "/school-admin/schedules" },
         { id: "reports", name: "Teacher Reports", icon: ClipboardList, href: "/school-admin/reports" },
-        { id: "courses", name: "Courses & Progress", icon: BookOpen, href: "/school-admin/courses" },
-        { id: "analytics", name: "Analytics Dashboard", icon: TrendingUp, href: "/school-admin/analytics" },
+        { id: "courses", name: "Courses", icon: BookOpen, href: "/school-admin/courses" },
+        { id: "student-progress", name: "Student Progress", icon: BarChart3, href: "/school-admin/student-progress" },
         { id: "notifications", name: "Notifications", icon: Bell, href: "/school-admin/notifications", badge: notificationCount && notificationCount > 0 ? String(notificationCount) : undefined },
         { id: "password-reset-requests", name: "Password Reset Requests", icon: KeyRound, href: "/school-admin/password-reset-requests" },
         { id: "settings", name: "Settings", icon: Settings, href: "/school-admin/settings" },
@@ -203,7 +203,12 @@ export function Sidebar({ className = "", userRole = "student", userName = "User
     console.log('Current pathname:', pathname);
     
     // First try exact match
-    const exactMatch = navigationItems.find((item: any) => item.href === pathname);
+    interface NavigationItem {
+      id: string;
+      href: string;
+    }
+    
+    const exactMatch = navigationItems.find((item: NavigationItem) => item.href === pathname);
     if (exactMatch) {
       console.log('Found exact match:', exactMatch.id);
       setActiveItem(exactMatch.id);
@@ -214,13 +219,13 @@ export function Sidebar({ className = "", userRole = "student", userName = "User
     // Sort by length (longest first) to match most specific route first
     // This ensures /student/my-courses matches before /student
     const parentMatches = navigationItems
-      .filter((item: any) => {
+      .filter((item: NavigationItem) => {
         // Exclude /admin from parent matching to avoid conflicts
         if (item.href === '/admin') return false;
         // Only match if pathname starts with the href AND it's not just the root
         return pathname.startsWith(item.href + '/') || pathname === item.href;
       })
-      .sort((a: any, b: any) => b.href.length - a.href.length); // Longest match first
+      .sort((a: NavigationItem, b: NavigationItem) => b.href.length - a.href.length); // Longest match first
     
     if (parentMatches.length > 0) {
       const bestMatch = parentMatches[0];
@@ -263,7 +268,7 @@ export function Sidebar({ className = "", userRole = "student", userName = "User
     if (!name || typeof name !== 'string') {
       return 'U'; // Default to 'U' for User if name is missing
     }
-    const initials = name.split(' ').map((n: any) => n[0]).join('').toUpperCase().slice(0, 2);
+    const initials = name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
     return initials || 'U'; // Fallback to 'U' if no initials found
   };
 

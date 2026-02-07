@@ -27,7 +27,7 @@ if (typeof window !== 'undefined') {
     const originalWarn = console.warn;
     
     // Patch console.error
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       // Convert all arguments to strings for checking
       const messages = args.map(arg => {
         if (typeof arg === 'string') return arg;
@@ -65,7 +65,7 @@ if (typeof window !== 'undefined') {
     };
     
     // Also patch console.warn as a backup
-    console.warn = (...args: any[]) => {
+    console.warn = (...args: unknown[]) => {
       const messages = args.map(arg => {
         if (typeof arg === 'string') return arg;
         if (arg instanceof Error) return arg.message;

@@ -316,17 +316,21 @@ COMMENT ON VIEW teacher_monthly_attendance IS
 
 -- Create or replace helper function to check if teacher is assigned to a school
 CREATE OR REPLACE FUNCTION teacher_assigned_to_school(school_id_param uuid)
-RETURNS boolean AS $$
+RETURNS boolean 
+LANGUAGE plpgsql 
+SECURITY DEFINER
+SET search_path = ''
+AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM teacher_schools ts
-    JOIN profiles p ON p.id = ts.teacher_id
+    SELECT 1 FROM public.teacher_schools ts
+    JOIN public.profiles p ON p.id = ts.teacher_id
     WHERE ts.teacher_id = auth.uid()
     AND ts.school_id = school_id_param
     AND p.role = 'teacher'
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Add comment
 COMMENT ON FUNCTION teacher_assigned_to_school(uuid) IS 

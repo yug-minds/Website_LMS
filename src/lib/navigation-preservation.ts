@@ -13,7 +13,7 @@ import { useDashboardStore } from '../store/dashboard-store';
 /**
  * State cache for preserving component state during navigation
  */
-const stateCache = new Map<string, any>();
+const stateCache = new Map<string, { state: unknown; timestamp: number }>();
 
 /**
  * Save component state before navigation
@@ -131,7 +131,7 @@ export function getComponentIdFromRoute(
 export function saveDashboardState(
   dashboardId: string,
   state: {
-    filters?: any;
+    filters?: Record<string, unknown>;
     searchTerm?: string;
     activeTab?: string;
     pagination?: { page: number; pageSize: number };
@@ -182,7 +182,7 @@ export function saveDashboardState(
  * Load dashboard-specific state after navigation
  */
 export function loadDashboardState(dashboardId: string): {
-  filters?: any;
+  filters?: Record<string, unknown>;
   searchTerm?: string;
   activeTab?: string;
   pagination?: { page: number; pageSize: number };

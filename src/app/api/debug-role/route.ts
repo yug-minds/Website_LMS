@@ -37,14 +37,19 @@ try {
 			return NextResponse.json({ error: userError.message }, { status: 500 })
 		}
 		
-   
-		const user = users?.users?.find((u: any) => u.email === email)
+		type AuthUser = {
+			id: string;
+			email?: string;
+			user_metadata?: Record<string, unknown>;
+		};
+		const user = users?.users?.find((u: AuthUser) => u.email === email)
 		
 		if (!user) {
 			return NextResponse.json({ error: 'User not found' }, { status: 404 })
 		}
 		
 		// Get profile
+		type ProfileRow = { role?: string | null; [key: string]: unknown };
 		const { data: profile, error: profileError } = await supabaseAdmin
 			.from('profiles')
 			.select('*')
@@ -55,26 +60,24 @@ try {
 			return NextResponse.json({ error: profileError.message }, { status: 500 })
 		}
 		
-   
-		const profileData = profile as any;
+		const profileData = profile as ProfileRow | null;
 		return NextResponse.json({
 			userId: user.id,
 			email: user.email,
 			userMetadata: user.user_metadata,
 			profile: profileData,
-			roleFromProfile: profileData?.role,
-			roleNormalized: profileData?.role?.trim().toLowerCase(),
+			roleFromProfile: profileData?.role ?? undefined,
+			roleNormalized: profileData?.role?.trim().toLowerCase() ?? '',
 			debug: {
 				roleType: typeof profileData?.role,
-				roleLength: profileData?.role?.length,
+				roleLength: profileData?.role?.length ?? 0,
 				roleValue: JSON.stringify(profileData?.role),
 			}
 		})
 	} catch (error) {
 		logger.error('Unexpected error in GET /api/debug-role', {
 			endpoint: '/api/debug-role',
-   
-		}, error instanceof Error ? error : new Error(String(error))) as any;
+		}, error instanceof Error ? error : new Error(String(error)));
 		
 		const errorInfo = await handleApiError(
 			error,

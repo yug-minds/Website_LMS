@@ -32,7 +32,7 @@ function EssayQuestion({
 }: EssayQuestionProps) {
   const questionText = question.question || question.question_text || ''
   const wordLimit = question.word_limit
-  const wordCount = answer.trim().split(/\s+/).filter((word: any) => word.length > 0).length
+  const wordCount = answer.trim().split(/\s+/).filter((word: string) => word.length > 0).length
   const isOverLimit = wordLimit ? wordCount > wordLimit : false
 
   return (

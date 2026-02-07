@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST } from '../route';
 
 // Mock dependencies
 vi.mock('../../../../../lib/auth-utils', () => ({

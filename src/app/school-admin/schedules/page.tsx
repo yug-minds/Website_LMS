@@ -19,20 +19,14 @@ import {
   Edit,
   Trash2,
   Search,
-  Filter,
   Building2,
-  Users,
-  BookOpen,
   MapPin,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
   Send,
   Loader2
 } from "lucide-react";
 import { useSchoolAdmin } from "../../../contexts/SchoolAdminContext";
 import { useAutoSaveForm } from "../../../hooks/useAutoSaveForm";
-import { loadFormData, clearFormData } from "../../../lib/form-persistence";
+import { loadFormData } from "../../../lib/form-persistence";
 
 interface Schedule {
   id: string;
@@ -207,6 +201,7 @@ export default function ClassSchedulingPage() {
     if (schoolInfo?.id && savedRoomForm) {
       setRoomForm(savedRoomForm);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only run when schoolInfo.id changes; form keys are derived
   }, [schoolInfo?.id]);
 
   // Auto-save forms (only when schoolInfo is available)
@@ -214,7 +209,7 @@ export default function ClassSchedulingPage() {
   const periodFormId = schoolInfo?.id ? `school-admin-period-form-${schoolInfo.id}` : '';
   const roomFormId = schoolInfo?.id ? `school-admin-room-form-${schoolInfo.id}` : '';
 
-  const { isDirty: isScheduleFormDirty, clearSavedData: clearScheduleForm } = useAutoSaveForm({
+  const { isDirty: _isScheduleFormDirty, clearSavedData: _clearScheduleForm } = useAutoSaveForm({
     formId: scheduleFormId || 'temp-schedule-form',
     formData: scheduleForm,
     autoSave: !!schoolInfo?.id, // Only auto-save when schoolInfo is loaded
@@ -229,7 +224,7 @@ export default function ClassSchedulingPage() {
     markDirty: true,
   });
 
-  const { isDirty: isPeriodFormDirty, clearSavedData: clearPeriodForm } = useAutoSaveForm({
+  const { isDirty: _isPeriodFormDirty, clearSavedData: _clearPeriodForm } = useAutoSaveForm({
     formId: periodFormId || 'temp-period-form',
     formData: periodForm,
     autoSave: !!schoolInfo?.id,
@@ -244,7 +239,7 @@ export default function ClassSchedulingPage() {
     markDirty: true,
   });
 
-  const { isDirty: isRoomFormDirty, clearSavedData: clearRoomForm } = useAutoSaveForm({
+  const { isDirty: _isRoomFormDirty, clearSavedData: _clearRoomForm } = useAutoSaveForm({
     formId: roomFormId || 'temp-room-form',
     formData: roomForm,
     autoSave: !!schoolInfo?.id,
@@ -273,10 +268,8 @@ export default function ClassSchedulingPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const session = await supabase.auth.getSession();
-      const authHeader = { 'Authorization': `Bearer ${session.data.session?.access_token || ''}` };
 
-      // Fetch school info to get grades_offered
+      // Fetch school info to get grades_offered and school_id
       try {
         const schoolResponse = await fetchWithCsrf(`/api/school-admin/school`, {
           cache: 'no-store',
@@ -343,38 +336,29 @@ export default function ClassSchedulingPage() {
         // API returns: [{ teacher: {...}, profile: {...}, ...teacher_schools }]
         // We need: [{ id, full_name, email, ... }]
         // Note: teacher_id in schedules is the profile ID (user ID), not the teacher record ID
-        const transformedTeachers = teacherSchools
-           
-          .map((ts: any) => {
-            const teacher = ts.teacher || {};
-            const profile = ts.profile || {};
-            
-            // Use profile ID (user ID) as the primary ID since schedules.teacher_id references profiles.id
-            const profileId = profile.id || ts.teacher_id || teacher.profile_id;
-            
+        type TeacherSchoolRow = { id?: string; teacher_id?: string; teacher?: { full_name?: string; email?: string; phone?: string; profile_id?: string }; profile?: { id?: string; full_name?: string; email?: string; phone?: string } };
+        const transformedTeachers = (teacherSchools as TeacherSchoolRow[])
+          .map((ts) => {
+            const teacher = ts.teacher ?? {};
+            const profile = ts.profile ?? {};
+            const profileId = profile.id ?? ts.teacher_id ?? (teacher as { profile_id?: string }).profile_id;
             if (!profileId) {
               console.warn('⚠️ No profile ID found for teacher_schools record:', ts.id);
               return null;
             }
-            
-            // Use teacher data first, fallback to profile data
             const transformed = {
-              id: profileId, // This should be the profile ID (user ID)
-              full_name: teacher.full_name || profile.full_name || 'Unknown',
-              email: teacher.email || profile.email || '',
-              phone: teacher.phone || profile.phone || ''
+              id: profileId,
+              full_name: teacher.full_name ?? profile.full_name ?? 'Unknown',
+              email: teacher.email ?? profile.email ?? '',
+              phone: (teacher.phone ?? profile.phone ?? '') as string
             };
-            
-            // Validate that we have at least a name and email
             if (transformed.full_name === 'Unknown' || !transformed.email) {
               console.warn('⚠️ Invalid teacher data:', transformed);
               return null;
             }
-            
             return transformed;
           })
-           
-          .filter((teacher: any) => teacher !== null); // Filter out null entries
+          .filter((t): t is Teacher => t !== null);
         
         console.log('✅ Teachers loaded for schedule form:', transformedTeachers.length);
         if (transformedTeachers.length > 0) {
@@ -391,32 +375,25 @@ export default function ClassSchedulingPage() {
         setTeachers([]);
       }
 
-      // Load classes
-      const { data: classesData } = await supabase
-        .from('classes')
-        .select('id, class_name, grade, subject')
-        .eq('is_active', true)
-        .order('grade', { ascending: true })
-         
-        .order('class_name', { ascending: true }) as any;
-      
-      if (classesData) {
-        setClasses(classesData);
-      }
+      // Skip loading classes - the RLS policy has infinite recursion issues
+      // Classes are optional for the schedule form (it works with grades alone)
+      // Class data is also available in the schedules response when needed
+      setClasses([]);
 
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadData depends on schoolInfo.id only
+  }, [schoolInfo?.id]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
   // Filter schedules
-  const filteredSchedules = schedules.filter((schedule: any) => {
+  const filteredSchedules = schedules.filter((schedule: Schedule) => {
     const matchesDay = viewMode === 'day' ? schedule.day_of_week === selectedDay : true;
     const matchesGrade = selectedGrade === 'all' || schedule.grade === selectedGrade;
     const matchesClass = selectedClass === 'all' || schedule.class_id === selectedClass;
@@ -430,22 +407,23 @@ export default function ClassSchedulingPage() {
 
   // Group schedules by day for week view
   const schedulesByDay = DAYS_OF_WEEK.reduce((acc: Record<string, Schedule[]>, day: string) => {
-    acc[day] = filteredSchedules.filter((s: any) => s.day_of_week === day);
+    acc[day] = filteredSchedules.filter((s: Schedule) => s.day_of_week === day);
     return acc;
   }, {} as Record<string, Schedule[]>);
 
   // Handle schedule operations
   const handleCreateSchedule = async () => {
+    // Prepare request body - convert empty strings to null for optional fields
+    const requestBody = {
+      ...scheduleForm,
+      teacher_id: scheduleForm.teacher_id || null,
+      period_id: scheduleForm.period_id || null,
+      room_id: scheduleForm.room_id || null,
+      class_id: scheduleForm.class_id || null,
+      notes: scheduleForm.notes || null
+    };
+    
     try {
-      // Prepare request body - convert empty strings to null for optional fields
-      const requestBody = {
-        ...scheduleForm,
-        teacher_id: scheduleForm.teacher_id || null,
-        period_id: scheduleForm.period_id || null,
-        room_id: scheduleForm.room_id || null,
-        class_id: scheduleForm.class_id || null,
-        notes: scheduleForm.notes || null
-      };
 
       const response = await fetchWithCsrf('/api/school-admin/schedules', {
         method: 'POST',
@@ -454,8 +432,36 @@ export default function ClassSchedulingPage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        alert(`Error: ${error.error || error.details || 'Failed to create schedule'}`);
+        let error: { error?: string; message?: string; details?: string; hint?: string; code?: string } = {};
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            try {
+              error = JSON.parse(errorText) as typeof error;
+            } catch {
+              error = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
+            }
+          } else {
+            error = { error: `HTTP ${response.status}: ${response.statusText}` };
+          }
+        } catch (fetchError) {
+          error = { error: `Failed to parse error response: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}` };
+        }
+        const errorMsg = error.error ?? error.message ?? 'Failed to create schedule';
+        const errorDetails = error.details ? `\n\nDetails: ${error.details}` : '';
+        const errorHint = error.hint ? `\n\nHint: ${error.hint}` : '';
+        const errorCode = error.code ? `\n\nCode: ${error.code}` : '';
+        
+        // Log full error for debugging
+        console.error('Schedule creation error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: error,
+          requestBody: requestBody
+        });
+        
+        // Show user-friendly error message
+        alert(`Error: ${errorMsg}${errorDetails}${errorHint}${errorCode}`);
         return;
       }
 
@@ -463,8 +469,14 @@ export default function ClassSchedulingPage() {
       setScheduleDialogOpen(false);
       resetScheduleForm();
     } catch (error) {
-      console.error('Error creating schedule:', error);
-      alert('Failed to create schedule');
+      // Handle network errors, JSON parsing errors, etc.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Error creating schedule:', {
+        error: error,
+        message: errorMessage,
+        requestBody: requestBody
+      });
+      alert(`Failed to create schedule: ${errorMessage}`);
     }
   };
 
@@ -473,7 +485,7 @@ export default function ClassSchedulingPage() {
 
     try {
       const session = await supabase.auth.getSession();
-      const authHeader = { 'Authorization': `Bearer ${session.data.session?.access_token || ''}` };
+      const authHeader = { 'Authorization': `Bearer ${session.data.session?.access_token ?? ''}` };
 
       // Prepare request body - convert empty strings to null for optional fields
       const requestBody = {
@@ -511,24 +523,39 @@ export default function ClassSchedulingPage() {
     if (!confirm('Are you sure you want to delete this schedule?')) return;
 
     try {
-      const session = await supabase.auth.getSession();
-      const authHeader = { 'Authorization': `Bearer ${session.data.session?.access_token || ''}` };
-
-      const response = await fetch(`/api/school-admin/schedules/${id}`, {
+      const response = await fetchWithCsrf(`/api/school-admin/schedules/${id}`, {
         method: 'DELETE',
-        headers: authHeader
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        alert(`Error: ${error.error || error.details || 'Failed to delete schedule'}`);
+        type Err = { error?: string; message?: string; details?: string };
+        let error: Err = {};
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            try {
+              error = JSON.parse(errorText) as Err;
+            } catch {
+              error = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
+            }
+          } else {
+            error = { error: `HTTP ${response.status}: ${response.statusText}` };
+          }
+        } catch (fetchError) {
+          error = { error: `Failed to parse error response: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}` };
+        }
+        const errorMsg = error.error ?? error.message ?? 'Failed to delete schedule';
+        const errorDetails = error.details ? `\n\nDetails: ${error.details}` : '';
+        alert(`Error: ${errorMsg}${errorDetails}`);
         return;
       }
 
       await loadData();
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('Error deleting schedule:', error);
-      alert('Failed to delete schedule');
+      alert(`Failed to delete schedule: ${errorMessage}`);
     }
   };
 
@@ -672,7 +699,7 @@ export default function ClassSchedulingPage() {
   };
 
    
-  const handleEditPeriod = (period: any) => {
+  const handleEditPeriod = (period: Period) => {
     setEditingPeriod(period);
     setPeriodForm({
       period_number: period.period_number || 1,
@@ -805,7 +832,13 @@ export default function ClassSchedulingPage() {
         return;
       }
 
-      alert(`Success! ${data.synced} schedule(s) synced to teacher dashboard. ${data.skipped} already existed.`);
+      if (data.synced > 0) {
+        alert(`Success! ${data.synced} schedule(s) synced to teacher dashboard. ${data.skipped} already existed.`);
+      } else if (data.skipped > 0) {
+        alert(`All ${data.skipped} schedule(s) already exist in teacher dashboard. No new sync needed.`);
+      } else {
+        alert('No active schedules found to sync.');
+      }
     } catch (error) {
       console.error('Error syncing schedules to teachers:', error);
       alert('Failed to sync schedules to teachers');
@@ -815,7 +848,7 @@ export default function ClassSchedulingPage() {
   };
 
    
-  const handleEditRoom = (room: any) => {
+  const handleEditRoom = (room: Room) => {
     setEditingRoom(room);
     setRoomForm({
       room_number: room.room_number || '',
@@ -843,8 +876,8 @@ export default function ClassSchedulingPage() {
   const getAvailableGrades = () => {
     if (schoolGrades.length > 0) {
       // Filter AVAILABLE_GRADES to only include grades assigned to the school
-      const normalizedSchoolGrades = schoolGrades.map((g: any) => normalizeGradeForComparison(g));
-      return AVAILABLE_GRADES.filter((grade: any) => {
+      const normalizedSchoolGrades = schoolGrades.map((g: string) => normalizeGradeForComparison(g));
+      return AVAILABLE_GRADES.filter((grade: string) => {
         const normalizedGrade = normalizeGradeForComparison(grade);
         return normalizedSchoolGrades.includes(normalizedGrade);
       });
@@ -856,7 +889,7 @@ export default function ClassSchedulingPage() {
   const availableGrades = getAvailableGrades();
   
   // Get unique grades from schedules (for filter dropdown)
-  const uniqueGradesFromSchedules = [...new Set(schedules.map((s: any) => s.grade))].sort();
+  const uniqueGradesFromSchedules = [...new Set(schedules.map((s: Schedule) => s.grade))].sort();
 
   // Format time for display
   const formatTime = (time: string) => {
@@ -959,7 +992,7 @@ export default function ClassSchedulingPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {DAYS_OF_WEEK.map((day: any) => (
+                        {DAYS_OF_WEEK.map((day: string) => (
                           <SelectItem key={day} value={day}>{day}</SelectItem>
                         ))}
                       </SelectContent>
@@ -975,7 +1008,7 @@ export default function ClassSchedulingPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Grades</SelectItem>
-                      {uniqueGradesFromSchedules.map((grade: any) => (
+                      {uniqueGradesFromSchedules.map((grade: string) => (
                         <SelectItem key={grade} value={grade}>{grade}</SelectItem>
                       ))}
                     </SelectContent>
@@ -1001,7 +1034,7 @@ export default function ClassSchedulingPage() {
           {/* Week View */}
           {viewMode === 'week' && (
             <div className="space-y-4">
-              {DAYS_OF_WEEK.map((day: any) => {
+              {DAYS_OF_WEEK.map((day: string) => {
                 const daySchedules = schedulesByDay[day] || [];
                 return (
                   <Card key={day}>
@@ -1014,7 +1047,7 @@ export default function ClassSchedulingPage() {
                         <p className="text-gray-500 text-sm">No classes scheduled for this day</p>
                       ) : (
                         <div className="space-y-2">
-                          {daySchedules.map((schedule: any) => (
+                          {daySchedules.map((schedule: Schedule) => (
                             <div
                               key={schedule.id}
                               className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50"
@@ -1078,8 +1111,8 @@ export default function ClassSchedulingPage() {
                 ) : (
                   <div className="space-y-2">
                     {filteredSchedules
-                      .sort((a: any, b: any) => a.start_time.localeCompare(b.start_time))
-                      .map((schedule: any) => (
+                      .sort((a: Schedule, b: Schedule) => a.start_time.localeCompare(b.start_time))
+                      .map((schedule: Schedule) => (
                         <div
                           key={schedule.id}
                           className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50"
@@ -1140,7 +1173,7 @@ export default function ClassSchedulingPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Classes</SelectItem>
-                      {classes.map((cls: any) => (
+                      {classes.map((cls: Class) => (
                         <SelectItem key={cls.id} value={cls.id}>
                           {cls.class_name} - {cls.grade}
                         </SelectItem>
@@ -1154,12 +1187,12 @@ export default function ClassSchedulingPage() {
                 ) : (
                   <div className="space-y-2">
                     {filteredSchedules
-                      .sort((a: any, b: any) => {
+                      .sort((a: Schedule, b: Schedule) => {
                         const dayOrder = DAYS_OF_WEEK.indexOf(a.day_of_week) - DAYS_OF_WEEK.indexOf(b.day_of_week);
                         if (dayOrder !== 0) return dayOrder;
                         return a.start_time.localeCompare(b.start_time);
                       })
-                      .map((schedule: any) => (
+                      .map((schedule: Schedule) => (
                         <div
                           key={schedule.id}
                           className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50"
@@ -1229,12 +1262,12 @@ export default function ClassSchedulingPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredSchedules
-                    .sort((a: any, b: any) => {
+                    .sort((a: Schedule, b: Schedule) => {
                       const dayOrder = DAYS_OF_WEEK.indexOf(a.day_of_week) - DAYS_OF_WEEK.indexOf(b.day_of_week);
                       if (dayOrder !== 0) return dayOrder;
                       return a.start_time.localeCompare(b.start_time);
                     })
-                    .map((schedule: any) => (
+                    .map((schedule: Schedule) => (
                       <TableRow key={schedule.id}>
                         <TableCell>
                           <Badge variant="outline">{schedule.day_of_week}</Badge>
@@ -1308,7 +1341,7 @@ export default function ClassSchedulingPage() {
               <div>
                 <Label htmlFor="grade">Grade *</Label>
                 <Select
-                  value={scheduleForm.grade || undefined}
+                  value={scheduleForm.grade || ''}
                   onValueChange={(value) => setScheduleForm({ ...scheduleForm, grade: value })}
                 >
                   <SelectTrigger id="grade">
@@ -1352,7 +1385,7 @@ export default function ClassSchedulingPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {DAYS_OF_WEEK.map((day: any) => (
+                    {DAYS_OF_WEEK.map((day: string) => (
                       <SelectItem key={day} value={day}>{day}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1361,7 +1394,7 @@ export default function ClassSchedulingPage() {
               <div>
                 <Label htmlFor="teacher_id">Teacher</Label>
                 <Select
-                  value={scheduleForm.teacher_id || undefined}
+                  value={scheduleForm.teacher_id || ''}
                   onValueChange={(value) => setScheduleForm({ ...scheduleForm, teacher_id: value === 'none' ? '' : value })}
                 >
                   <SelectTrigger>
@@ -1370,7 +1403,7 @@ export default function ClassSchedulingPage() {
                   <SelectContent>
                     {teachers.length > 0 ? (
                       <>
-                        {teachers.map((teacher: any) => (
+                        {teachers.map((teacher: Teacher) => (
                           <SelectItem key={teacher.id} value={teacher.id}>
                             {teacher.full_name}
                           </SelectItem>
@@ -1388,9 +1421,9 @@ export default function ClassSchedulingPage() {
               <div>
                 <Label htmlFor="period_id">Period *</Label>
                 <Select
-                  value={scheduleForm.period_id || undefined}
+                  value={scheduleForm.period_id || ''}
                   onValueChange={(value) => {
-                    const selectedPeriod = periods.find((p: any) => p.id === value);
+                    const selectedPeriod = periods.find((p: Period) => p.id === value);
                     setScheduleForm({ 
                       ...scheduleForm, 
                       period_id: value === 'none' ? '' : value,
@@ -1405,7 +1438,7 @@ export default function ClassSchedulingPage() {
                   <SelectContent>
                     {periods.length > 0 ? (
                       <>
-                        {periods.map((period: any) => (
+                        {periods.map((period: Period) => (
                           <SelectItem key={period.id} value={period.id}>
                             Period {period.period_number} ({formatTime(period.start_time)} - {formatTime(period.end_time)})
                           </SelectItem>
@@ -1420,7 +1453,7 @@ export default function ClassSchedulingPage() {
               <div>
                 <Label htmlFor="room_id">Room</Label>
                 <Select
-                  value={scheduleForm.room_id || undefined}
+                  value={scheduleForm.room_id || ''}
                   onValueChange={(value) => setScheduleForm({ ...scheduleForm, room_id: value === 'none' ? '' : value })}
                 >
                   <SelectTrigger>
@@ -1429,7 +1462,7 @@ export default function ClassSchedulingPage() {
                   <SelectContent>
                     {rooms.length > 0 ? (
                       <>
-                        {rooms.map((room: any) => (
+                        {rooms.map((room: Room) => (
                           <SelectItem key={room.id} value={room.id}>
                             {room.room_number} {room.room_name && `- ${room.room_name}`}
                           </SelectItem>
@@ -1476,7 +1509,7 @@ export default function ClassSchedulingPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="max-h-64 overflow-y-auto space-y-2">
-              {periods.map((period: any) => (
+              {periods.map((period: Period) => (
                 <div key={period.id} className="flex items-center justify-between p-2 border rounded">
                   <div className="flex-1">
                     <div className="font-medium">Period {period.period_number}</div>
@@ -1566,7 +1599,7 @@ export default function ClassSchedulingPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="max-h-64 overflow-y-auto space-y-2">
-              {rooms.map((room: any) => (
+              {rooms.map((room: Room) => (
                 <div key={room.id} className="flex items-center justify-between p-2 border rounded">
                   <div className="flex-1">
                     <div className="font-medium">{room.room_number} {room.room_name && `- ${room.room_name}`}</div>

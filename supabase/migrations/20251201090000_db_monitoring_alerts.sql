@@ -51,7 +51,10 @@ CREATE OR REPLACE FUNCTION monitoring.post_alert(
   severity text,
   message text,
   details jsonb DEFAULT '{}'::jsonb
-) RETURNS void LANGUAGE plpgsql AS $$
+) RETURNS void 
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 DECLARE
   cfg private.monitoring_config%ROWTYPE;
   headers jsonb;
@@ -69,19 +72,29 @@ BEGIN
   END IF;
 
   -- Prepare Slack-compatible payload (simple text message + JSON details)
-  headers := jsonb_build_object('Content-Type','application/json');
-  payload := jsonb_build_object(
-    'text', format('*%s* [%s]: %s', category, severity, message),
+  headers := pg_catalog.jsonb_build_object('Content-Type','application/json');
+  payload := pg_catalog.jsonb_build_object(
+    'text', pg_catalog.format('*%s* [%s]: %s', category, severity, message),
     'details', details,
-    'timestamp', now()
+    'timestamp', pg_catalog.now()
   );
 
-  -- Send HTTP POST via pg_net (ignore failures to keep cron jobs healthy)
-  PERFORM net.http_post(
-    cfg.slack_webhook_url,
-    headers,
-    payload::text
-  );
+  -- Send HTTP POST via pg_net (now in extensions schema, with fallback)
+  -- Try extensions.net first, fallback to net for backward compatibility
+  BEGIN
+    PERFORM extensions.net.http_post(
+      cfg.slack_webhook_url,
+      headers,
+      payload::text
+    );
+  EXCEPTION WHEN OTHERS THEN
+    -- Fallback to public.net if extensions.net doesn't exist (during migration)
+    PERFORM net.http_post(
+      cfg.slack_webhook_url,
+      headers,
+      payload::text
+    );
+  END;
 EXCEPTION WHEN others THEN
   -- swallow errors to avoid failing cron
   NULL;
@@ -90,7 +103,10 @@ $$;
 
 -- Check: Active connections exceeding threshold
 CREATE OR REPLACE FUNCTION monitoring.check_active_connections()
-RETURNS void LANGUAGE plpgsql AS $$
+RETURNS void 
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 DECLARE
   cfg private.monitoring_config%ROWTYPE;
   active_count integer;
@@ -100,14 +116,14 @@ BEGIN
   threshold := cfg.connections_threshold;
 
   SELECT count(*) INTO active_count
-  FROM pg_stat_activity
+  FROM pg_catalog.pg_stat_activity
   WHERE state = 'active';
 
   IF active_count >= threshold THEN
     PERFORM monitoring.post_alert(
       category := 'DB Connections',
       severity := 'warning',
-      message := format('Active connections %s exceeds threshold %s', active_count, threshold),
+      message := pg_catalog.format('Active connections %s exceeds threshold %s', active_count, threshold),
       details := jsonb_build_object('active_connections', active_count, 'threshold', threshold)
     );
   END IF;
@@ -116,7 +132,10 @@ $$;
 
 -- Check: Slow queries based on pg_stat_statements mean_time
 CREATE OR REPLACE FUNCTION monitoring.check_slow_queries()
-RETURNS void LANGUAGE plpgsql AS $$
+RETURNS void 
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 DECLARE
   cfg private.monitoring_config%ROWTYPE;
   slow_count integer;
@@ -125,14 +144,14 @@ BEGIN
 
   -- Count queries with mean execution time above threshold
   SELECT count(*) INTO slow_count
-  FROM pg_stat_statements
+  FROM public.pg_stat_statements
   WHERE mean_time > cfg.slow_query_avg_ms;
 
   IF slow_count > 0 THEN
     PERFORM monitoring.post_alert(
       category := 'Slow Queries',
       severity := 'info',
-      message := format('%s queries exceed avg %sms', slow_count, cfg.slow_query_avg_ms),
+      message := pg_catalog.format('%s queries exceed avg %sms', slow_count, cfg.slow_query_avg_ms),
       details := jsonb_build_object('slow_query_count', slow_count, 'threshold_ms', cfg.slow_query_avg_ms)
     );
   END IF;
@@ -141,7 +160,10 @@ $$;
 
 -- Check: Long-running transactions
 CREATE OR REPLACE FUNCTION monitoring.check_long_transactions()
-RETURNS void LANGUAGE plpgsql AS $$
+RETURNS void 
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 DECLARE
   cfg private.monitoring_config%ROWTYPE;
   long_count integer;
@@ -149,15 +171,15 @@ BEGIN
   SELECT * INTO cfg FROM private.monitoring_config LIMIT 1;
 
   SELECT count(*) INTO long_count
-  FROM pg_stat_activity
+  FROM pg_catalog.pg_stat_activity
   WHERE state = 'active' AND xact_start IS NOT NULL
-    AND now() - xact_start > make_interval(secs => cfg.long_txn_seconds);
+    AND pg_catalog.now() - xact_start > pg_catalog.make_interval(secs => cfg.long_txn_seconds);
 
   IF long_count > 0 THEN
     PERFORM monitoring.post_alert(
       category := 'Long Transactions',
       severity := 'warning',
-      message := format('%s transactions > %ss', long_count, cfg.long_txn_seconds),
+      message := pg_catalog.format('%s transactions > %ss', long_count, cfg.long_txn_seconds),
       details := jsonb_build_object('long_txn_count', long_count, 'threshold_seconds', cfg.long_txn_seconds)
     );
   END IF;

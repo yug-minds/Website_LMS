@@ -6,8 +6,16 @@ import { verifyAdmin } from '../../../../lib/auth-utils';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 
+type TestUser = { email: string; password: string; full_name: string; role: 'admin' | 'teacher' | 'student' | 'school_admin' };
+type AuthListUser = { id: string; email?: string };
+type SingleRow<T> = { data: T | null; error: unknown };
+type TeacherRow = { id: string };
+type StudentSchoolRow = { id: string };
+type SchoolRow = { id: string; name: string };
+type CourseRow = { id: string; title: string };
+
 // Test users configuration
-const TEST_USERS = [
+const TEST_USERS: TestUser[] = [
   {
     email: 'admin@yugminds.com',
     password: 'admin123',
@@ -36,6 +44,13 @@ const TEST_USERS = [
 
 // POST: Restore all test data including users and related data
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -66,7 +81,7 @@ export async function POST(request: NextRequest) {
       const validation = validateRequestBody(emptyBodySchema, body);
       if (!validation.success) {
          
-        const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+        const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
         return NextResponse.json(
           { 
             error: 'Validation failed',
@@ -97,7 +112,7 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const existingUser = existingUsers?.users?.find((u: any) => u.email === userData.email);
+        const existingUser = existingUsers?.users?.find((u: AuthListUser) => u.email === userData.email);
 
         if (existingUser) {
           console.log(`✅ User ${userData.email} already exists`);
@@ -141,18 +156,17 @@ export async function POST(request: NextRequest) {
 
         // Ensure profile exists with correct role
         const userId = userIds[userData.email];
-        const { error: profileError } = await (supabaseAdmin
+        const { error: profileError } = await supabaseAdmin
           .from('profiles')
+          // @ts-expect-error - profiles table upsert type not in schema
           .upsert({
             id: userId,
             full_name: userData.full_name,
             email: userData.email,
             role: userData.role
-           
-          } as any, {
+          }, {
             onConflict: 'id'
-           
-          }) as any);
+          });
 
         if (profileError) {
           console.error(`❌ Error creating profile for ${userData.email}:`, profileError);
@@ -161,12 +175,12 @@ export async function POST(request: NextRequest) {
           console.log(`✅ Profile created/updated for ${userData.email}`);
         }
        
-      } catch (error: any) {
+      } catch (error: unknown) {
         logger.warn(`Unexpected error for user ${userData.email} (non-critical)`, {
           endpoint: '/api/admin/restore-all-data',
           email: userData.email,
         }, error instanceof Error ? error : new Error(String(error)));
-        results.users.errors.push(`${userData.email}: ${error.message || 'Unknown error'}`);
+        results.users.errors.push(`${userData.email}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
 
@@ -177,6 +191,7 @@ export async function POST(request: NextRequest) {
     // Create school
     const { error: schoolError } = await (supabaseAdmin
       .from('schools')
+      // @ts-expect-error - schools table upsert type not in schema
       .upsert({
         id: schoolId,
         name: 'YugMinds Test School',
@@ -209,12 +224,10 @@ export async function POST(request: NextRequest) {
           "Grade 5": "TEST005"
         },
         is_active: true,
-        created_by: userIds['admin@yugminds.com']
-       
-      } as any, {
+        created_by: userIds['admin@yugminds.com'],
+      }, {
         onConflict: 'id'
-       
-      }) as any);
+      }));
 
     if (schoolError) {
       console.error('⚠️ Error creating school:', schoolError.message);
@@ -225,13 +238,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Update school admin profile
-     
-    await ((supabaseAdmin as any)
+    await supabaseAdmin
       .from('profiles')
-       
-      .update({ school_id: schoolId || undefined } as any)
-       
-      .eq('id', userIds['schooladmin@yugminds.com'])) as any;
+      // @ts-expect-error - profiles table update type not in schema
+      .update({ school_id: schoolId })
+      .eq('id', userIds['schooladmin@yugminds.com']);
 
     console.log('✅ School admin profile updated');
 
@@ -240,8 +251,7 @@ export async function POST(request: NextRequest) {
       .from('teachers')
       .select('id')
       .eq('profile_id', userIds['teacher@yugminds.com'])
-       
-      .single() as any;
+      .single() as SingleRow<TeacherRow>;
 
     let teacherRecordId = teacherData?.id;
 
@@ -258,11 +268,9 @@ export async function POST(request: NextRequest) {
           experience_years: 5,
           specialization: 'Mathematics',
           status: 'Active'
-         
-        } as any)
+        } as never)
         .select('id')
-         
-        .single() as any);
+        .single()) as SingleRow<TeacherRow> & { error: unknown };
 
       if (createTeacherError) {
         console.error('⚠️ Error creating teacher record:', createTeacherError.message);
@@ -278,7 +286,7 @@ export async function POST(request: NextRequest) {
 
     if (teacherRecordId) {
       // Create teacher-school assignment
-      const { error: teacherSchoolError } = await (supabaseAdmin
+      const { error: teacherSchoolError } = await supabaseAdmin
         .from('teacher_schools')
         .upsert({
           teacher_id: teacherRecordId,
@@ -286,11 +294,9 @@ export async function POST(request: NextRequest) {
           is_primary: true,
           grades_assigned: ['Grade 5', 'Grade 4'],
           subjects: ['Mathematics', 'Science']
-         
-        } as any, {
+        } as never, {
           onConflict: 'teacher_id,school_id'
-         
-        }) as any);
+        });
 
       if (teacherSchoolError) {
         console.error('⚠️ Error creating teacher-school assignment:', teacherSchoolError.message);
@@ -305,8 +311,7 @@ export async function POST(request: NextRequest) {
       .select('id')
       .eq('student_id', userIds['student@yugminds.com'])
       .eq('school_id', schoolId)
-       
-      .single() as any;
+      .single() as SingleRow<StudentSchoolRow>;
 
     let studentSchoolRecordId = studentSchoolData?.id;
 
@@ -319,12 +324,9 @@ export async function POST(request: NextRequest) {
           grade: 'Grade 5',
           joining_code: 'TEST005',
           is_active: true
-         
-        } as any)
-         
-        .select('id') as any)
-         
-        .single() as any;
+        } as never)
+        .select('id')
+        .single()) as SingleRow<StudentSchoolRow> & { error: unknown };
 
       if (createStudentSchoolError) {
         console.error('⚠️ Error creating student_schools record:', createStudentSchoolError.message);
@@ -340,7 +342,7 @@ export async function POST(request: NextRequest) {
 
     if (studentSchoolRecordId) {
       // Create student-school assignment
-      const { error: studentSchoolError } = await (supabaseAdmin
+      const { error: studentSchoolError } = await supabaseAdmin
         .from('student_schools')
         .upsert({
           student_id: userIds['student@yugminds.com'],
@@ -348,11 +350,9 @@ export async function POST(request: NextRequest) {
           grade: 'Grade 5',
           joining_code: 'TEST005',
           is_active: true
-         
-        } as any, {
+        } as never, {
           onConflict: 'student_id,school_id'
-         
-        }) as any);
+        });
 
       if (studentSchoolError) {
         console.error('⚠️ Error creating student-school assignment:', studentSchoolError.message);
@@ -388,10 +388,9 @@ export async function POST(request: NextRequest) {
     ];
 
     for (const course of courses) {
-      const { error: courseError } = await (supabaseAdmin
+      const { error: courseError } = await supabaseAdmin
         .from('courses')
-         
-        .upsert(course as any, { onConflict: 'id' }) as any);
+        .upsert(course as never, { onConflict: 'id' });
 
       if (courseError) {
         console.error(`⚠️ Error creating course ${course.title}:`, courseError.message);
@@ -431,10 +430,9 @@ export async function POST(request: NextRequest) {
     ];
 
     for (const chapter of chapters) {
-      const { error: chapterError } = await (supabaseAdmin
+      const { error: chapterError } = await supabaseAdmin
         .from('chapters')
-         
-        .upsert(chapter as any, { onConflict: 'id' }) as any);
+        .upsert(chapter as never, { onConflict: 'id' });
 
       if (chapterError) {
         console.error(`⚠️ Error creating chapter ${chapter.title}:`, chapterError.message);
@@ -461,13 +459,11 @@ export async function POST(request: NextRequest) {
       ];
 
       for (const enrollment of enrollments) {
-        const { error: enrollError } = await (supabaseAdmin
+        const { error: enrollError } = await supabaseAdmin
           .from('enrollments')
-           
-          .upsert(enrollment as any, {
+          .upsert(enrollment as never, {
             onConflict: 'student_id,course_id'
-           
-          }) as any);
+          });
 
         if (enrollError) {
           console.error(`⚠️ Error creating enrollment:`, enrollError.message);
@@ -525,34 +521,30 @@ export async function GET(request: NextRequest) {
 
 try {
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
-    const testUserEmails = TEST_USERS.map((u: any) => u.email);
-     
-    const existingTestUsers = existingUsers?.users?.filter((u: any) => 
+    const testUserEmails = TEST_USERS.map((u: TestUser) => u.email);
+    const existingTestUsers = (existingUsers?.users?.filter((u: AuthListUser) =>
       testUserEmails.includes(u.email || '')
-    ) || [];
+    ) || []) as AuthListUser[];
 
     // Check for school
     const { data: schoolData } = await supabaseAdmin
       .from('schools')
       .select('id, name')
       .eq('id', '00000000-0000-0000-0000-000000000005')
-       
-      .single() as any;
+      .single() as SingleRow<SchoolRow>;
 
     // Check for courses
     const { data: coursesData } = await supabaseAdmin
       .from('courses')
       .select('id, title')
-       
-      .in('id', ['550e8400-e29b-41d4-a716-446655440007', '550e8400-e29b-41d4-a716-446655440008']) as any;
+      .in('id', ['550e8400-e29b-41d4-a716-446655440007', '550e8400-e29b-41d4-a716-446655440008']) as { data: CourseRow[] | null; error: unknown };
 
     return NextResponse.json({
       users: {
         total: TEST_USERS.length,
         exists: existingTestUsers.length,
-        missing: testUserEmails.filter((email: string) => 
-           
-          !existingTestUsers.some((u: any) => u.email === email)
+        missing: testUserEmails.filter((email: string) =>
+          !existingTestUsers.some((u: AuthListUser) => u.email === email)
         )
       },
       data: {

@@ -123,7 +123,7 @@ export default function AboutPage() {
                 Since our inception, we&apos;ve trained over 2,000 students across 10+ partner schools, delivering hands-on coding and robotics education that sparks curiosity and builds confidence.
               </p>
               <p className="text-white leading-relaxed text-base md:text-lg lg:text-xl">
-                Our team of expert instructors combines industry experience with a passion for teaching, creating an environment where students don&apos;t just learn—they thrive.
+                Our team of expert instructors combines industry experience with a passion for teaching, creating an environment where students don&apos;t just learn, they thrive.
               </p>
             </div>
             <div className="rounded-2xl overflow-hidden bg-gray-100 aspect-[4/3] relative max-h-[600px]">

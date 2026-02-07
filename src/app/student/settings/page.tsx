@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { supabase } from "../../../lib/supabase";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
@@ -77,7 +76,7 @@ export default function SettingsPage() {
   );
 
   // Auto-save settings form (profile and notifications, NOT password)
-  const { isDirty: isSettingsDirty, clearSavedData } = useAutoSaveForm({
+  const { isDirty: _isSettingsDirty, clearSavedData } = useAutoSaveForm({
     formId: 'student-settings-form',
     formData: {
       fullName,
@@ -108,8 +107,10 @@ export default function SettingsPage() {
   useEffect(() => {
     if (profile) {
       // Profile data from API takes precedence over saved data
-      setFullName(profile.full_name || "");
-      setEmail(profile.email || "");
+      type ProfileWithFields = { full_name?: string; email?: string };
+      const profileTyped = profile as ProfileWithFields;
+      setFullName(profileTyped.full_name || "");
+      setEmail(profileTyped.email || "");
     }
   }, [profile]);
 
@@ -260,7 +261,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>School</Label>
                 <Input
-                  value={profile?.students?.[0]?.schools?.[0]?.name || 'N/A'}
+                  value={((profile as unknown) as { students?: Array<{ schools?: Array<{ name?: string }> }> } | null)?.students?.[0]?.schools?.[0]?.name || 'N/A'}
                   disabled
                   className="bg-gray-50"
                 />
@@ -269,7 +270,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label>Grade</Label>
                 <Input
-                  value={profile?.students?.[0]?.grade || 'N/A'}
+                  value={((profile as unknown) as { students?: Array<{ grade?: string }> } | null)?.students?.[0]?.grade || 'N/A'}
                   disabled
                   className="bg-gray-50"
                 />
@@ -279,7 +280,7 @@ export default function SettingsPage() {
                 <Label>Joining Code</Label>
                 <div className="flex gap-2">
                   <Input
-                    value={profile?.students?.[0]?.joining_code || 'N/A'}
+                    value={((profile as unknown) as { students?: Array<{ joining_code?: string }> } | null)?.students?.[0]?.joining_code || 'N/A'}
                     disabled
                     className="bg-gray-50"
                   />
@@ -446,8 +447,8 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between py-3 border-b">
                 <span className="text-sm font-medium">Last Login</span>
                 <span className="text-sm text-gray-600">
-                  {(profile?.students?.[0] as any)?.last_login 
-                    ? new Date((profile?.students?.[0] as any).last_login).toLocaleString()
+                  {(((profile as unknown) as { students?: Array<{ last_login?: string }> } | null)?.students?.[0]?.last_login)
+                    ? new Date(((profile as unknown) as { students: Array<{ last_login: string }> }).students[0].last_login).toLocaleString()
                     : 'N/A'
                   }
                 </span>
@@ -455,8 +456,8 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between py-3">
                 <span className="text-sm font-medium">Account Created</span>
                 <span className="text-sm text-gray-600">
-                  {(profile?.students?.[0] as any)?.created_at 
-                    ? new Date((profile?.students?.[0] as any).created_at).toLocaleDateString()
+                  {(((profile as unknown) as { students?: Array<{ created_at?: string }> } | null)?.students?.[0]?.created_at)
+                    ? new Date(((profile as unknown) as { students: Array<{ created_at: string }> }).students[0].created_at).toLocaleDateString()
                     : 'N/A'
                   }
                 </span>

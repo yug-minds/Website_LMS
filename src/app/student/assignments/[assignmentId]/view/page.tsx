@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useStudentAssignment } from "../../../../../hooks/useStudentData";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../../../components/ui/card";
 import { Button } from "../../../../../components/ui/button";
@@ -45,7 +45,7 @@ export default function ViewSubmissionPage(props: PageProps) {
 
   const assignment = data?.assignment;
   const submission = data?.submission;
-  const questions = assignment?.questions || [];
+  const questions = useMemo(() => assignment?.questions ?? [], [assignment?.questions]);
 
   // Debug logging
   useEffect(() => {
@@ -67,6 +67,7 @@ export default function ViewSubmissionPage(props: PageProps) {
       rawData: data,
       rawSubmission: submission
     });
+   
   }, [isLoading, data, assignment, submission, questions, assignmentId]);
 
   // Wait for data to load before checking for submission
@@ -92,7 +93,7 @@ export default function ViewSubmissionPage(props: PageProps) {
             <div className="text-center py-8">
               <AlertCircle className="h-12 w-12 mx-auto mb-4 text-red-300" />
               <p className="text-lg font-medium mb-2">Error Loading Submission</p>
-              <p className="text-gray-600 mb-4">{(error as any)?.message || 'An error occurred'}</p>
+              <p className="text-gray-600 mb-4">{error instanceof Error ? error.message : 'An error occurred'}</p>
               <Link href="/student/assignments">
                 <Button variant="outline">
                   <ArrowLeft className="h-4 w-4 mr-2" />
@@ -206,11 +207,11 @@ export default function ViewSubmissionPage(props: PageProps) {
     
     if (questionType === 'fillblank' || questionType === 'fill_blank') {
       const correctAnswers = Array.isArray(question.correct_answer) 
-        ? question.correct_answer.map((a: any) => String(a).toLowerCase().trim())
+        ? question.correct_answer.map((a: unknown) => String(a).toLowerCase().trim())
         : [String(question.correct_answer).toLowerCase().trim()];
       
       if (answer.type === 'fill_blank' && Array.isArray(answer.value)) {
-        const studentAnswers = answer.value.map((a: any) => String(a).toLowerCase().trim());
+        const studentAnswers = answer.value.map((a: unknown) => String(a).toLowerCase().trim());
         return correctAnswers.length === studentAnswers.length &&
                correctAnswers.every((correct, idx) => correct === studentAnswers[idx]);
       }
@@ -553,7 +554,7 @@ export default function ViewSubmissionPage(props: PageProps) {
             <div className="text-center py-8">
               <AlertCircle className="h-12 w-12 mx-auto mb-4 text-red-500" />
               <p className="text-lg font-medium mb-2">Error Loading Submission</p>
-              <p className="text-gray-600 mb-4">{(error as any)?.message || 'Failed to load submission data'}</p>
+              <p className="text-gray-600 mb-4">{error instanceof Error ? error.message : 'Failed to load submission data'}</p>
               <Link href="/student/assignments">
                 <Button>
                   <ArrowLeft className="h-4 w-4 mr-2" />
@@ -631,7 +632,7 @@ export default function ViewSubmissionPage(props: PageProps) {
                 )}
                 {error && (
                   <>
-                    <p className="text-red-600">Error: {(error as any)?.message || 'Unknown error'}</p>
+                    <p className="text-red-600">Error: {error instanceof Error ? error.message : 'Unknown error'}</p>
                   </>
                 )}
               </div>

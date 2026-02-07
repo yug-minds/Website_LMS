@@ -1,3 +1,4 @@
+import type { ZodIssue as _ZodIssue } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, createAuthenticatedClient } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
@@ -5,8 +6,24 @@ import { createSchoolAdminSchema, updateSchoolAdminSchema, validateRequestBody }
 import { verifyAdmin } from '../../../../lib/auth-utils';
 import { logger, handleApiError } from '../../../../lib/logger';
 
+interface School {
+  id: string;
+  name?: string;
+  city?: string;
+  state?: string;
+}
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+interface SchoolAdmin {
+  id: string;
+  profile_id?: string;
+  email?: string;
+  full_name?: string;
+  school_id?: string;
+  schools?: School | null;
+  phone?: string;
+}
+
+type SchoolAdminRow = { id: string; full_name?: string; email?: string; school_id?: string; profile_id?: string; is_active?: boolean; [key: string]: unknown };
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -86,13 +103,22 @@ export async function GET(request: NextRequest) {
     if (schoolId && schoolId !== 'all') query = query.eq('school_id', schoolId);
 
     const { data: rawData, error } = await query;
-    let data = rawData ? [...rawData] : [];
+    let data: SchoolAdmin[] = rawData ? (rawData as SchoolAdmin[]) : [];
     
     // Log what we're getting from the database
     console.log(`📊 Database query returned ${data?.length || 0} school admin(s)`);
     if (data.length > 0) {
        
-      console.log('📋 Database records:', data.map((a: any) => ({
+      interface SchoolAdmin {
+        id: string;
+        full_name?: string;
+        email?: string;
+        school_id?: string;
+        phone?: string;
+        schools?: { id: string; name?: string; city?: string; state?: string } | null;
+      }
+      
+      console.log('📋 Database records:', data.map((a: SchoolAdmin) => ({
         id: a.id,
         full_name: a.full_name,
         email: a.email
@@ -116,7 +142,7 @@ export async function GET(request: NextRequest) {
     if (data.length > 0) {
       // Filter out invalid entries
        
-      data = data.filter((admin: any) => admin && admin.id);
+      data = data.filter((admin: SchoolAdmin) => admin && admin.id);
       
       // Note: We're using service role key which bypasses RLS
       // So we don't need to filter by profile role - all school_admins records are valid
@@ -131,23 +157,28 @@ export async function GET(request: NextRequest) {
     // If we have data, fetch school information separately using authenticated client with RLS
     if (data.length > 0) {
        
-      const schoolIds = [...new Set(data.map((a: any) => a.school_id).filter(Boolean))];
+      const schoolIds = [...new Set(data.map((a: SchoolAdmin) => a.school_id).filter(Boolean))];
       if (schoolIds.length > 0) {
         const { data: schoolsData, error: schoolsError } = await supabase
           .from('schools')
           .select('id, name, city, state')
            
-          .in('id', schoolIds) as any;
+          .in('id', schoolIds);
+        
+        interface School {
+          id: string;
+          name?: string;
+          city?: string;
+          state?: string;
+        }
         
         if (schoolsError) {
           console.warn('⚠️ Error fetching schools data:', schoolsError);
         } else {
-           
-          const schoolsMap = new Map((schoolsData || []).map((s: any) => [s.id, s]));
-           
-          data = data.map((admin: any) => ({
+          const schoolsMap = new Map((schoolsData || []).map((s: School) => [s.id, s]));
+          data = (data as SchoolAdmin[]).map((admin: SchoolAdmin) => ({
             ...admin,
-            schools: schoolsMap.get(admin.school_id) || null
+            schools: (admin.school_id ? schoolsMap.get(admin.school_id) : null) ?? null
           }));
         }
       }
@@ -156,7 +187,7 @@ export async function GET(request: NextRequest) {
     console.log(`✅ Fetched ${data?.length || 0} school admin(s) from database`);
     if (data.length > 0) {
        
-      console.log('📋 School admins:', data.map((a: any) => ({ 
+      console.log('📋 School admins:', data.map((a: SchoolAdmin) => ({ 
         id: a.id, 
         name: a.full_name, 
         email: a.email, 
@@ -171,7 +202,7 @@ export async function GET(request: NextRequest) {
     if (search) {
       const s = search.toLowerCase();
        
-      admins = admins.filter((a: any) => {
+      admins = admins.filter((a: SchoolAdmin) => {
         const name = (a.full_name || '').toLowerCase();
         const email = (a.email || '').toLowerCase();
         const phone = (a.phone || '').toLowerCase();
@@ -205,7 +236,14 @@ export async function GET(request: NextRequest) {
 
 // POST: Create a new school admin
 export async function POST(request: NextRequest) {
-  const { ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
@@ -229,7 +267,7 @@ try {
     const validation = validateRequestBody(createSchoolAdminSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school admin creation', {
         endpoint: '/api/admin/school-admins',
         errors: errorMessages,
@@ -260,7 +298,7 @@ try {
         console.error('❌ Error listing users:', listError);
       } else {
          
-        const existingAuthUser = authUsers?.users?.find((user: any) => user.email === email);
+        const existingAuthUser = authUsers?.users?.find((user: { email?: string }) => user.email === email);
         if (existingAuthUser) {
           console.log('✅ Found existing user in Auth:', existingAuthUser.id);
           userId = existingAuthUser.id;
@@ -326,18 +364,17 @@ try {
       console.log('👤 Creating/updating profile...');
       const { error: profileError } = await (supabaseAdmin
         .from('profiles')
+        // @ts-expect-error - profiles table upsert type not in schema
         .upsert({
           id: userId,
           full_name,
           email,
           role: 'school_admin',
           school_id,
-          phone: phone || null
-         
-        } as any, {
+          phone: phone || null,
+        }, {
           onConflict: 'id'
-         
-        }) as any);
+        }));
 
       if (profileError) {
         logger.warn('Error creating/updating profile (non-critical)', {
@@ -353,8 +390,7 @@ try {
       .from('school_admins')
       .select('id, email, school_id')
       .eq('email', email)
-       
-      .maybeSingle() as any;
+      .maybeSingle();
 
     if (checkError && checkError.code !== 'PGRST116') {
       logger.error('Error checking for existing school admin', {
@@ -373,11 +409,23 @@ try {
     let schoolAdminError;
 
     if (existingAdmin) {
+      const existing = existingAdmin as SchoolAdminRow;
       // Update existing school admin
-      console.log('📝 Updating existing school admin:', existingAdmin.id);
+      console.log('📝 Updating existing school admin:', existing.id);
        
-      const { data: updatedAdmin, error: updateError } = await ((supabaseAdmin as any)
+      interface SchoolAdminUpdate {
+        profile_id: string;
+        school_id: string;
+        full_name: string;
+        phone: string | null;
+        temp_password: string;
+        is_active: boolean;
+        updated_at: string;
+      }
+      
+      const { data: updatedAdmin, error: updateError } = await supabaseAdmin
         .from('school_admins')
+        // @ts-expect-error - school_admins table update type not in schema
         .update({
           profile_id: userId,
           school_id,
@@ -386,21 +434,19 @@ try {
           temp_password: finalPassword,
           is_active: true,
           updated_at: new Date().toISOString()
-         
-        } as any)
-         
-        .eq('id', existingAdmin.id as any)
+        } as SchoolAdminUpdate)
+        .eq('id', existing.id)
         .select()
-         
-        .single() as any) as any;
+        .single();
 
-      schoolAdminData = updatedAdmin;
+      schoolAdminData = updatedAdmin as SchoolAdminRow | null;
       schoolAdminError = updateError;
     } else {
       // Create new school admin
       console.log('➕ Creating new school admin record...');
       const { data: newAdmin, error: insertError } = await (supabaseAdmin
         .from('school_admins')
+        // @ts-expect-error - school_admins table insert type not in schema
         .insert({
           profile_id: userId,
           school_id,
@@ -410,14 +456,12 @@ try {
           temp_password: finalPassword,
           is_active: true,
           permissions: permissions || {},
-          created_at: new Date().toISOString()
-         
-        } as any)
+          created_at: new Date().toISOString(),
+        })
         .select()
-         
-        .single() as any);
+        .single());
 
-      schoolAdminData = newAdmin;
+      schoolAdminData = newAdmin as SchoolAdminRow | null;
       schoolAdminError = insertError;
     }
 
@@ -434,7 +478,8 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
-    if (!schoolAdminData) {
+    const adminRow = schoolAdminData as SchoolAdminRow | null;
+    if (!adminRow) {
       logger.error('School admin creation returned no data', {
         endpoint: '/api/admin/school-admins',
       });
@@ -450,20 +495,19 @@ try {
       .from('schools')
       .select('id, name, city, state')
       .eq('id', school_id)
-       
-      .single() as any;
+      .single();
 
     console.log('✅ School admin created/updated successfully:', {
-      id: schoolAdminData.id,
-      name: schoolAdminData.full_name,
-      email: schoolAdminData.email,
-      school_id: schoolAdminData.school_id
+      id: adminRow.id,
+      name: adminRow.full_name,
+      email: adminRow.email,
+      school_id: adminRow.school_id
     });
 
     const successResponse = NextResponse.json({
       success: true,
       schoolAdmin: {
-        ...schoolAdminData,
+        ...adminRow,
         schools: schoolData || null
       },
       message: 'School admin created successfully'
@@ -516,8 +560,7 @@ try {
     // Validate request body
     const validation = validateRequestBody(updateSchoolAdminSchema, body);
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school admin update', {
         endpoint: '/api/admin/school-admins',
         method: 'PUT',
@@ -542,8 +585,7 @@ try {
       .from('school_admins')
       .select('id, profile_id, email')
       .eq('id', id)
-       
-      .single() as any;
+      .single();
 
     if (fetchError || !currentAdmin) {
       logger.error('Error fetching school admin', {
@@ -560,11 +602,13 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
+    const currentAdminRow = currentAdmin as SchoolAdminRow;
+
     // If password change is requested, update it in Supabase Auth
     if (change_password && temp_password) {
-      console.log('🔐 Changing password for school admin:', currentAdmin.email);
+      console.log('🔐 Changing password for school admin:', currentAdminRow.email);
       
-      if (!currentAdmin.profile_id) {
+      if (!currentAdminRow.profile_id) {
         logger.warn('No profile_id found for school admin', {
           endpoint: '/api/admin/school-admins',
           method: 'PUT',
@@ -580,7 +624,7 @@ try {
       try {
         // Update password in Supabase Auth
         const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(
-          currentAdmin.profile_id,
+          currentAdminRow.profile_id,
           { password: temp_password }
         );
 
@@ -616,7 +660,16 @@ try {
 
     // Build update object
      
-    const updateFields: any = {
+    interface SchoolAdminUpdateFields {
+      updated_at?: string;
+      is_active?: boolean;
+      temp_password?: string;
+      full_name?: string;
+      phone?: string;
+      permissions?: Record<string, boolean>;
+    }
+    
+    const updateFields: SchoolAdminUpdateFields = {
       updated_at: new Date().toISOString()
     };
 
@@ -636,14 +689,13 @@ try {
     }
 
      
-    const { data: updatedAdmin, error } = await ((supabaseAdmin as any)
+    const { data: updatedAdmin, error } = await supabaseAdmin
       .from('school_admins')
-       
-      .update(updateFields as any)
+      // @ts-expect-error - school_admins table update type not in schema
+      .update(updateFields)
       .eq('id', id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (error) {
       logger.error('Error updating school admin', {
@@ -660,7 +712,8 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
-    if (!updatedAdmin) {
+    const updatedRow = updatedAdmin as SchoolAdminRow | null;
+    if (!updatedRow) {
       logger.error('No data returned from update', {
         endpoint: '/api/admin/school-admins',
         method: 'PUT',
@@ -676,15 +729,15 @@ try {
     }
 
     console.log('✅ School admin updated successfully:', {
-      id: updatedAdmin.id,
-      is_active: updatedAdmin.is_active,
-      full_name: updatedAdmin.full_name,
+      id: updatedRow.id,
+      is_active: updatedRow.is_active,
+      full_name: updatedRow.full_name,
       password_changed: change_password || false
     });
     
     const successResponse = NextResponse.json({
       success: true,
-      schoolAdmin: updatedAdmin,
+      schoolAdmin: updatedRow,
       message: change_password ? 'Password changed successfully' : 'School admin updated successfully'
     });
     ensureCsrfToken(successResponse, request);
@@ -747,8 +800,7 @@ try {
       .from('school_admins')
       .select('id, profile_id, email')
       .eq('id', id)
-       
-      .single() as any;
+      .single();
 
     if (fetchError || !adminToDelete) {
       console.error('❌ Error fetching school admin:', fetchError);

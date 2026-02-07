@@ -23,17 +23,20 @@ export default function TeacherLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<any>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  type AuthUser = { id: string; email?: string };
+  type UserProfile = { id: string; full_name?: string; email?: string; role?: string };
+  type School = { id: string; name: string; school_code?: string };
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
    
-  const [schools, setSchools] = useState<any[]>([]);
-  const [selectedSchool, setSelectedSchool] = useState<any>(null);
+  const [schools, setSchools] = useState<School[]>([]);
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   
   // Get sidebar state from store
   const sidebarCollapsed = useAppStore((state: AppState) => state.sidebarCollapsed);
-  const setSidebarCollapsed = useAppStore((state: AppState) => state.setSidebarCollapsed);
+  const _setSidebarCollapsed = useAppStore((state: AppState) => state.setSidebarCollapsed);
 
   // Refs for concurrency protection and preventing loops
   const getUserInProgressRef = useRef(false);
@@ -68,7 +71,7 @@ export default function TeacherLayout({
   });
 
   // Use session validation hook for automatic session management
-  const { logout, isValid: sessionValid } = useSessionValidation({
+  const { logout, isValid: _sessionValid } = useSessionValidation({
     checkInterval: 30000, // Check every 30 seconds
     showAlert: true,
     redirectOnInvalid: true,
@@ -138,7 +141,7 @@ export default function TeacherLayout({
         
         const session = sessionResult.session;
         console.log('✅ Teacher layout: Session found, user ID:', session.user.id);
-        console.log('✅ Teacher layout: Session expires at:', new Date(session.expires_at * 1000).toISOString());
+        console.log('✅ Teacher layout: Session expires at:', new Date((session.expires_at ?? 0) * 1000).toISOString());
         
         // Verify session is valid and not expired
         const now = Math.floor(Date.now() / 1000);
@@ -193,7 +196,7 @@ export default function TeacherLayout({
 
         // Get teacher's assigned schools via API route (bypasses RLS securely)
          
-        let schoolsData: any[] = [];
+        let schoolsData: School[] = [];
         try {
           const schoolsResponse = await fetchWithCsrf('/api/teacher/schools', {
             cache: 'no-store',
@@ -226,7 +229,7 @@ export default function TeacherLayout({
               try {
                 const savedSchoolId = sessionStorage.getItem('selectedSchoolId');
                 if (savedSchoolId) {
-                  const savedSchool = schoolsData.find((s: any) => s.id === savedSchoolId);
+                  const savedSchool = schoolsData.find((s: School) => s.id === savedSchoolId);
                   if (savedSchool) {
                     schoolToSelect = savedSchool;
                   }
@@ -293,7 +296,7 @@ export default function TeacherLayout({
     // Listen for profile updates from settings page
     const handleProfileUpdate = async (event: Event) => {
        
-      const customEvent = event as CustomEvent<{ profile: any }>;
+      const customEvent = event as CustomEvent<{ profile: UserProfile }>;
       console.log('🔄 Profile updated event received:', customEvent.detail);
       if (mounted && customEvent.detail?.profile) {
         const updatedProfile = customEvent.detail.profile;
@@ -337,7 +340,8 @@ export default function TeacherLayout({
       }
       window.removeEventListener('teacherProfileUpdated', handleProfileUpdate as EventListener);
     };
-  }, []); // Empty dependency array - router is stable in Next.js 13+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run once on mount, router stable
+  }, []);
 
   // Start activity tracking when user is authenticated
   useEffect(() => {
@@ -362,7 +366,7 @@ export default function TeacherLayout({
   };
 
    
-  const handleSchoolChange = (school: any) => {
+  const handleSchoolChange = (school: School) => {
     setSelectedSchool(school);
     if (typeof window !== 'undefined') {
       try {
@@ -403,7 +407,7 @@ export default function TeacherLayout({
                 <select
                   value={selectedSchool?.id || ''}
                   onChange={(e) => {
-                    const school = schools.find((s: any) => s.id === e.target.value);
+                    const school = schools.find((s: School) => s.id === e.target.value);
                     if (school) handleSchoolChange(school);
                   }}
                   className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"

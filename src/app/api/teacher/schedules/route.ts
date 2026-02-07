@@ -3,7 +3,7 @@ import { getTeacherUserId } from '../../../../lib/teacher-auth';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { logger, handleApiError } from '../../../../lib/logger';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
 
 // GET /api/teacher/schedules
@@ -37,6 +37,7 @@ try {
     const { searchParams } = new URL(request.url);
     const day = searchParams.get('day');
     const schoolIdParam = searchParams.get('school_id') || undefined; // Optional: filter by specific school
+    const dateParam = searchParams.get('date'); // Optional: for historical queries (YYYY-MM-DD format)
 
     logger.info('Schedules API called', {
       userId: teacherId,
@@ -49,8 +50,7 @@ try {
     const { data: teacherSchools, error: teacherSchoolError } = await supabaseAdmin
       .from('teacher_schools')
       .select('school_id')
-       
-      .eq('teacher_id', teacherId) as any;
+      .eq('teacher_id', teacherId);
 
     if (teacherSchoolError) {
       logger.error('Failed to fetch teacher school assignments', {
@@ -79,7 +79,7 @@ try {
       // If school_id is provided in query params, use only that school
       // But first verify the teacher is assigned to that school
        
-      const isAssigned = teacherSchools?.some((ts: any) => ts.school_id === schoolIdParam);
+      const isAssigned = teacherSchools?.some((ts: { school_id: string }) => ts.school_id === schoolIdParam);
       if (isAssigned) {
         schoolIds = [schoolIdParam];
         console.log('✅ Using provided school_id:', schoolIdParam);
@@ -95,7 +95,7 @@ try {
       // If no school_id provided, get all schools the teacher is assigned to
       if (teacherSchools && teacherSchools.length > 0) {
          
-        schoolIds = teacherSchools.map((ts: any) => ts.school_id);
+        schoolIds = teacherSchools.map((ts: { school_id: string }) => ts.school_id);
         console.log('✅ Using all assigned schools:', schoolIds);
       } else {
         // No teacher_schools record found - require explicit assignment
@@ -130,11 +130,11 @@ try {
       .eq('teacher_id', teacherId)
       .in('school_id', schoolIds);
     
-    const { data: allSchedulesDebug, error: debugError } = await debugQuery;
+    const { data: allSchedulesDebug, error: _debugError } = await debugQuery;
     console.log('🔍 Debug: All schedules for teacher (including inactive):', {
       count: allSchedulesDebug?.length || 0,
        
-      schedules: allSchedulesDebug?.map((s: any) => ({
+      schedules: allSchedulesDebug?.map((s: { id: string; teacher_id: string | null; school_id: string; is_active: boolean; subject: string; grade: string; day_of_week: string }) => ({
         id: s.id,
         teacher_id: s.teacher_id,
         school_id: s.school_id,
@@ -152,7 +152,7 @@ try {
       .is('teacher_id', null)
       .in('school_id', schoolIds);
     
-    const { data: nullTeacherSchedules, error: nullTeacherError } = await nullTeacherQuery;
+    const { data: nullTeacherSchedules, error: _nullTeacherError } = await nullTeacherQuery;
     if (nullTeacherSchedules && nullTeacherSchedules.length > 0) {
       console.log('⚠️ Warning: Found schedules with null teacher_id in assigned schools:', {
         count: nullTeacherSchedules.length,
@@ -164,10 +164,25 @@ try {
     // First, get all schedules without joins to ensure we get all records
     let query = supabaseAdmin
       .from('class_schedules')
-      .select('id, teacher_id, school_id, class_id, day_of_week, start_time, end_time, room_id, is_active, created_at, updated_at')
+      .select('id, teacher_id, school_id, class_id, day_of_week, start_time, end_time, room_id, is_active, created_at, updated_at, effective_from, effective_to')
       .eq('teacher_id', teacherId)
-      .in('school_id', schoolIds) // Use .in() to query multiple schools
-      .eq('is_active', true)
+      .in('school_id', schoolIds); // Use .in() to query multiple schools
+    
+    // Apply effective date filtering
+    if (dateParam) {
+      // Historical query: get schedules active on the specified date
+      const queryDate = dateParam; // YYYY-MM-DD format
+      query = query
+        .lte('effective_from', queryDate) // Schedule was active from this date or before
+        .or(`effective_to.is.null,effective_to.gte.${queryDate}`); // And hasn't ended yet, or ended after this date
+    } else {
+      // Current schedules: get schedules that are currently active
+      query = query
+        .eq('is_active', true)
+        .is('effective_to', null); // No end date = currently active
+    }
+    
+    query = query
       .order('day_of_week', { ascending: true })
       .order('start_time', { ascending: true });
     
@@ -196,7 +211,8 @@ try {
 
     console.log(`✅ Found ${schedules?.length || 0} active schedules for teacher ${teacherId} in ${schoolIds.length} school(s)`);
      
-    console.log('📋 Schedule details:', schedules?.map((s: any) => ({
+    type ScheduleRow = { id: string; subject: string; grade: string; day_of_week: string; start_time: string; end_time: string; teacher_id: string | null; school_id: string; is_active: boolean; period_id?: string; room_id?: string };
+    console.log('📋 Schedule details:', schedules?.map((s: ScheduleRow) => ({
       id: s.id,
       subject: s.subject,
       grade: s.grade,
@@ -217,44 +233,32 @@ try {
     // Now enrich schedules with related data (period, room, school) if needed
     // This ensures we get all schedules even if some related records are missing
     const enrichedSchedules = await Promise.all(
-       
-      (schedules || []).map(async (schedule: any) => {
-         
-        const enriched: any = { ...schedule };
-        
-        // Fetch period if period_id exists
+      (schedules || []).map(async (schedule: ScheduleRow) => {
+        const enriched: Record<string, unknown> = { ...schedule };
         if (schedule.period_id) {
           const { data: period } = await supabaseAdmin
             .from('periods')
             .select('id, period_number, start_time, end_time')
             .eq('id', schedule.period_id)
-             
-            .single() as any;
+            .single();
           enriched.period = period || null;
         }
-        
-        // Fetch room if room_id exists
         if (schedule.room_id) {
           const { data: room } = await supabaseAdmin
             .from('rooms')
             .select('id, room_number, room_name, capacity')
             .eq('id', schedule.room_id)
-             
-            .single() as any;
+            .single();
           enriched.room = room || null;
         }
-        
-        // Fetch school if school_id exists
         if (schedule.school_id) {
           const { data: school } = await supabaseAdmin
             .from('schools')
             .select('id, name, school_code')
             .eq('id', schedule.school_id)
-             
-            .single() as any;
+            .single();
           enriched.school = school || null;
         }
-        
         return enriched;
       })
     );
@@ -270,17 +274,13 @@ try {
       console.log('🔍 All schedules in assigned schools (for debugging):', {
         total: allSchedules.length,
          
-        by_teacher: allSchedules.filter((s: any) => s.teacher_id === teacherId).length,
+        by_teacher: allSchedules.filter((s: { teacher_id: string | null }) => s.teacher_id === teacherId).length,
         by_status: {
-           
-          active: allSchedules.filter((s: any) => s.is_active === true).length,
-           
-          inactive: allSchedules.filter((s: any) => s.is_active === false).length
+          active: allSchedules.filter((s: { is_active: boolean }) => s.is_active === true).length,
+          inactive: allSchedules.filter((s: { is_active: boolean }) => s.is_active === false).length
         },
-         
-        with_null_teacher: allSchedules.filter((s: any) => !s.teacher_id).length,
-         
-        schedules: allSchedules.map((s: any) => ({
+        with_null_teacher: allSchedules.filter((s: { teacher_id: string | null }) => !s.teacher_id).length,
+        schedules: allSchedules.map((s: { id: string; teacher_id: string | null; school_id: string; is_active: boolean; subject: string; grade: string }) => ({
           id: s.id,
           teacher_id: s.teacher_id,
           matches_teacher: s.teacher_id === teacherId,

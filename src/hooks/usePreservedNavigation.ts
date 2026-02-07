@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/app-store';
 import { saveComponentState, getComponentIdFromPath } from '../lib/navigation-preservation';
 
-export function usePreservedNavigation(options: any = {}) {
+interface UsePreservedNavigationOptions {
+  getStateToSave?: () => unknown;
+  componentId?: string;
+}
+
+export function usePreservedNavigation(options: UsePreservedNavigationOptions = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const { getStateToSave, componentId } = options;

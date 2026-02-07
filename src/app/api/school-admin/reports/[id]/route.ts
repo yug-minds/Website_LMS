@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { supabaseAdmin } from '../../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { reportActionSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
+
+type ProfileRow = { school_id: string };
 
 // Helper to get school_id from the current school admin's profile
 async function getSchoolIdFromAuth(request: NextRequest): Promise<string | null> {
@@ -21,12 +23,13 @@ async function getSchoolIdFromAuth(request: NextRequest): Promise<string | null>
     return null;
   }
 
-  const { data: profile, error: profileError } = await supabaseAdmin
+  const result = await supabaseAdmin
     .from('profiles')
     .select('school_id')
     .eq('id', userResponse.user.id)
-     
-    .single() as any;
+    .single();
+  const profile = result.data as ProfileRow | null;
+  const profileError = result.error;
 
   if (profileError || !profile) {
     console.error('Error fetching school admin profile:', profileError?.message);
@@ -41,6 +44,15 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);
   if (!rateLimitResult.success) {
@@ -63,7 +75,7 @@ export async function PATCH(
     const validation = validateRequestBody(reportActionSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -90,8 +102,7 @@ export async function PATCH(
       .select('id, school_id, notes')
       .eq('id', reportId)
       .eq('school_id', school_id)
-       
-      .single() as any;
+      .single();
 
     if (fetchError || !report) {
       return NextResponse.json({ error: 'Report not found or access denied' }, { status: 404 });
@@ -108,25 +119,22 @@ export async function PATCH(
     }
 
     // Update report
-     
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       approved_by: userId,
-      approved_at: new Date().toISOString()
+      approved_at: new Date().toISOString(),
     };
 
     if (action === 'reject' && notes) {
       updateData.notes = (report.notes || '') + ' [REJECTED: ' + notes + ']';
     }
 
-    const { data: updatedReport, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedReport, error: updateError } = await supabaseAdmin
       .from('teacher_reports')
-       
-      .update(updateData as any)
+      .update(updateData as never)
       .eq('id', reportId)
       .eq('school_id', school_id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (updateError) {
       console.error('❌ Error updating teacher report:', updateError);

@@ -5,7 +5,13 @@ import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../..
 import { logger, handleApiError } from '../../../../../../../lib/logger';
 import { ensureCsrfToken } from '../../../../../../../lib/csrf-middleware';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+type CourseRow = { id: string; course_name?: string; grade?: string; school_id?: string; grades?: string[] };
+type AccessRow = { grade?: string };
+type EnrollmentRow = { student_id: string; progress_percentage?: number; is_completed?: boolean };
+type StudentSchoolRow = { student_id: string; grade?: string; section?: string };
+type ProfileRow = { id: string; full_name?: string; email?: string };
+type ChapterRow = { id: string; order_number?: number; order_index?: number; name?: string; title?: string; is_published?: boolean };
+type ChapterProgressRow = { student_id: string; chapter_id: string; progress_percent?: number; completed?: boolean };
 
 // GET /api/school-admin/courses/progress/students/detail?courseId=...
 // Returns students enrolled in a course with chapter-wise progress per student.
@@ -47,9 +53,8 @@ try {
       .from('courses')
       .select('id, course_name, grade, school_id')
       .eq('id', courseId)
-      .eq('school_id', schoolId) // Ensure course belongs to this school
-       
-      .single() as any;
+      .eq('school_id', schoolId)
+      .single() as { data: CourseRow | null; error: unknown };
 
     if (courseError) {
       logger.error('Error fetching course', {
@@ -77,11 +82,9 @@ try {
 
     // Extract grades for this course (normalize to "Grade X" format)
      
-    const extractGrades = (c: any, accessGrades: string[] = []): string[] => {
-      // Prefer authoritative list from course_access if provided
+    const extractGrades = (c: CourseRow, accessGrades: string[] = []): string[] => {
       if (Array.isArray(accessGrades) && accessGrades.length > 0) {
-         
-        const mapped = accessGrades.map((g: any) => {
+        const mapped = accessGrades.map((g: string) => {
           const str = String(g).trim();
           const m = str.match(/(\d{1,2})/);
           return m ? `Grade ${m[1]}` : str;
@@ -89,8 +92,7 @@ try {
         return Array.from(new Set(mapped));
       }
       if (Array.isArray(c.grades)) {
-         
-        const grades = c.grades.map((g: any) => {
+        const grades = c.grades.map((g: string) => {
           const str = String(g).trim();
           const m = str.match(/(\d{1,2})/);
           return m ? `Grade ${m[1]}` : str;
@@ -130,10 +132,9 @@ try {
         .select('grade')
         .eq('course_id', courseId)
          
-        .eq('school_id', schoolId) as any;
+        .eq('school_id', schoolId) as { data: AccessRow[] | null; error: unknown };
       if (Array.isArray(accessRows) && accessRows.length > 0) {
-         
-        accessGrades = accessRows.map((r: any) => r.grade);
+        accessGrades = accessRows.map((r: AccessRow) => r.grade ?? '').filter(Boolean);
       }
     } catch (e) {
       logger.warn('Error fetching course_access (non-critical)', {
@@ -149,17 +150,14 @@ try {
       .from('student_courses')
       .select('student_id, progress_percentage, is_completed')
        
-      .eq('course_id', courseId) as any;
+      .eq('course_id', courseId) as { data: EnrollmentRow[] | null; error: unknown };
 
     let studentIds: string[] = [];
-
-    const enrollmentsMap = new Map<string, any>();
+    const enrollmentsMap = new Map<string, EnrollmentRow>();
 
     if (!enrollError && enrollments && enrollments.length > 0) {
-       
-      studentIds = enrollments.map((e: any) => e.student_id).filter(Boolean);
-       
-      enrollments.forEach((e: any) => enrollmentsMap.set(e.student_id, e));
+      studentIds = enrollments.map((e: EnrollmentRow) => e.student_id).filter(Boolean);
+      enrollments.forEach((e: EnrollmentRow) => enrollmentsMap.set(e.student_id, e));
     }
 
     // Fallback: If no enrollments, show all students from the school matching the course grades
@@ -167,9 +165,9 @@ try {
       // Fetch all students for the school and filter by grade number to be robust against variants like "Grade Grade 4"
       const { data: allStudents, error: fallbackError } = await supabaseAdmin
         .from('student_schools')
-        .select('student_id, grade')
+        .select('student_id, grade, section')
          
-        .eq('school_id', schoolId) as any;
+        .eq('school_id', schoolId) as { data: StudentSchoolRow[] | null; error: unknown };
 
       if (!fallbackError && Array.isArray(allStudents)) {
         const wantedNums = new Set(
@@ -177,13 +175,11 @@ try {
             .map((g: string) => (String(g).match(/(\d{1,2})/) || [])[1])
             .filter(Boolean)
         );
-
-        const matched = allStudents.filter((s: any) => {
-          const num = (String(s.grade || '').match(/(\d{1,2})/) || [])[1];
+        const matched = allStudents.filter((s: StudentSchoolRow) => {
+          const num = (String(s.grade ?? '').match(/(\d{1,2})/) || [])[1];
           return num ? wantedNums.has(num) : false;
         });
-
-        studentIds = matched.map((s: any) => s.student_id).filter(Boolean);
+        studentIds = matched.map((s: StudentSchoolRow) => s.student_id).filter(Boolean);
         studentIds.forEach((id: string) => {
           enrollmentsMap.set(id, { student_id: id, progress_percentage: 0, is_completed: false });
         });
@@ -195,9 +191,9 @@ try {
       // Get all students (profiles) for this school from student_schools, then filter by grade number
       const { data: ss } = await supabaseAdmin
         .from('student_schools')
-        .select('student_id, grade')
+        .select('student_id, grade, section')
          
-        .eq('school_id', schoolId) as any;
+        .eq('school_id', schoolId) as { data: StudentSchoolRow[] | null; error: unknown };
 
       if (Array.isArray(ss) && ss.length > 0) {
         const wantedNums = new Set(
@@ -205,13 +201,11 @@ try {
             .map((g: string) => (String(g).match(/(\d{1,2})/) || [])[1])
             .filter(Boolean)
         );
-         
-        const matched = ss.filter((row: any) => {
-          const num = (String(row.grade || '').match(/(\d{1,2})/) || [])[1];
+        const matched = ss.filter((row: StudentSchoolRow) => {
+          const num = (String(row.grade ?? '').match(/(\d{1,2})/) || [])[1];
           return num ? wantedNums.has(num) : false;
         });
-         
-        studentIds = matched.map((m: any) => m.student_id).filter(Boolean);
+        studentIds = matched.map((m: StudentSchoolRow) => m.student_id).filter(Boolean);
         studentIds.forEach((id: string) => {
           enrollmentsMap.set(id, { student_id: id, progress_percentage: 0, is_completed: false });
         });
@@ -220,28 +214,31 @@ try {
 
     // Profiles for these students
      
-    const profilesMap = new Map<string, any>();
+    const profilesMap = new Map<string, ProfileRow>();
     if (studentIds.length > 0) {
       const { data: profiles } = await supabaseAdmin
         .from('profiles')
         .select('id, full_name, email')
-         
-        .in('id', studentIds) as any;
-       
-      (profiles || []).forEach((p: any) => profilesMap.set(p.id, p));
+        .in('id', studentIds) as { data: ProfileRow[] | null; error: unknown };
+      (profiles ?? []).forEach((p: ProfileRow) => profilesMap.set(p.id, p));
     }
 
-    // Grade mapping in this school
+    // Grade and section mapping in this school
     const gradesMap = new Map<string, string>();
+    const sectionsMap = new Map<string, string>();
     if (studentIds.length > 0) {
       const { data: sg } = await supabaseAdmin
         .from('student_schools')
-        .select('student_id, grade')
+        .select('student_id, grade, section')
         .in('student_id', studentIds)
          
-        .eq('school_id', schoolId) as any;
-       
-      (sg || []).forEach((row: any) => gradesMap.set(row.student_id, row.grade));
+        .eq('school_id', schoolId) as { data: StudentSchoolRow[] | null; error: unknown };
+      (sg ?? []).forEach((row: StudentSchoolRow) => {
+        gradesMap.set(row.student_id, row.grade ?? '');
+        if (row.section) {
+          sectionsMap.set(row.student_id, row.section);
+        }
+      });
     }
 
     // Chapters of this course (use chapters table, course_chapters is deprecated)
@@ -250,7 +247,7 @@ try {
       .select('id, order_number, order_index, name, title, is_published')
       .eq('course_id', courseId)
        
-      .order('order_number', { ascending: true, nullsFirst: false }) as any;
+      .order('order_number', { ascending: true, nullsFirst: false }) as { data: ChapterRow[] | null; error: unknown };
 
     if (chaptersError) {
       return NextResponse.json({ error: 'Failed to fetch chapters', details: chaptersError.message }, { status: 500 });
@@ -258,15 +255,14 @@ try {
 
     // Chapter-wise progress (if table exists)
      
-    let chapterProgress: any[] = [];
+    let chapterProgress: ChapterProgressRow[] = [];
     try {
       const { data: cp } = await supabaseAdmin
         .from('course_progress')
         .select('student_id, chapter_id, progress_percent, completed')
         .eq('course_id', courseId)
-         
-        .in('student_id', studentIds) as any;
-      chapterProgress = cp || [];
+        .in('student_id', studentIds) as { data: ChapterProgressRow[] | null; error: unknown };
+      chapterProgress = cp ?? [];
     } catch (e) {
       logger.warn('Error fetching chapter_progress (non-critical)', {
         endpoint: '/api/school-admin/courses/progress/students/detail',
@@ -277,15 +273,15 @@ try {
 
     // Build response per student
      
-    const chaptersMap = new Map<string, any>();
-     
-    (chapters || []).forEach((c: any) => chaptersMap.set(c.id, c));
+    const chaptersMap = new Map<string, ChapterRow>();
+    (chapters ?? []).forEach((c: ChapterRow) => chaptersMap.set(c.id, c));
 
     const byStudent: Array<{
       id: string;
       full_name: string;
       email: string;
       grade: string;
+      section?: string;
       overall_progress: number;
       completed: boolean;
       chapters: Array<{ id: string; chapter_number: number; title: string; is_published: boolean; progress: number; completed: boolean }>
@@ -296,17 +292,17 @@ try {
       const enrollment = enrollmentsMap.get(studentId) || { student_id: studentId, progress_percentage: 0, is_completed: false };
       const profile = profilesMap.get(studentId) || { full_name: 'Unknown', email: '' };
       const grade = gradesMap.get(studentId) || 'Unknown';
+      const section = sectionsMap.get(studentId);
 
       // Build per-chapter array
        
-      const studentChapters = (chapters || []).map((ch: any) => {
-         
-        const cp = chapterProgress.find((p: any) => p.student_id === studentId && p.chapter_id === ch.id);
+      const studentChapters = (chapters ?? []).map((ch: ChapterRow) => {
+        const cp = chapterProgress.find((p: ChapterProgressRow) => p.student_id === studentId && p.chapter_id === ch.id);
         return {
           id: ch.id,
-          chapter_number: ch.chapter_number,
-          title: ch.title,
-          is_published: ch.is_published,
+          chapter_number: ch.order_number ?? ch.order_index ?? 0,
+          title: ch.title ?? ch.name ?? '',
+          is_published: ch.is_published ?? false,
           progress: cp ? Math.round(cp.progress_percent || 0) : 0,
           completed: cp ? !!cp.completed : false
         };
@@ -317,6 +313,7 @@ try {
         full_name: profile.full_name,
         email: profile.email,
         grade,
+        section: section || undefined,
         overall_progress: Math.round(enrollment.progress_percentage || 0),
         completed: !!enrollment.is_completed,
         chapters: studentChapters

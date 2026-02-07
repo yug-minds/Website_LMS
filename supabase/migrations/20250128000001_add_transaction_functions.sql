@@ -1,6 +1,11 @@
 -- Transaction functions for atomic multi-table operations
 -- These functions ensure data consistency and prevent race conditions
 
+-- Drop existing versions of functions if they exist (to avoid signature conflicts)
+-- This ensures we don't have multiple overloaded versions causing ambiguity
+DROP FUNCTION IF EXISTS create_student_enrollment CASCADE;
+DROP FUNCTION IF EXISTS update_student_enrollment CASCADE;
+
 -- Function to create student profile and enrollment atomically
 CREATE OR REPLACE FUNCTION create_student_enrollment(
   p_user_id uuid,
@@ -12,7 +17,8 @@ CREATE OR REPLACE FUNCTION create_student_enrollment(
   p_parent_name text DEFAULT NULL,
   p_parent_phone text DEFAULT NULL,
   p_grade text DEFAULT 'Not Specified',
-  p_joining_code text DEFAULT NULL
+  p_joining_code text DEFAULT NULL,
+  p_section text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -65,6 +71,7 @@ BEGIN
       school_id,
       grade,
       joining_code,
+      section,
       enrolled_at,
       is_active
     ) VALUES (
@@ -72,6 +79,7 @@ BEGIN
       p_school_id,
       p_grade,
       p_joining_code,
+      p_section,
       NOW(),
       true
     )
@@ -106,7 +114,8 @@ CREATE OR REPLACE FUNCTION update_student_enrollment(
   p_parent_phone text DEFAULT NULL,
   p_school_id uuid DEFAULT NULL,
   p_grade text DEFAULT NULL,
-  p_joining_code text DEFAULT NULL
+  p_joining_code text DEFAULT NULL,
+  p_section text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -169,6 +178,7 @@ BEGIN
         SET
           grade = COALESCE(p_grade, grade),
           joining_code = COALESCE(p_joining_code, joining_code),
+          section = COALESCE(p_section, section),
           is_active = true,
           enrolled_at = COALESCE(enrolled_at, NOW())
         WHERE id = v_existing_enrollment_id;
@@ -179,6 +189,7 @@ BEGIN
           school_id,
           grade,
           joining_code,
+          section,
           enrolled_at,
           is_active
         ) VALUES (
@@ -186,6 +197,7 @@ BEGIN
           p_school_id,
           COALESCE(p_grade, 'Not Specified'),
           p_joining_code,
+          p_section,
           NOW(),
           true
         );
@@ -195,12 +207,13 @@ BEGIN
       UPDATE profiles
       SET school_id = p_school_id
       WHERE id = p_student_id;
-    ELSIF p_grade IS NOT NULL OR p_joining_code IS NOT NULL THEN
-      -- Update grade/joining_code for current active enrollment
+    ELSIF p_grade IS NOT NULL OR p_joining_code IS NOT NULL OR p_section IS NOT NULL THEN
+      -- Update grade/joining_code/section for current active enrollment
       UPDATE student_schools
       SET
         grade = COALESCE(p_grade, grade),
-        joining_code = COALESCE(p_joining_code, joining_code)
+        joining_code = COALESCE(p_joining_code, joining_code),
+        section = COALESCE(p_section, section)
       WHERE id = (
         SELECT id FROM student_schools
         WHERE student_id = p_student_id
@@ -458,6 +471,7 @@ BEGIN
           teacher_id,
           school_id,
           grades_assigned,
+          grade_sections_assigned,
           subjects,
           working_days_per_week,
           max_students_per_session,
@@ -467,6 +481,11 @@ BEGIN
           p_user_id,
           (v_assignment->>'school_id')::uuid,
           COALESCE((v_assignment->>'grades_assigned')::text[], ARRAY[]::text[]),
+          CASE 
+            WHEN v_assignment->>'grade_sections_assigned' IS NOT NULL 
+            THEN (v_assignment->>'grade_sections_assigned')::jsonb
+            ELSE NULL
+          END,
           COALESCE((v_assignment->>'subjects')::text[], ARRAY[]::text[]),
           COALESCE((v_assignment->>'working_days_per_week')::integer, 5),
           COALESCE((v_assignment->>'max_students_per_session')::integer, 30),
@@ -475,6 +494,7 @@ BEGIN
         )
         ON CONFLICT (teacher_id, school_id) DO UPDATE SET
           grades_assigned = EXCLUDED.grades_assigned,
+          grade_sections_assigned = EXCLUDED.grade_sections_assigned,
           subjects = EXCLUDED.subjects,
           working_days_per_week = EXCLUDED.working_days_per_week,
           max_students_per_session = EXCLUDED.max_students_per_session,
@@ -580,6 +600,7 @@ BEGIN
               teacher_id,
               school_id,
               grades_assigned,
+              grade_sections_assigned,
               subjects,
               working_days_per_week,
               max_students_per_session,
@@ -589,6 +610,11 @@ BEGIN
               p_user_id,
               (v_assignment->>'school_id')::uuid,
               COALESCE((v_assignment->>'grades_assigned')::text[], ARRAY[]::text[]),
+              CASE 
+                WHEN v_assignment->>'grade_sections_assigned' IS NOT NULL 
+                THEN (v_assignment->>'grade_sections_assigned')::jsonb
+                ELSE NULL
+              END,
               COALESCE((v_assignment->>'subjects')::text[], ARRAY[]::text[]),
               COALESCE((v_assignment->>'working_days_per_week')::integer, 5),
               COALESCE((v_assignment->>'max_students_per_session')::integer, 30),
@@ -616,11 +642,11 @@ BEGIN
 END;
 $$;
 
--- Add comments for documentation
-COMMENT ON FUNCTION create_student_enrollment IS 'Atomically creates student profile and enrollment to prevent race conditions';
-COMMENT ON FUNCTION update_student_enrollment IS 'Atomically updates student profile and enrollment to prevent race conditions';
-COMMENT ON FUNCTION update_course_access IS 'Atomically updates course access entries with table locking to prevent race conditions';
-COMMENT ON FUNCTION update_leave_status IS 'Atomically updates leave status with row locking to prevent duplicate approvals';
-COMMENT ON FUNCTION create_teacher_enrollment IS 'Atomically creates teacher profile, teacher record, and school assignments to prevent race conditions';
-COMMENT ON FUNCTION update_teacher_enrollment IS 'Atomically updates teacher profile, teacher record, and school assignments to prevent race conditions';
+-- Add comments for documentation (with full signatures to avoid ambiguity)
+COMMENT ON FUNCTION create_student_enrollment(uuid, text, text, uuid, text, text, text, text, text, text, text) IS 'Atomically creates student profile and enrollment to prevent race conditions';
+COMMENT ON FUNCTION update_student_enrollment(uuid, text, text, text, text, text, text, uuid, text, text, text) IS 'Atomically updates student profile and enrollment to prevent race conditions';
+COMMENT ON FUNCTION update_course_access(uuid, jsonb) IS 'Atomically updates course access entries with table locking to prevent race conditions';
+COMMENT ON FUNCTION update_leave_status(uuid, text, uuid, text) IS 'Atomically updates leave status with row locking to prevent duplicate approvals';
+COMMENT ON FUNCTION create_teacher_enrollment(uuid, text, text, text, text, text, integer, text, text, jsonb) IS 'Atomically creates teacher profile, teacher record, and school assignments to prevent race conditions';
+COMMENT ON FUNCTION update_teacher_enrollment(uuid, text, text, text, text, text, integer, text, jsonb) IS 'Atomically updates teacher profile, teacher record, and school assignments to prevent race conditions';
 

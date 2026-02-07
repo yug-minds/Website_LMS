@@ -4,7 +4,6 @@ import { getSchoolAdminSchoolId } from '../../../../../lib/school-admin-auth';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../../lib/rate-limit';
 import { leaveActionSchema, validateRequestBody } from '../../../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../../../lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
 // PATCH: Approve or reject a teacher leave request
@@ -44,7 +43,8 @@ export async function PATCH(
     const validation = validateRequestBody(leaveActionSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -54,24 +54,34 @@ export async function PATCH(
       );
     }
 
-    const { action, notes } = validation.data;
+    const { action, notes: _notes } = validation.data;
     const school_id = await getSchoolAdminSchoolId(request);
 
     if (!school_id) {
       return NextResponse.json({ error: 'School ID not found for authenticated user' }, { status: 403 });
     }
 
-    // Verify leave request belongs to school admin's school
+    // Verify leave request belongs to school admin's school and get current status
     const { data: leave, error: fetchError } = await supabaseAdmin
       .from('teacher_leaves')
-      .select('id, school_id')
+      .select('id, school_id, status, approved_by, reviewed_by')
       .eq('id', leaveId)
       .eq('school_id', school_id)
        
-      .single() as any;
+      .single();
 
-    if (fetchError || !leave) {
+    type LeaveRow = { id: string; school_id?: string; status?: string; approved_by?: string; reviewed_by?: string; approved_at?: string };
+    const typedLeave = leave as LeaveRow | null;
+    if (fetchError || !typedLeave) {
       return NextResponse.json({ error: 'Leave request not found or access denied' }, { status: 404 });
+    }
+
+    // Prevent changing status if already approved or rejected
+    if (typedLeave.status !== 'Pending') {
+      return NextResponse.json({ 
+        error: 'Leave request has already been processed', 
+        details: `Current status: ${typedLeave.status}` 
+      }, { status: 400 });
     }
 
     // Get current user ID
@@ -85,28 +95,30 @@ export async function PATCH(
     }
 
     // Update leave request
-    // Set reviewed_by to track who reviewed (school admin or system admin)
+    // Only set approved_by if approving (preserve existing if already set, though shouldn't happen for pending)
     const nowIso = new Date().toISOString();
     const fullUpdatePayload = {
       status: action === 'approve' ? 'Approved' : 'Rejected',
       reviewed_by: userId,
-      approved_by: action === 'approve' ? userId : null,
-      approved_at: action === 'approve' ? nowIso : null,
+      approved_by: action === 'approve' ? (typedLeave.approved_by || userId) : null,
+      approved_at: action === 'approve' ? (typedLeave.approved_at || nowIso) : null,
       reviewed_at: nowIso,
     };
 
     // Some environments may still have the legacy `teacher_leaves` schema
     // (no reviewed_by/reviewed_at). In that case, fall back gracefully.
-    let updatedLeave: any = null;
-    let updateError: any = null;
+    type UpdatedLeaveRow = { id: string; teacher_id?: string; school_id?: string; start_date?: string; end_date?: string; leave_type?: string; reason?: string; reviewed_by?: string; approved_by?: string };
+    type DbError = { message?: string; code?: string; details?: string; hint?: string };
+    let updatedLeave: UpdatedLeaveRow | null = null;
+    let updateError: DbError | null = null;
 
-    const firstAttempt = await ((supabaseAdmin as any)
+    const firstAttempt = await supabaseAdmin
       .from('teacher_leaves')
-      .update(fullUpdatePayload)
+      .update(fullUpdatePayload as never)
       .eq('id', leaveId)
       .eq('school_id', school_id)
       .select()
-      .single());
+      .single();
 
     updatedLeave = firstAttempt?.data ?? null;
     updateError = firstAttempt?.error ?? null;
@@ -128,13 +140,13 @@ export async function PATCH(
           approved_at: action === 'approve' ? nowIso : null,
         };
 
-        const secondAttempt = await ((supabaseAdmin as any)
+        const secondAttempt = await supabaseAdmin
           .from('teacher_leaves')
-          .update(legacyPayload)
+          .update(legacyPayload as never)
           .eq('id', leaveId)
           .eq('school_id', school_id)
           .select()
-          .single());
+          .single();
 
         updatedLeave = secondAttempt?.data ?? null;
         updateError = secondAttempt?.error ?? null;
@@ -182,7 +194,8 @@ export async function PATCH(
 }
 
 // Helper function to update attendance records for approved leave
-async function updateAttendanceForApprovedLeave(leave: any) {
+type LeaveRecord = { teacher_id?: string; school_id?: string; start_date?: string; end_date?: string; leave_type?: string; reason?: string; reviewed_by?: string; approved_by?: string };
+async function updateAttendanceForApprovedLeave(leave: LeaveRecord) {
   try {
     const startDate = new Date(leave.start_date);
     const endDate = new Date(leave.end_date);
@@ -203,7 +216,7 @@ async function updateAttendanceForApprovedLeave(leave: any) {
           .eq('user_id', leave.teacher_id)
           .eq('school_id', leave.school_id)
           .eq('date', date)
-          .maybeSingle() as any;
+          .maybeSingle();
 
         const remarks = `Approved leave: ${leave.leave_type || 'Leave'} - ${leave.reason}`;
 
@@ -211,16 +224,18 @@ async function updateAttendanceForApprovedLeave(leave: any) {
           // Update existing record
           await supabaseAdmin
             .from('attendance')
+            // @ts-expect-error - Supabase generated types use never for untyped schema
             .update({
               status: 'Leave-Approved',
               remarks: remarks,
               recorded_at: new Date().toISOString()
             })
-            .eq('id', existingAttendance.id);
+            .eq('id', (existingAttendance as { id: string }).id);
         } else {
           // Create new record
           await supabaseAdmin
             .from('attendance')
+            // @ts-expect-error - Supabase generated types use never for untyped schema
             .insert({
               user_id: leave.teacher_id,
               school_id: leave.school_id,
@@ -231,9 +246,9 @@ async function updateAttendanceForApprovedLeave(leave: any) {
               recorded_at: new Date().toISOString()
             });
         }
-      } catch (attendanceError: any) {
-        // Log but don't fail the leave approval if attendance update fails
-        console.warn(`Failed to update attendance for date ${date}:`, attendanceError?.message);
+      } catch (attendanceError: unknown) {
+        const msg = attendanceError instanceof Error ? attendanceError.message : String(attendanceError);
+        console.warn(`Failed to update attendance for date ${date}:`, msg);
       }
     }
   } catch (error) {

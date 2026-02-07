@@ -14,13 +14,6 @@ import {
   DialogTitle 
 } from "./ui/dialog";
 import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue 
-} from "./ui/select";
-import { 
   Card,
   CardContent,
   CardDescription,
@@ -35,7 +28,6 @@ import {
 } from "./ui/checkbox";
 import { 
   Plus,
-  X,
   User,
   Mail,
   Phone,
@@ -43,9 +35,6 @@ import {
   Briefcase,
   School,
   BookOpen,
-  AlertCircle,
-  CheckCircle,
-  Trash2,
   Eye,
   EyeOff,
   RefreshCw,
@@ -66,12 +55,19 @@ interface School {
   id: string;
   name: string;
   grades_offered: string[];
+  number_of_sections?: number;
+}
+
+interface GradeSectionAssignment {
+  grade: string;
+  sections: string[];
 }
 
 interface SchoolAssignment {
   school_id: string;
   school_name: string;
   grades_assigned: string[];
+  grade_sections_assigned?: GradeSectionAssignment[];
   subjects: string[];
   working_days_per_week: number;
   max_students_per_session: number;
@@ -170,6 +166,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
       schoolsLoadedRef.current = false;
     }
      
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- initialFormData stable, load on isOpen only */
   }, [isOpen]);
 
   const loadSchools = async () => {
@@ -192,7 +189,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   };
 
    
-  const handleInputChange = (field: keyof TeacherFormData, value: any) => {
+  const handleInputChange = (field: keyof TeacherFormData, value: string | number | string[] | SchoolAssignment[]) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -227,7 +224,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   };
 
   const handleSchoolSelection = (schoolId: string, checked: boolean) => {
-    const school = schools.find((s: any) => s.id === schoolId);
+    const school = schools.find((s: School) => s.id === schoolId);
     if (!school) return;
 
     if (checked) {
@@ -237,6 +234,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
         school_id: schoolId,
         school_name: school.name,
         grades_assigned: [],
+        grade_sections_assigned: [],
         subjects: [],
         working_days_per_week: 5,
         max_students_per_session: 30,
@@ -250,8 +248,8 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
     }));
     } else {
       // Remove school from selection
-      const newSelectedSchools = formData.selected_schools.filter((id: any) => id !== schoolId);
-      const newAssignments = formData.school_assignments.filter((a: any) => a.school_id !== schoolId);
+      const newSelectedSchools = formData.selected_schools.filter((id: string) => id !== schoolId);
+      const newAssignments = formData.school_assignments.filter((a: SchoolAssignment) => a.school_id !== schoolId);
 
       // If we removed the primary school, make the first remaining one primary
       if (newAssignments.length > 0) {
@@ -269,17 +267,58 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   const handleGradeSelection = (schoolId: string, grade: string, checked: boolean) => {
     setFormData(prev => ({
       ...prev,
-      school_assignments: prev.school_assignments.map((assignment: any) => {
+      school_assignments: prev.school_assignments.map((assignment: SchoolAssignment) => {
         if (assignment.school_id === schoolId) {
+          const gradeSections = assignment.grade_sections_assigned || [];
           if (checked) {
+            // Add grade with empty sections array
             return {
               ...assignment,
-              grades_assigned: [...assignment.grades_assigned, grade]
+              grades_assigned: [...assignment.grades_assigned, grade],
+              grade_sections_assigned: [...gradeSections, { grade, sections: [] }]
             };
           } else {
+            // Remove grade and its sections
             return {
               ...assignment,
-              grades_assigned: assignment.grades_assigned.filter((g: any) => g !== grade)
+              grades_assigned: assignment.grades_assigned.filter((g: string) => g !== grade),
+              grade_sections_assigned: gradeSections.filter((gs: GradeSectionAssignment) => gs.grade !== grade)
+            };
+          }
+        }
+        return assignment;
+      })
+    }));
+  };
+
+  const handleSectionSelection = (schoolId: string, grade: string, section: string, checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      school_assignments: prev.school_assignments.map((assignment: SchoolAssignment) => {
+        if (assignment.school_id === schoolId) {
+          const gradeSections = assignment.grade_sections_assigned || [];
+          const gradeSectionIndex = gradeSections.findIndex((gs: GradeSectionAssignment) => gs.grade === grade);
+          
+          if (gradeSectionIndex >= 0) {
+            const updatedGradeSections = [...gradeSections];
+            if (checked) {
+              // Add section if not already present
+              if (!updatedGradeSections[gradeSectionIndex].sections.includes(section)) {
+                updatedGradeSections[gradeSectionIndex] = {
+                  ...updatedGradeSections[gradeSectionIndex],
+                  sections: [...updatedGradeSections[gradeSectionIndex].sections, section]
+                };
+              }
+            } else {
+              // Remove section
+              updatedGradeSections[gradeSectionIndex] = {
+                ...updatedGradeSections[gradeSectionIndex],
+                sections: updatedGradeSections[gradeSectionIndex].sections.filter((s: string) => s !== section)
+              };
+            }
+            return {
+              ...assignment,
+              grade_sections_assigned: updatedGradeSections
             };
           }
         }
@@ -291,7 +330,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   const handleSubjectSelection = (schoolId: string, subject: string, checked: boolean) => {
     setFormData(prev => ({
       ...prev,
-      school_assignments: prev.school_assignments.map((assignment: any) => {
+      school_assignments: prev.school_assignments.map((assignment: SchoolAssignment) => {
         if (assignment.school_id === schoolId) {
           if (checked) {
             return {
@@ -301,7 +340,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
           } else {
             return {
               ...assignment,
-              subjects: assignment.subjects.filter((s: any) => s !== subject)
+              subjects: assignment.subjects.filter((s: string) => s !== subject)
             };
           }
         }
@@ -317,7 +356,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
     }
 
     // Check if subject already exists (case-insensitive)
-    const assignment = formData.school_assignments.find((a: any) => a.school_id === schoolId);
+    const assignment = formData.school_assignments.find((a: SchoolAssignment) => a.school_id === schoolId);
     if (assignment) {
       const subjectExists = assignment.subjects.some(
         s => s.toLowerCase() === customSubject.toLowerCase()
@@ -349,10 +388,10 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   };
 
    
-  const handleAssignmentChange = (schoolId: string, field: keyof SchoolAssignment, value: any) => {
+  const handleAssignmentChange = (schoolId: string, field: keyof SchoolAssignment, value: string | number | string[] | GradeSectionAssignment[]) => {
     setFormData(prev => ({
       ...prev,
-      school_assignments: prev.school_assignments.map((assignment: any) => {
+      school_assignments: prev.school_assignments.map((assignment: SchoolAssignment) => {
         if (assignment.school_id === schoolId) {
           return {
             ...assignment,
@@ -367,7 +406,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
   const setPrimarySchool = (schoolId: string) => {
     setFormData(prev => ({
       ...prev,
-      school_assignments: prev.school_assignments.map((assignment: any) => ({
+      school_assignments: prev.school_assignments.map((assignment: SchoolAssignment) => ({
         ...assignment,
         is_primary: assignment.school_id === schoolId || undefined }))
     }));
@@ -398,10 +437,20 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
       newErrors.schools = 'At least one school must be selected';
     }
     
-    // Check if each selected school has at least one grade
+    // Check if each selected school has at least one grade with sections
     formData.school_assignments.forEach(assignment => {
       if (assignment.grades_assigned.length === 0) {
         newErrors[`grades_${assignment.school_id}`] = 'At least one grade must be selected for each school';
+      } else {
+        // Check that each selected grade has at least one section
+        const gradeSections = assignment.grade_sections_assigned || [];
+        const gradesWithoutSections = assignment.grades_assigned.filter((grade: string) => {
+          const gradeSection = gradeSections.find((gs: GradeSectionAssignment) => gs.grade === grade);
+          return !gradeSection || gradeSection.sections.length === 0;
+        });
+        if (gradesWithoutSections.length > 0) {
+          newErrors[`grades_${assignment.school_id}`] = `Each selected grade must have at least one section selected (missing sections for: ${gradesWithoutSections.join(', ')})`;
+        }
       }
     });
     
@@ -447,7 +496,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
           errorMessage = data.message;
         }
         if (data.details && Array.isArray(data.details)) {
-          const detailedErrors = data.details.map((issue: any) => `${issue.path?.join('.') || 'field'}: ${issue.message}`).join('\n');
+          const detailedErrors = data.details.map((issue: { path?: (string | number)[]; message?: string }) => `${issue.path?.join('.') ?? 'field'}: ${issue.message ?? ''}`).join('\n');
           console.error('Validation errors:', detailedErrors);
           errorMessage = `Validation failed:\n${detailedErrors}`;
         }
@@ -723,23 +772,62 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
           </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {/* Grade Selection */}
+                    {/* Grade and Section Selection */}
               <div>
-                      <Label>Select Grades <span className="text-red-500">*</span></Label>
-                      <div className="mt-2 grid grid-cols-3 gap-2 max-h-32 overflow-y-auto border rounded-md p-3">
+                      <Label>Select Grades and Sections <span className="text-red-500">*</span></Label>
+                      <div className="mt-2 space-y-4 max-h-96 overflow-y-auto border rounded-md p-3">
                         {(() => {
-                          // Get the school's grades_offered
-                          const school = schools.find((s: any) => s.id === assignment.school_id);
-                          const schoolGrades = school?.grades_offered || [];
+                          // Check if school is selected
+                          if (!assignment.school_id) {
+                            return (
+                              <div className="text-center py-4 text-sm text-muted-foreground">
+                                Please select a school first
+                              </div>
+                            );
+                          }
+                          
+                          // Get the school's grades_offered and number_of_sections
+                          const school = schools.find((s: School) => s.id === assignment.school_id);
+                          
+                          // Check if school exists in the schools list
+                          if (!school) {
+                            return (
+                              <div className="text-center py-4 text-sm text-muted-foreground">
+                                School data is loading...
+                              </div>
+                            );
+                          }
+                          
+                          // Parse grades_offered if it's a string (JSONB from database might be stringified)
+                          let schoolGrades: string[] = [];
+                          if (school.grades_offered) {
+                            if (typeof school.grades_offered === 'string') {
+                              try {
+                                schoolGrades = JSON.parse(school.grades_offered);
+                              } catch (e) {
+                                console.error('Error parsing grades_offered:', e);
+                                schoolGrades = [];
+                              }
+                            } else if (Array.isArray(school.grades_offered)) {
+                              schoolGrades = school.grades_offered;
+                            }
+                          }
+                          
+                          // Debug logging (remove in production)
+                          console.log('School:', school.name, 'grades_offered:', school.grades_offered, 'parsed:', schoolGrades);
+                          const numberOfSections = school?.number_of_sections || 0;
+                          
+                          // Generate section options (A, B, C, ...)
+                          const sectionOptions = numberOfSections > 0
+                            ? Array.from({ length: Math.min(numberOfSections, 26) }, (_, i) => 
+                                String.fromCharCode(65 + i) // 65 is 'A' in ASCII
+                              )
+                            : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
                           
                           // Helper function to normalize grade format for comparison
-                          // Converts both "4" and "Grade 4" to a common format for comparison
                           const normalizeGradeForComparison = (grade: string): string => {
                             if (!grade) return '';
-                            // Remove "Grade " prefix and trim
                             const normalized = grade.replace(/^Grade\s+/i, '').trim();
-                            
-                            // Handle special cases first
                             const lower = normalized.toLowerCase();
                             if (lower === 'pre-k' || lower === 'prek' || lower === 'pre-kg') {
                               return 'pre-k';
@@ -747,48 +835,84 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
                             if (lower === 'k' || lower === 'kindergarten' || lower === 'kg') {
                               return 'kindergarten';
                             }
-                            
-                            // Handle numeric grades - return as number string for comparison
                             if (/^\d+$/.test(normalized)) {
-                              return normalized; // Return just the number (e.g., "4")
+                              return normalized;
                             }
-                            
-                            // Return lowercase for case-insensitive comparison
                             return normalized.toLowerCase();
                           };
                           
                           // Filter available grades to only show those offered by the school
-                          const filteredGrades = availableGrades.filter((grade: any) => {
-                            // If school has no grades_offered, show all grades (fallback)
-                            if (!schoolGrades || schoolGrades.length === 0) {
-                              return true;
-                            }
-                            
-                            // Normalize the available grade for comparison
+                          let gradesToShow: string[] = [];
+                          
+                          // Check if school has grades configured
+                          if (!schoolGrades || schoolGrades.length === 0) {
+                            return (
+                              <div className="text-center py-4 text-sm text-muted-foreground">
+                                This school has no grades configured. Please configure grades for &quot;{school.name}&quot; in the school settings.
+                              </div>
+                            );
+                          }
+                          
+                          // Filter grades based on school's grades_offered
+                          gradesToShow = availableGrades.filter((grade: string) => {
                             const normalizedAvailableGrade = normalizeGradeForComparison(grade);
-                            
-                            // Check if this grade is in the school's grades_offered
-                            return schoolGrades.some((schoolGrade: any) => {
+                            return schoolGrades.some((schoolGrade: string) => {
                               const normalizedSchoolGrade = normalizeGradeForComparison(schoolGrade);
                               return normalizedSchoolGrade === normalizedAvailableGrade;
                             });
                           });
                           
-                          // If no grades match, show all grades (fallback)
-                          const gradesToShow = filteredGrades.length > 0 ? filteredGrades : availableGrades;
+                          // If no matching grades found after filtering, show a message
+                          if (gradesToShow.length === 0) {
+                            return (
+                              <div className="text-center py-4 text-sm text-muted-foreground">
+                                No matching grades found. School has grades: {schoolGrades.join(', ')}. Please check the grade format.
+                              </div>
+                            );
+                          }
+                          const gradeSections = assignment.grade_sections_assigned || [];
                           
-                          return gradesToShow.map((grade) => (
-                            <div key={grade} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`grade-${assignment.school_id}-${grade}`}
-                                checked={assignment.grades_assigned.includes(grade)}
-                                onCheckedChange={(checked) => handleGradeSelection(assignment.school_id, grade, checked as boolean)}
-                              />
-                              <Label htmlFor={`grade-${assignment.school_id}-${grade}`} className="text-sm cursor-pointer">
-                                {grade}
-                              </Label>
-                            </div>
-                          ));
+                          return gradesToShow.map((grade) => {
+                            const isGradeSelected = assignment.grades_assigned.includes(grade);
+                            const gradeSectionData = gradeSections.find((gs: GradeSectionAssignment) => gs.grade === grade);
+                            const selectedSections = gradeSectionData?.sections || [];
+                            
+                            return (
+                              <div key={grade} className="border rounded-lg p-3 space-y-2">
+                                <div className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`grade-${assignment.school_id}-${grade}`}
+                                    checked={isGradeSelected}
+                                    onCheckedChange={(checked) => handleGradeSelection(assignment.school_id, grade, checked as boolean)}
+                                  />
+                                  <Label htmlFor={`grade-${assignment.school_id}-${grade}`} className="text-sm font-medium cursor-pointer">
+                                    {grade}
+                                  </Label>
+                                </div>
+                                
+                                {/* Section checkboxes - only show if grade is selected */}
+                                {isGradeSelected && (
+                                  <div className="ml-6 space-y-2">
+                                    <Label className="text-xs text-gray-600">Select Sections:</Label>
+                                    <div className="flex flex-wrap gap-2">
+                                      {sectionOptions.map((section) => (
+                                        <div key={section} className="flex items-center space-x-1">
+                                          <Checkbox
+                                            id={`section-${assignment.school_id}-${grade}-${section}`}
+                                            checked={selectedSections.includes(section)}
+                                            onCheckedChange={(checked) => handleSectionSelection(assignment.school_id, grade, section, checked as boolean)}
+                                          />
+                                          <Label htmlFor={`section-${assignment.school_id}-${grade}-${section}`} className="text-xs cursor-pointer">
+                                            Section {section}
+                                          </Label>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          });
                         })()}
               </div>
                       {errors[`grades_${assignment.school_id}`] && (
@@ -814,7 +938,7 @@ export default function AddTeacherDialog({ isOpen, onClose, onSuccess }: AddTeac
                         ))}
                         {/* Display custom subjects */}
                         {assignment.subjects
-                          .filter((subject: any) => !availableSubjects.includes(subject))
+                          .filter((subject: string) => !availableSubjects.includes(subject))
                           .map((subject) => (
                             <div key={subject} className="flex items-center space-x-2">
                               <Checkbox

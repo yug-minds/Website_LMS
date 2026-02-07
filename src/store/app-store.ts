@@ -73,7 +73,7 @@ export const useAppStore = create<AppState>()(
       // Actions
       setCurrentRoute: (route: string) => {
         const current = get().currentRoute;
-        set((state) => ({
+        set((_state) => ({
           previousRoute: current,
           currentRoute: route,
         }));

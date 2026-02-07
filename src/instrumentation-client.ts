@@ -35,7 +35,7 @@ Sentry.init({
   ],
 
   // Filter out sensitive data and Promise props
-  beforeSend(event, hint) {
+  beforeSend(event) {
     // Remove sensitive information
     if (event.request) {
       // Don't send full URLs in production
@@ -53,7 +53,7 @@ Sentry.init({
     }
     
     // Helper function to recursively filter out Promise props
-    const filterPromises = (obj: any): any => {
+    const filterPromises = (obj: unknown): unknown => {
       if (obj === null || obj === undefined) {
         return obj;
       }
@@ -75,10 +75,10 @@ Sentry.init({
       
       // Handle objects
       if (typeof obj === 'object') {
-        const filtered: any = {};
+        const filtered: Record<string, unknown> = {};
         for (const key in obj) {
           if (Object.prototype.hasOwnProperty.call(obj, key)) {
-            const value = obj[key];
+            const value = (obj as Record<string, unknown>)[key];
             // Skip Promise props (params, searchParams in Next.js 16)
             if (value instanceof Promise) {
               filtered[key] = '[Promise - not serialized]';
@@ -95,17 +95,17 @@ Sentry.init({
     
     // Filter out Promise props from all contexts
     if (event.contexts) {
-      event.contexts = filterPromises(event.contexts) as any;
+      event.contexts = filterPromises(event.contexts) as typeof event.contexts;
     }
     
     // Filter out Promise props from extra data
     if (event.extra) {
-      event.extra = filterPromises(event.extra);
+      event.extra = filterPromises(event.extra) as typeof event.extra;
     }
     
     // Filter out Promise props from tags
     if (event.tags) {
-      event.tags = filterPromises(event.tags);
+      event.tags = filterPromises(event.tags) as typeof event.tags;
     }
     
     return event;

@@ -202,9 +202,9 @@ export const useCourseProgressStore = create<CourseProgressState>()(
         videoPositions: state.videoPositions,
       }),
       // Handle Set serialization
-      merge: (persistedState: any, currentState) => ({
+      merge: (persistedState: unknown, currentState: CourseProgressState) => ({
         ...currentState,
-        ...persistedState,
+        ...(persistedState as Partial<CourseProgressState>),
         savingProgress: new Set<string>(),
       }),
     }

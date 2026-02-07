@@ -125,7 +125,7 @@ export function parseCursor(cursor: string): { timestamp: string; id: string } |
  * @param limit - Limit used for pagination
  * @param timestampField - Field name for timestamp (default: 'created_at')
  */
-export function createCursorResponse<T extends { [key: string]: any; id: string }>(
+export function createCursorResponse<T extends { [key: string]: unknown; id: string }>(
   data: T[],
   limit: number,
   timestampField: string = 'created_at'
@@ -144,8 +144,10 @@ export function createCursorResponse<T extends { [key: string]: any; id: string 
   // Remove the extra item if we fetched it
   const actualData = hasMore ? data.slice(0, -1) : data;
 
-  const firstTimestamp = firstItem[timestampField] || firstItem.created_at;
-  const lastTimestamp = lastItem[timestampField] || lastItem.created_at;
+  const firstTimestampRaw = (firstItem as Record<string, unknown>)[timestampField] || (firstItem as { created_at?: string | Date }).created_at;
+  const lastTimestampRaw = (lastItem as Record<string, unknown>)[timestampField] || (lastItem as { created_at?: string | Date }).created_at;
+  const firstTimestamp = typeof firstTimestampRaw === 'string' || firstTimestampRaw instanceof Date ? firstTimestampRaw : String(firstTimestampRaw || '');
+  const lastTimestamp = typeof lastTimestampRaw === 'string' || lastTimestampRaw instanceof Date ? lastTimestampRaw : String(lastTimestampRaw || '');
 
   return {
     data: actualData,
@@ -162,12 +164,13 @@ export function createCursorResponse<T extends { [key: string]: any; id: string 
  * @param direction - 'next' or 'prev'
  * @param timestampField - Field name for timestamp (default: 'created_at')
  */
-export function applyCursorPagination<T>(
-  query: any,
+ 
+export function applyCursorPagination<_T>(
+  query: { order: (field: string, opts: { ascending: boolean }) => unknown; lt?: (field: string, value: string) => unknown; gt?: (field: string, value: string) => unknown },
   cursor?: string,
   direction: 'next' | 'prev' = 'next',
   timestampField: string = 'created_at'
-): any {
+): typeof query {
   if (!cursor) {
     return query.order(timestampField, { ascending: false });
   }

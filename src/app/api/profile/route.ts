@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin, createAuthenticatedClient } from '../../../lib/supabase'
+import { createAuthenticatedClient } from '../../../lib/supabase'
 import { getAuthenticatedUserId } from '../../../lib/auth-utils'
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../lib/rate-limit';
 import { validateRequestBody, updateProfileSchema } from '../../../lib/validation-schemas';
 import { logger, handleApiError } from '../../../lib/logger';
-import { ensureCsrfToken } from '../../../lib/csrf-middleware';
 
 
 export async function GET(request: NextRequest) {
@@ -51,13 +50,15 @@ try {
 		
 		// Verify user can only access their own profile (unless they're admin)
 		// RLS will also enforce this, but we check here for better error messages
+		type ProfileRoleRow = { role?: string | null };
 		const { data: profile } = await supabase
 			.from('profiles')
 			.select('role')
 			.eq('id', authenticatedUserId)
 			.single()
 		
-		if (profile?.role !== 'admin' && authenticatedUserId !== userId) {
+		const profileRow = profile as ProfileRoleRow | null;
+		if (profileRow?.role !== 'admin' && authenticatedUserId !== userId) {
 			return NextResponse.json({ 
 				error: 'Forbidden', 
 				message: 'You can only access your own profile' 
@@ -76,12 +77,13 @@ try {
 		}
 		
 		// Normalize role in response for consistent comparison
-		if (data && data.role) {
-    
-			data.role = data.role.trim().toLowerCase() as any;
+		type ProfileDataRow = { role?: string; [key: string]: unknown };
+		const profileData = data as ProfileDataRow | null;
+		if (profileData?.role) {
+			profileData.role = profileData.role.trim().toLowerCase();
 		}
 		
-		return NextResponse.json({ profile: data })
+		return NextResponse.json({ profile: profileData ?? data })
 	} catch (error) {
 		logger.error('Unexpected error in GET /api/profile', {
 			endpoint: '/api/profile',
@@ -129,7 +131,8 @@ try {
     const validation = validateRequestBody(updateProfileSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for profile update', {
         endpoint: '/api/profile',
         errors: errorMessages,
@@ -165,14 +168,15 @@ try {
 
 		// Verify user can only update their own profile (unless they're admin)
 		// RLS will also enforce this, but we check here for better error messages
+		type ProfileRoleRow = { role?: string | null };
 		const { data: profile } = await supabase
 			.from('profiles')
 			.select('role')
 			.eq('id', authenticatedUserId)
-    
-			.single() as any;
+			.single();
 
-		if (profile?.role !== 'admin' && authenticatedUserId !== userId) {
+		const profileRow = profile as ProfileRoleRow | null;
+		if (profileRow?.role !== 'admin' && authenticatedUserId !== userId) {
 			return NextResponse.json({ 
 				error: 'Forbidden', 
 				message: 'You can only update your own profile' 
@@ -181,7 +185,7 @@ try {
 
 		// Build update object
    
-		const updateData: any = {};
+		const updateData: Record<string, unknown> = {};
 		if (full_name !== undefined) {
 			updateData.full_name = full_name;
 		}
@@ -201,11 +205,10 @@ try {
 		// Update profile using authenticated client with RLS - policies will enforce access
 		const { data: updatedProfile, error: updateError } = await supabase
 			.from('profiles')
-			.update(updateData)
+			.update(updateData as never)
 			.eq('id', userId)
 			.select()
-    
-			.single() as any;
+			.single();
 
 		if (updateError) {
 			console.error('❌ Error updating profile:', updateError);
@@ -215,10 +218,12 @@ try {
 			);
 		}
 
-		console.log('✅ Profile updated successfully:', updatedProfile);
+		type UpdatedProfileRow = { full_name?: string | null; phone?: string | null; [key: string]: unknown };
+		const updatedRow = updatedProfile as UpdatedProfileRow | null;
+		console.log('✅ Profile updated successfully:', updatedRow);
 		console.log('📊 Updated values:', {
-			full_name: updatedProfile?.full_name,
-			phone: updatedProfile?.phone
+			full_name: updatedRow?.full_name,
+			phone: updatedRow?.phone
 		});
 
 		// Wait a moment for database write to complete
@@ -229,26 +234,25 @@ try {
 			.from('profiles')
 			.select('id, full_name, email, phone, role, school_id, parent_name, parent_phone, created_at, updated_at')
 			.eq('id', userId)
-    
-			.single() as any;
+			.single();
 
 		if (verifyError) {
 			console.warn('⚠️ Could not verify update:', verifyError);
 			// Still return the updated profile from the update response
 			return NextResponse.json({
-				profile: updatedProfile,
+				profile: updatedRow ?? updatedProfile,
 				message: 'Profile updated successfully (verification failed)'
 			});
 		} else {
-			console.log('✅ Verified profile data:', verifiedProfile);
+			const verifiedRow = verifiedProfile as UpdatedProfileRow | null;
+			console.log('✅ Verified profile data:', verifiedRow);
 			console.log('📊 Verified values:', {
-				full_name: verifiedProfile?.full_name,
-				phone: verifiedProfile?.phone
+				full_name: verifiedRow?.full_name,
+				phone: verifiedRow?.phone
 			});
-			// Use verified data - this ensures we return what's actually in the database
-			if (verifiedProfile) {
+			if (verifiedRow) {
 				return NextResponse.json({
-					profile: verifiedProfile,
+					profile: verifiedRow,
 					message: 'Profile updated successfully'
 				});
 			}
@@ -256,7 +260,7 @@ try {
 
 		// Fallback to updated profile if verification didn't return data
 		const successResponse = NextResponse.json({
-			profile: updatedProfile,
+			profile: updatedRow ?? updatedProfile,
 			message: 'Profile updated successfully'
 		});
 		ensureCsrfToken(successResponse, request);

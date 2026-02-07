@@ -9,7 +9,6 @@ import {
   useTeacherReports,
   useTeacherLeaves
 } from "../../../hooks/useTeacherData";
-import MonthlyAttendanceChart from "../../../components/teacher/MonthlyAttendanceChart";
 import { 
   XAxis, 
   YAxis, 
@@ -28,13 +27,14 @@ import {
 } from "recharts";
 import { TrendingUp, Calendar, FileText, Clock } from "lucide-react";
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+const _COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 type MonthlyAttendanceRecord = {
   month: string;
-  present_count: number;
-  absent_count: number;
-  leave_count: number;
+  present_count?: number;
+  absent_count?: number;
+  leave_count?: number;
+  total_days?: number;
 };
 
 /**
@@ -44,7 +44,7 @@ type MonthlyAttendanceRecord = {
  */
 export default function AnalyticsPage() {
   const { selectedSchool } = useTeacherSchool();
-  const queryClient = useQueryClient();
+  const _queryClient = useQueryClient();
   const { data: monthlyAttendance, isLoading: attendanceLoading } = useTeacherMonthlyAttendance(
     selectedSchool?.id,
     12
@@ -65,32 +65,55 @@ export default function AnalyticsPage() {
   // Calculate statistics
   const totalReports = reports?.length || 0;
    
-  const approvedReports = reports?.filter((r: any) => r.report_status === 'Approved').length || 0;
+  interface Report {
+    report_status?: string;
+  }
+  
+  interface Leave {
+    status?: string;
+  }
+  
+  const approvedReports = reports?.filter((r: Report) => r.report_status === 'Approved').length || 0;
    
-  const pendingReports = reports?.filter((r: any) => r.report_status === 'Submitted').length || 0;
+  const pendingReports = reports?.filter((r: Report) => r.report_status === 'Submitted').length || 0;
    
-  const approvedLeaves = leaves?.filter((l: any) => l.status === 'Approved').length || 0;
+  const approvedLeaves = leaves?.filter((l: Leave) => l.status === 'Approved').length || 0;
    
-  const pendingLeaves = leaves?.filter((l: any) => l.status === 'Pending').length || 0;
+  const pendingLeaves = leaves?.filter((l: Leave) => l.status === 'Pending').length || 0;
    
-  const rejectedLeaves = leaves?.filter((l: any) => l.status === 'Rejected').length || 0;
+  const rejectedLeaves = leaves?.filter((l: Leave) => l.status === 'Rejected').length || 0;
 
   // Attendance trend data
    
-  const attendanceTrend = monthlyAttendance?.slice().reverse().map((m: any) => ({
+  interface _MonthlyAttendance {
+    month: string;
+    total_days?: number;
+    present_count?: number;
+    absent_count?: number;
+    leave_count?: number;
+  }
+  
+  type MonthlyAttendanceData = {
+    month: string;
+    total_days?: number;
+    present_count?: number;
+    absent_count?: number;
+    leave_count?: number;
+  };
+  const attendanceTrend = (monthlyAttendance as MonthlyAttendanceData[] | undefined)?.slice().reverse().map((m: MonthlyAttendanceData) => ({
     month: new Date(m.month).toLocaleDateString('en-US', { month: 'short' }),
-    percentage: m.total_days > 0 ? Math.round((m.present_count / m.total_days) * 100) : 0,
-    present: m.present_count,
-    absent: m.absent_count,
-    leave: m.leave_count
+    percentage: (m.total_days ?? 0) > 0 ? Math.round(((m.present_count ?? 0) / (m.total_days ?? 0)) * 100) : 0,
+    present: m.present_count ?? 0,
+    absent: m.absent_count ?? 0,
+    leave: m.leave_count ?? 0
   })) || [];
 
   const attendanceBarData =
-    monthlyAttendance?.slice(0, 6).map((m: MonthlyAttendanceRecord) => ({
+    (monthlyAttendance as MonthlyAttendanceRecord[] | undefined)?.slice(0, 6).map((m: MonthlyAttendanceRecord) => ({
       month: new Date(m.month).toLocaleDateString('en-US', { month: 'short' }),
-      Present: m.present_count,
-      Absent: m.absent_count,
-      Leave: m.leave_count,
+      Present: m.present_count ?? 0,
+      Absent: m.absent_count ?? 0,
+      Leave: m.leave_count ?? 0,
     })) ?? [];
 
   // Report status distribution
@@ -98,7 +121,7 @@ export default function AnalyticsPage() {
     { name: 'Approved', value: approvedReports, color: '#00C49F' },
     { name: 'Pending', value: pendingReports, color: '#FFBB28' },
      
-    { name: 'Flagged', value: reports?.filter((r: any) => r.report_status === 'Flagged').length || 0, color: '#FF8042' }
+    { name: 'Flagged', value: reports?.filter((r: Report) => r.report_status === 'Flagged').length || 0, color: '#FF8042' }
   ];
 
   // Leave status distribution
@@ -164,7 +187,7 @@ export default function AnalyticsPage() {
             <div className="text-2xl font-bold">
               {attendanceTrend.length > 0
                  
-                ? Math.round(attendanceTrend.reduce((sum: number, d: any) => sum + d.percentage, 0) / attendanceTrend.length)
+                ? Math.round(attendanceTrend.reduce((sum: number, d: { percentage: number }) => sum + d.percentage, 0) / attendanceTrend.length)
                 : 0}%
             </div>
             <p className="text-xs text-muted-foreground">Last 12 months</p>
@@ -174,17 +197,6 @@ export default function AnalyticsPage() {
 
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Monthly Attendance Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly Attendance Overview</CardTitle>
-            <CardDescription>Attendance statistics for the last 12 months</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <MonthlyAttendanceChart />
-          </CardContent>
-        </Card>
-
         {/* Attendance Trend */}
         <Card>
           <CardHeader>
@@ -233,7 +245,7 @@ export default function AnalyticsPage() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={(props: any) => {
+                    label={(props: { name?: string; percent?: number }) => {
                       const name = props.name || '';
                       const percent = props.percent || 0;
                       return `${name} ${(percent * 100).toFixed(0)}%`;
@@ -276,7 +288,7 @@ export default function AnalyticsPage() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={(props: any) => {
+                    label={(props: { name?: string; percent?: number }) => {
                       const name = props.name || '';
                       const percent = props.percent || 0;
                       return `${name} ${(percent * 100).toFixed(0)}%`;
@@ -351,8 +363,8 @@ export default function AnalyticsPage() {
                   // Group reports by month
                   const monthlyReports: { [key: string]: number } = {};
                    
-                  reports.forEach((r: any) => {
-                    const month = new Date(r.date).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                  reports.forEach((r: Report & { date?: string }) => {
+                    const month = new Date(r.date ?? '').toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
                     monthlyReports[month] = (monthlyReports[month] || 0) + 1;
                   });
                   return Object.entries(monthlyReports).map(([month, count]) => ({ month, count }));

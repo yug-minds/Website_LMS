@@ -104,7 +104,7 @@ try {
       count: leaves?.length || 0,
       status: status || 'all',
       schoolId: schoolId || 'all',
-      sampleIds: leaves?.slice(0, 3).map((l: any) => l.id) || []
+      sampleIds: leaves?.slice(0, 3).map((l: { id: string }) => l.id) || []
     });
 
     return NextResponse.json({ leaves: leaves || [] });
@@ -154,7 +154,7 @@ try {
     const validation = validateRequestBody(updateLeaveStatusSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for leave update', {
         endpoint: '/api/admin/leaves',
         errors: errorMessages,
@@ -169,7 +169,7 @@ try {
       );
     }
 
-    const { id, status, approved_by, admin_remarks, action } = validation.data;
+    const { id, status, approved_by, admin_remarks } = validation.data;
 
     if (!id || !status) {
       return NextResponse.json({ error: 'Leave ID and status are required' }, { status: 400 });
@@ -197,17 +197,16 @@ try {
     const userId = userResponse?.user?.id;
 
     // Use transaction function to atomically update leave status
-    // This prevents race conditions and duplicate approvals with proper row locking
-    const { data: transactionResult, error: transactionError } = await (supabaseAdmin
-       
-      .rpc('update_leave_status' as any, {
+    type RpcResult = { success?: boolean; error?: string; leave?: Leave };
+    const { data: rawResult, error: transactionError } = await supabaseAdmin
+      .rpc('update_leave_status', {
         p_leave_id: id,
         p_status: status,
         p_reviewed_by: userId || approved_by || null,
         p_admin_remarks: admin_remarks || null
-       
-      } as any) as any);
+      } as never);
 
+    const transactionResult = rawResult as RpcResult | null;
     if (transactionError || !transactionResult?.success) {
       logger.error('Error updating leave', {
         endpoint: '/api/admin/leaves',
@@ -223,7 +222,28 @@ try {
       return NextResponse.json(errorInfo, { status: errorInfo.status });
     }
 
-    const leave = transactionResult.leave;
+    let leave = transactionResult.leave;
+
+    // The update_leave_status function doesn't set approved_by, so we need to set it separately
+    // Only set approved_by if status is 'Approved' and it's not already set
+    if (status === 'Approved' && userId && (!leave?.approved_by || leave.approved_by !== userId)) {
+      const { data: updatedLeave, error: updateApprovedByError } = await supabaseAdmin
+        .from('teacher_leaves')
+        // @ts-expect-error - teacher_leaves table update type not in schema
+        .update({ approved_by: userId })
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (!updateApprovedByError && updatedLeave) {
+        leave = updatedLeave;
+      } else {
+        logger.warn('Failed to update approved_by field (non-critical)', {
+          endpoint: '/api/admin/leaves',
+          leaveId: id,
+        }, updateApprovedByError);
+      }
+    }
 
     // If leave is approved, update teacher attendance records for the leave period
     // (The trigger should handle this, but we keep this as backup)
@@ -233,7 +253,7 @@ try {
 
     // Use supabaseAdmin to bypass RLS - admin already verified above
     // Fetch full leave data with relationships using supabaseAdmin
-    const { data: fullLeave, error: fetchError } = await supabaseAdmin
+    const { data: fullLeave } = await supabaseAdmin
       .from('teacher_leaves')
       .select(`
         *,
@@ -249,8 +269,7 @@ try {
         )
       `)
       .eq('id', id)
-       
-      .single() as any;
+      .single();
 
     return NextResponse.json({ 
       success: true,
@@ -272,8 +291,19 @@ try {
 }
 
 // Helper function to update attendance records for approved leave
- 
-async function updateAttendanceForApprovedLeave(leave: any) {
+type Leave = {
+  id: string;
+  teacher_id: string;
+  school_id: string;
+  start_date: string;
+  end_date: string;
+  leave_type?: string | null;
+  reason?: string | null;
+  status?: string | null;
+  approved_by?: string | null;
+  reviewed_by?: string | null;
+};
+async function updateAttendanceForApprovedLeave(leave: Leave) {
   try {
     const startDate = new Date(leave.start_date);
     const endDate = new Date(leave.end_date);
@@ -293,38 +323,40 @@ async function updateAttendanceForApprovedLeave(leave: any) {
         .eq('user_id', leave.teacher_id)
         .eq('school_id', leave.school_id)
         .eq('date', date)
-         
-        .single() as any;
+        .maybeSingle();
 
       const remarks = `Approved leave: ${leave.leave_type} - ${leave.reason}`;
 
-      if (existingAttendance) {
+      if (existingAttendance && 'id' in existingAttendance) {
         // Update existing record
-         
-        await ((supabaseAdmin as any)
+        type _AttendanceUpdate = {
+          status: string;
+          remarks: string;
+          recorded_at: string;
+        };
+        await supabaseAdmin
           .from('attendance')
+          // @ts-expect-error - attendance table update type not in schema
           .update({
-            status: 'Leave-Approved', // Map to attendance table status format
+            status: 'Leave-Approved',
             remarks: remarks,
             recorded_at: new Date().toISOString()
-           
-          } as any)
-           
-          .eq('id', existingAttendance.id as any)) as any;
+          })
+          .eq('id', (existingAttendance as { id?: string }).id as string);
       } else {
         // Create new record
         await (supabaseAdmin
           .from('attendance')
+          // @ts-expect-error - attendance table insert type not in schema
           .insert({
-            user_id: leave.teacher_id, // Map teacher_id to user_id
+            user_id: leave.teacher_id,
             school_id: leave.school_id,
             date,
-            status: 'Leave-Approved', // Map to attendance table status format
+            status: 'Leave-Approved',
             remarks: remarks,
             recorded_by: leave.reviewed_by || leave.teacher_id,
-            recorded_at: new Date().toISOString()
-           
-          } as any) as any);
+            recorded_at: new Date().toISOString(),
+          }));
       }
     }
   } catch (error) {

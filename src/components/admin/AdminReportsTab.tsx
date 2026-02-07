@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Download, AlertCircle, Clock } from "lucide-react";
+import { Download, AlertCircle, Clock, Loader2 } from "lucide-react";
 import { SkeletonDashboard } from "../ui/skeleton-dashboard";
+import { fetchWithCsrf } from "../../lib/csrf-client";
+import ReportFilterDialog from "./ReportFilterDialog";
 
 interface DashboardStats {
   totalSchools: number;
@@ -30,7 +33,97 @@ export default function AdminReportsTab({
   lastRefresh,
   isLoading = false
 }: AdminReportsTabProps) {
-  const router = useRouter();
+  const _router = useRouter();
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [filterDialogOpen, setFilterDialogOpen] = useState<'schools' | 'teachers' | 'students' | 'courses' | null>(null);
+
+  const handleDownloadReportWithFilters = async (
+    reportType: 'schools' | 'teachers' | 'students' | 'courses',
+    reportName: string,
+    filters: Record<string, unknown> = {}
+  ) => {
+    try {
+      setDownloading(reportType);
+      
+      // Build query parameters with filters
+      const params = new URLSearchParams();
+      params.append('type', reportType);
+      
+      // Add filter parameters
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value && value !== '') {
+          params.append(key, String(value));
+        }
+      });
+      
+      // Fetch PDF report from API with filters
+      const response = await fetchWithCsrf(`/api/admin/reports?${params.toString()}`);
+      
+      if (!response.ok) {
+        // Try to get error message from JSON response
+        let errorData: { error?: string; message?: string } = { error: 'Failed to generate report' };
+        try {
+          const contentType = response.headers.get('Content-Type');
+          if (contentType && contentType.includes('application/json')) {
+            errorData = await response.json();
+          }
+        } catch (parseError) {
+          console.error('Failed to parse error response:', parseError);
+        }
+        
+        const errorMessage = errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+        console.error(`❌ ${reportName} API Error:`, {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          details: errorData.details || errorData
+        });
+        
+        throw new Error(errorMessage);
+      }
+
+      // Check if response is PDF
+      const contentType = response.headers.get('Content-Type');
+      if (!contentType || !contentType.includes('application/pdf')) {
+        throw new Error('Invalid response format. Expected PDF.');
+      }
+
+      // Get PDF blob
+      const blob = await response.blob();
+      
+      // Get filename from Content-Disposition header or generate one
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${reportType}-report-${new Date().toISOString().split('T')[0]}.pdf`;
+      
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create download link and trigger download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log(`✅ ${reportName} downloaded successfully as PDF:`, {
+        filename,
+        size: `${(blob.size / 1024).toFixed(2)} KB`
+      });
+    } catch (error) {
+      console.error(`❌ Error downloading ${reportName}:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      alert(`Failed to download ${reportName}.\n\nError: ${errorMessage}\n\nPlease try again.`);
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   if (isLoading) {
     return <SkeletonDashboard />;
@@ -52,36 +145,56 @@ export default function AdminReportsTab({
               <Button 
                 className="w-full justify-start" 
                 variant="outline"
-                onClick={() => router.push('/admin/reports')}
+                onClick={() => setFilterDialogOpen('schools')}
+                disabled={downloading === 'schools' || isLoading}
               >
-                <Download className="mr-2 h-4 w-4" />
+                {downloading === 'schools' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
                 School Report
                 <Badge variant="secondary" className="ml-auto">{stats.totalSchools} schools</Badge>
               </Button>
               <Button 
                 className="w-full justify-start" 
                 variant="outline"
-                onClick={() => router.push('/admin/reports')}
+                onClick={() => setFilterDialogOpen('teachers')}
+                disabled={downloading === 'teachers' || isLoading}
               >
-                <Download className="mr-2 h-4 w-4" />
+                {downloading === 'teachers' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
                 Teacher Performance Report
                 <Badge variant="secondary" className="ml-auto">{stats.totalTeachers} teachers</Badge>
               </Button>
               <Button 
                 className="w-full justify-start" 
                 variant="outline"
-                onClick={() => router.push('/admin/reports')}
+                onClick={() => setFilterDialogOpen('students')}
+                disabled={downloading === 'students' || isLoading}
               >
-                <Download className="mr-2 h-4 w-4" />
+                {downloading === 'students' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
                 Student Enrollment Report
                 <Badge variant="secondary" className="ml-auto">{stats.totalStudents} students</Badge>
               </Button>
               <Button 
                 className="w-full justify-start" 
                 variant="outline"
-                onClick={() => router.push('/admin/reports')}
+                onClick={() => setFilterDialogOpen('courses')}
+                disabled={downloading === 'courses' || isLoading}
               >
-                <Download className="mr-2 h-4 w-4" />
+                {downloading === 'courses' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
                 Course Progress Report
                 <Badge variant="secondary" className="ml-auto">{stats.activeCourses} courses</Badge>
               </Button>
@@ -124,6 +237,25 @@ export default function AdminReportsTab({
           </CardContent>
         </Card>
       </div>
+
+      {/* Filter Dialog */}
+      <ReportFilterDialog
+        reportType={filterDialogOpen}
+        isOpen={filterDialogOpen !== null}
+        onClose={() => setFilterDialogOpen(null)}
+        onApplyFilters={(filters) => {
+          const reportNames = {
+            schools: 'School Report',
+            teachers: 'Teacher Performance Report',
+            students: 'Student Enrollment Report',
+            courses: 'Course Progress Report'
+          };
+          if (filterDialogOpen) {
+            handleDownloadReportWithFilters(filterDialogOpen, reportNames[filterDialogOpen], filters);
+            setFilterDialogOpen(null);
+          }
+        }}
+      />
     </div>
   );
 }

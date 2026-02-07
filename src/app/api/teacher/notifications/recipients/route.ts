@@ -45,7 +45,7 @@ try {
     }
 
      
-    const results: any = {
+    const results: { roles: { id: string; name: string; count: number }[]; users: { id: string; name: string; email: string; role: string; schoolId: string }[] } = {
       roles: [],
       users: []
     };
@@ -57,25 +57,22 @@ try {
       .eq('school_id', schoolId)
       .eq('role', 'student')
       .limit(200)
-       
-      .order('full_name', { ascending: true }) as any;
+      .order('full_name', { ascending: true });
 
     if (!studentsError && studentsData) {
-      // Add student role option
       results.roles = [{
         id: 'student',
         name: 'Student',
         count: studentsData.length
       }];
 
-      // Add students as individual users
-       
-      results.users = studentsData.map((user: any) => ({
+      type ProfileRow = { id: string; full_name?: string; email?: string; role?: string; school_id?: string };
+      results.users = (studentsData as ProfileRow[]).map((user) => ({
         id: user.id,
-        name: user.full_name || user.email,
-        email: user.email,
-        role: user.role,
-        schoolId: user.school_id
+        name: user.full_name || user.email || '',
+        email: user.email || '',
+        role: user.role || 'student',
+        schoolId: user.school_id || ''
       }));
     }
 

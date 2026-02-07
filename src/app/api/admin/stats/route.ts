@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdmin } from '../../../../lib/auth-utils';
-import { supabaseAdmin, createAuthenticatedClient } from '../../../../lib/supabase';
-import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
+import { createAuthenticatedClient } from '../../../../lib/supabase';
 import { logger, handleApiError } from '../../../../lib/logger';
 
 import { getOrSetCache, CacheTTL } from '../../../../lib/cache';
 import { initializeServer } from '../../../../lib/server-init';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
-import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 // Use SUPABASE_SERVICE_ROLE_KEY to match other API routes (consistent naming)
 
 // Create admin client that bypasses RLS
@@ -40,11 +38,23 @@ export async function GET(request: NextRequest) {
   //   );
   // }
 
-try {
+  try {
     // Verify admin access
-    const adminCheck = await verifyAdmin(request);
-    if (!adminCheck.success) {
-      return adminCheck.response;
+    let adminCheck;
+    try {
+      adminCheck = await verifyAdmin(request);
+      if (!adminCheck.success) {
+        return adminCheck.response;
+      }
+    } catch (authError) {
+      logger.error('Error verifying admin access', {
+        endpoint: '/api/admin/stats',
+        error: authError instanceof Error ? authError.message : String(authError)
+      });
+      return NextResponse.json(
+        { error: 'Authentication failed', message: 'Failed to verify admin access' },
+        { status: 401 }
+      );
     }
     
     // Get access token for authenticated client
@@ -70,7 +80,7 @@ try {
     logger.info('Admin stats cache key', {
       endpoint: '/api/admin/stats',
       cacheKey,
-      userId: adminCheck.userId
+      userId: adminCheck?.userId || 'unknown'
     });
     
     // Live count for schools (treat NULL as active; only exclude explicit false)
@@ -111,7 +121,8 @@ try {
         const mvDuration = Date.now() - mvStartTime;
         
         // Get first row (materialized view should only have one row)
-        const mvData = mvDataArray && mvDataArray.length > 0 ? mvDataArray[0] : null;
+        type MvStatsRow = { total_schools?: number; total_teachers?: number; total_students?: number; active_courses?: number; pending_leaves?: number };
+        const mvData: MvStatsRow | null = mvDataArray && mvDataArray.length > 0 ? (mvDataArray[0] as MvStatsRow) : null;
 
         if (!mvError && mvData && mvDataArray && mvDataArray.length > 0) {
           logger.info('Admin stats fetched from materialized view', {

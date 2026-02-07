@@ -30,12 +30,14 @@ export async function collectCourseStoragePaths(courseId: string): Promise<Cours
 
   try {
     // 1. Get course thumbnail path
-    const { data: course, error: courseError } = await supabaseAdmin
+    type CourseRow = { thumbnail_url?: string | null };
+    const { data: courseData, error: courseError } = await supabaseAdmin
       .from('courses')
       .select('thumbnail_url')
       .eq('id', courseId)
-      .single();
+      .maybeSingle();
 
+    const course = courseData as CourseRow | null;
     if (!courseError && course?.thumbnail_url) {
       const thumbnailPath = extractStoragePathFromUrl(course.thumbnail_url);
       if (thumbnailPath) {
@@ -57,7 +59,7 @@ export async function collectCourseStoragePaths(courseId: string): Promise<Cours
       return paths;
     }
 
-    const chapterIds = chapters?.map((ch: any) => ch.id) || [];
+    const chapterIds = chapters?.map((ch: { id: string }) => ch.id) || [];
 
     if (chapterIds.length === 0) {
       logger.debug('No chapters found for course', { courseId });
@@ -71,7 +73,7 @@ export async function collectCourseStoragePaths(courseId: string): Promise<Cours
       .in('chapter_id', chapterIds);
 
     if (!contentsError && chapterContents) {
-      chapterContents.forEach((content: any) => {
+      chapterContents.forEach((content: { storage_path?: string; thumbnail_url?: string }) => {
         if (content.storage_path) {
           paths.chapterContentPaths.push(content.storage_path);
         }
@@ -91,7 +93,7 @@ export async function collectCourseStoragePaths(courseId: string): Promise<Cours
       .in('chapter_id', chapterIds);
 
     if (!materialsError && materials) {
-      materials.forEach((material: any) => {
+      materials.forEach((material: { file_url?: string }) => {
         if (material.file_url) {
           const materialPath = extractStoragePathFromUrl(material.file_url);
           if (materialPath) {
@@ -108,7 +110,7 @@ export async function collectCourseStoragePaths(courseId: string): Promise<Cours
       .in('chapter_id', chapterIds);
 
     if (!videosError && videos) {
-      videos.forEach((video: any) => {
+      videos.forEach((video: { video_url?: string }) => {
         if (video.video_url) {
           const videoPath = extractStoragePathFromUrl(video.video_url);
           // Only add if it's a local storage path (not YouTube/external)
@@ -204,7 +206,7 @@ function isExternalUrl(url: string): boolean {
     /dropbox\.com/,
   ];
 
-  return externalPatterns.some((pattern: any) => pattern.test(url));
+  return externalPatterns.some((pattern: RegExp) => pattern.test(url));
 }
 
 /**
@@ -260,7 +262,7 @@ export async function deleteStorageFiles(
     } else {
       // Check if any files failed to delete
       if (data && Array.isArray(data)) {
-        data.forEach((item: any) => {
+        data.forEach((item: { error?: unknown; name?: string }) => {
           if (item.error || !item.name) {
             failedPaths.push(item.name || 'unknown');
           }

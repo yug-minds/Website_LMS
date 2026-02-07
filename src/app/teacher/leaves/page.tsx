@@ -48,7 +48,7 @@ export default function LeavesPage() {
   });
 
   // Auto-save leave form
-  const { isDirty: isLeaveFormDirty, clearSavedData } = useAutoSaveForm({
+  const { isDirty: _isLeaveFormDirty, clearSavedData } = useAutoSaveForm({
     formId: selectedSchool?.id ? `teacher-leave-form-${selectedSchool.id}` : 'temp-leave-form',
     formData,
     autoSave: !!selectedSchool?.id,
@@ -117,8 +117,8 @@ export default function LeavesPage() {
 
       alert('Leave request submitted successfully! It will be reviewed by your School Admin and System Admin.');
      
-    } catch (error: any) {
-      alert('Error submitting leave request: ' + (error.message || 'Unknown error'));
+    } catch (error: unknown) {
+      alert('Error submitting leave request: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
@@ -283,7 +283,7 @@ export default function LeavesPage() {
                 </div>
               ) : leaves && leaves.length > 0 ? (
                 <div className="space-y-3">
-                  {leaves.slice(0, 5).map((leave: any) => (
+                  {leaves.slice(0, 5).map((leave: { id: string; start_date: string; end_date: string; total_days?: number; status: string; reason?: string }) => (
                     <div
                       key={leave.id}
                       className="p-3 border rounded-lg hover:bg-gray-50"

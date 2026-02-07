@@ -109,10 +109,32 @@ try {
     }
 
     // Fetch all replies for all notifications in a single query (fixes N+1 problem)
+    type Notification = {
+      id: string;
+      user_id?: string;
+      title?: string | null;
+      message?: string | null;
+      type?: string | null;
+      is_read?: boolean | null;
+      created_at?: string | null;
+    };
+    type NotificationReply = {
+      id: string;
+      notification_id: string;
+      user_id: string;
+      reply_text?: string | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+      profiles?: {
+        id: string;
+        full_name?: string | null;
+        email?: string | null;
+        role?: string | null;
+      } | null;
+    };
+    const notificationIds = ((notifications || []) as Notification[]).map((n) => n.id);
      
-    const notificationIds = (notifications || []).map((n: any) => n.id);
-     
-    let allReplies: any[] = [];
+    let allReplies: NotificationReply[] = [];
     
     if (notificationIds.length > 0) {
       const { data: repliesData, error: repliesError } = await supabaseAdmin
@@ -132,8 +154,7 @@ try {
           )
         `)
         .in('notification_id', notificationIds)
-         
-        .order('created_at', { ascending: false }) as any;
+        .order('created_at', { ascending: false });
 
       if (repliesError) {
         console.error('❌ Error fetching notification replies:', repliesError);
@@ -144,13 +165,9 @@ try {
     }
 
     // Group replies by notification_id for efficient lookup
+    const repliesByNotification = new Map<string, NotificationReply[]>();
      
-     
-     
-     
-    const repliesByNotification = new Map<string, any[]>();
-     
-    allReplies.forEach((reply: any) => {
+    allReplies.forEach((reply) => {
       const notificationId = reply.notification_id;
       if (!repliesByNotification.has(notificationId)) {
         repliesByNotification.set(notificationId, []);
@@ -159,11 +176,10 @@ try {
     });
 
     // Map notifications with their replies
-     
-    const notificationsWithReplies = (notifications || []).map((notification: any) => {
+    const notificationsWithReplies = ((notifications || []) as Notification[]).map((notification) => {
       const replies = repliesByNotification.get(notification.id) || [];
        
-      const userReply = replies.find((r: any) => r.user_id === userId) || null;
+      const userReply = replies.find((r) => r.user_id === userId) || null;
 
       return {
         ...notification,
@@ -250,6 +266,13 @@ try {
 
 // PATCH: Mark notification as read/unread
 export async function PATCH(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -267,24 +290,57 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-try {
+  try {
     const body = await request.json();
+    
+    console.log('🔍 [API] Received mark as read request:', {
+      body: body,
+      notification_id: body?.notification_id,
+      user_id: body?.user_id,
+      is_read: body?.is_read
+    });
     
     // Validate request body
     const validation = validateRequestBody(notificationMarkReadSchema, body);
     if (!validation.success) {
-       
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      // Extract error messages from ZodError
+      let errorMessages = validation.error || 'Invalid request data';
+      if (validation.details && validation.details.issues && Array.isArray(validation.details.issues)) {
+        type ZodIssue = { path?: unknown; message?: string; code?: string };
+        const formattedErrors = (validation.details.issues as ZodIssue[]).map((e: ZodIssue) => {
+          const path = Array.isArray(e.path) ? e.path.join('.') : String(e.path || 'unknown');
+          return `${path}: ${e.message || 'Invalid value'}`;
+        });
+        errorMessages = formattedErrors.length > 0 ? formattedErrors.join(', ') : errorMessages;
+      }
+      
       logger.warn('Validation failed for notification mark read', {
         endpoint: '/api/notifications/user',
         method: 'PATCH',
+        body: body,
         errors: errorMessages,
+        validationDetails: validation.details?.issues ? (validation.details.issues as ZodIssue[]).map((e: ZodIssue) => ({
+          path: e.path,
+          message: e.message,
+          code: e.code
+        })) : 'none'
+      });
+      
+      console.error('❌ [API] Validation failed:', {
+        errorMessages,
+        body,
+        validationDetails: validation.details?.issues
       });
       
       return NextResponse.json(
         { 
           error: 'Validation failed',
-          details: errorMessages,
+          details: errorMessages || 'Invalid request data',
+          received: {
+            notification_id: body?.notification_id,
+            user_id: body?.user_id,
+            is_read: body?.is_read
+          }
         },
         { status: 400 }
       );
@@ -293,13 +349,13 @@ try {
     const { notification_id, user_id, is_read } = validation.data;
 
     // Verify notification belongs to user
+    type NotifRow = { user_id?: string };
     const { data: notification, error: fetchError } = await supabaseAdmin
       .from('notifications')
       .select('user_id')
       .eq('id', notification_id)
       .eq('user_id', user_id)
-       
-      .single() as any;
+      .single() as { data: NotifRow | null; error: unknown };
 
     if (fetchError || !notification) {
       return NextResponse.json(
@@ -310,15 +366,13 @@ try {
 
     // Update notification
      
-    const { data: updatedNotification, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedNotification, error: updateError } = await supabaseAdmin
       .from('notifications')
-       
-      .update({ is_read: is_read !== undefined ? is_read : true } as any)
+      .update({ is_read: is_read !== undefined ? is_read : true } as never)
       .eq('id', notification_id)
       .eq('user_id', user_id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (updateError) {
       console.error('❌ Error updating notification:', updateError);
@@ -328,10 +382,12 @@ try {
       );
     }
 
-    return NextResponse.json({
+    const successResponse = NextResponse.json({
       notification: updatedNotification,
       message: 'Notification updated successfully'
     });
+    ensureCsrfToken(successResponse, request);
+    return successResponse;
   } catch (error) {
     logger.error('Unexpected error in PATCH /api/notifications/user', {
       endpoint: '/api/notifications/user',

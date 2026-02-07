@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ErrorBoundary } from "./error-boundary";
 import { frontendLogger } from "../lib/frontend-logger";
 import { ToastProvider } from "../components/ui/toast";
@@ -57,7 +57,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       </ErrorBoundary>
     );
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     frontendLogger.error('Error in Providers component', {
       component: 'Providers',
     }, error instanceof Error ? error : new Error(String(error)));
@@ -66,7 +66,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     return (
       <div style={{ padding: '20px', backgroundColor: '#fee', minHeight: '100vh' }}>
         <h1>Error Loading App</h1>
-        <p>{error?.message || 'Unknown error'}</p>
+        <p>{error instanceof Error ? error.message : 'Unknown error'}</p>
         <button onClick={() => window.location.reload()}>Reload</button>
       </div>
     );

@@ -14,7 +14,6 @@ import {
   Clock,
   Search,
   Filter,
-  Eye,
   CheckCircle,
   AlertCircle,
   PlayCircle,
@@ -22,7 +21,7 @@ import {
   GraduationCap,
   BarChart3
 } from "lucide-react";
-import { useSchoolAdminStudentProgress } from "../../hooks/useStudentProgress";
+import { useSchoolAdminStudentProgress, type SchoolAdminProgressResponse } from "../../hooks/useStudentProgress";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
@@ -32,6 +31,7 @@ export default function StudentProgressTab() {
   const [selectedCourse, setSelectedCourse] = useState<string>("all");
   const [selectedGrade, setSelectedGrade] = useState<string>("all");
   const [selectedTeacher, setSelectedTeacher] = useState<string>("all");
+  const [selectedSection, setSelectedSection] = useState<string>("all");
 
   // Fetch student progress data
   const { 
@@ -42,7 +42,8 @@ export default function StudentProgressTab() {
   } = useSchoolAdminStudentProgress({
     courseId: selectedCourse !== "all" ? selectedCourse : undefined,
     grade: selectedGrade !== "all" ? selectedGrade : undefined,
-    teacherId: selectedTeacher !== "all" ? selectedTeacher : undefined
+    teacherId: selectedTeacher !== "all" ? selectedTeacher : undefined,
+    section: selectedSection !== "all" ? selectedSection : undefined
   });
 
   if (isLoading) {
@@ -82,35 +83,56 @@ export default function StudentProgressTab() {
   }
 
   const students = progressData?.students || [];
-  const courses = progressData?.courses || [];
+  const coursesRaw = progressData?.courses || [];
   const teachers = progressData?.teachers || [];
   const summary = progressData?.summary;
 
-  // Filter students based on search term
-  const filteredStudents = students.filter((student: any) =>
-    student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Deduplicate courses by course_id (same course can appear for different grades)
+  type CourseFromAPI = SchoolAdminProgressResponse['courses'][number];
+  const coursesMap = new Map<string, CourseFromAPI>();
+  
+  coursesRaw.forEach((course: CourseFromAPI) => {
+    if (!coursesMap.has(course.course_id)) {
+      coursesMap.set(course.course_id, course);
+    }
+  });
+  const courses = Array.from(coursesMap.values());
+
+  // Filter students based on search term and section
+  interface Student {
+    full_name: string;
+    email: string;
+    section?: string;
+    grade?: string;
+    average_progress?: number;
+  }
+  
+  const filteredStudents = students.filter((student: Student) => {
+    const matchesSearch = student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSection = selectedSection === "all" || student.section === selectedSection;
+    return matchesSearch && matchesSection;
+  });
 
   // Get unique grades for filter
-  const availableGrades = [...new Set(students.map((s: any) => s.grade))].sort();
+  const availableGrades = [...new Set(students.map((s: Student) => s.grade).filter((g): g is string => typeof g === 'string'))].sort();
 
   // Prepare chart data
-  const gradeProgressData = availableGrades.map((grade: any) => {
-    const gradeStudents = students.filter((s: any) => s.grade === grade);
+  const gradeProgressData = availableGrades.map((grade: string) => {
+    const gradeStudents = students.filter((s: Student) => s.grade === grade);
     const avgProgress = gradeStudents.length > 0 
-      ? Math.round(gradeStudents.reduce((sum: number, s: any) => sum + s.average_progress, 0) / gradeStudents.length)
+      ? Math.round(gradeStudents.reduce((sum: number, s: Student) => sum + (s.average_progress || 0), 0) / gradeStudents.length)
       : 0;
     
     return {
       grade,
       students: gradeStudents.length,
       avgProgress,
-      completed: gradeStudents.filter((s: any) => s.average_progress === 100).length
+      completed: gradeStudents.filter((s: Student) => s.average_progress === 100).length
     };
   });
 
-  const courseCompletionData = courses.map((course: any) => ({
+  const courseCompletionData = courses.map((course: CourseFromAPI) => ({
     name: course.course_name,
     completion_rate: course.completion_rate,
     enrolled: course.enrolled_students,
@@ -249,7 +271,7 @@ export default function StudentProgressTab() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={(entry: any) => `${entry.payload?.name || entry.name}: ${entry.payload?.completion_rate || entry.value}%`}
+                  label={(entry: { payload?: { name?: string; completion_rate?: number }; name?: string; value?: number }) => `${entry.payload?.name || entry.name}: ${entry.payload?.completion_rate ?? entry.value ?? 0}%`}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="completion_rate"
@@ -293,9 +315,20 @@ export default function StudentProgressTab() {
               <SelectContent>
                 <SelectItem value="all">All Grades</SelectItem>
                 {availableGrades.map((grade) => (
-                  <SelectItem key={grade} value={grade}>
-                    {grade}
+                  <SelectItem key={grade ?? ''} value={grade ?? ''}>
+                    {grade ?? ''}
                   </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedSection} onValueChange={setSelectedSection}>
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue placeholder="Section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sections</SelectItem>
+                {[...new Set(students.map((s: Student) => s.section).filter((s): s is string => typeof s === 'string'))].sort().map((section) => (
+                  <SelectItem key={section} value={section}>{section}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -367,6 +400,9 @@ export default function StudentProgressTab() {
                           <div className="flex items-center gap-3 mb-2">
                             <h3 className="font-semibold">{student.full_name}</h3>
                             <Badge variant="outline">{student.grade}</Badge>
+                            {student.section && (
+                              <Badge variant="outline">Section {student.section}</Badge>
+                            )}
                             <Badge className={getStatusColor(
                               student.average_progress === 100 ? 'completed' :
                               student.average_progress > 0 ? 'in_progress' : 'not_started'

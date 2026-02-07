@@ -130,7 +130,7 @@ interface CacheEntry<T> {
  * Fallback in-memory cache for when Redis is unavailable
  */
 class FallbackCache {
-  private cache: Map<string, CacheEntry<any>> = new Map();
+  private cache: Map<string, CacheEntry<unknown>> = new Map();
   private maxSize: number = 1000;
 
   get<T>(key: string): T | null {
@@ -952,16 +952,16 @@ export async function cleanupExpiredCache(): Promise<number> {
     const keys = fallbackCache.getAllKeys();
     let cleaned = 0;
     
+    // Cleanup expired entries by checking each key
+    // The get() method already handles expiration internally, so we trigger it for each key
+    // and count entries that were expired
+    const initialSize = fallbackCache.size();
     keys.forEach(key => {
-      const entry = (fallbackCache as any).cache.get(key);
-      if (entry) {
-        const now = Date.now();
-        if (now - entry.timestamp > entry.ttl) {
-          fallbackCache.delete(key);
-          cleaned++;
-        }
-      }
+      // Calling get() will delete expired entries internally
+      fallbackCache.get<unknown>(key);
     });
+    const finalSize = fallbackCache.size();
+    cleaned = initialSize - finalSize;
 
     // Redis handles expiration automatically, no cleanup needed
     return cleaned;

@@ -6,7 +6,82 @@ import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../..
 import { adminTeacherAttendanceSchema, validateRequestBody } from '../../../../lib/validation-schemas';
 import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Teacher {
+  id: string;
+  email?: string;
+  full_name?: string;
+  [key: string]: unknown;
+}
+
+interface AttendanceRecord {
+  date?: string;
+  status?: string;
+  status_original?: string;
+  user_id?: string;
+  teacher_id?: string;
+  id?: string;
+  school_id?: string;
+  remarks?: string;
+  recorded_by?: string;
+  recorded_at?: string;
+  profiles?: unknown;
+  schools?: unknown;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Profile {
+  id: string;
+  email?: string;
+  [key: string]: unknown;
+}
+
+interface Leave {
+  teacher_id?: string;
+  leave_type?: string;
+  [key: string]: unknown;
+}
+
+interface TeacherStatus {
+  status: string;
+  isOnLeave: boolean;
+  leaveType?: string;
+  attendanceRate?: number;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface MonthlyLog {
+  id?: string;
+  teacher_id?: string;
+  school_id?: string;
+  month?: string;
+  year?: number;
+  month_number?: number;
+  present_days?: number;
+  absent_days?: number;
+  leave_days?: number;
+  unreported_days?: number;
+  total_working_days?: number;
+  attendance_percentage?: number | string;
+  created_at?: string;
+  updated_at?: string;
+  profiles?: unknown;
+  schools?: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface AttendanceRecordWithId {
+  id: string;
+  user_id?: string;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface ZodIssue {
+  path: (string | number)[];
+  message: string;
+}
 
 // GET - Fetch teacher attendance data (uses attendance table, teacher_attendance is deprecated)
 export async function GET(request: NextRequest) {
@@ -50,6 +125,9 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const limit = searchParams.get('limit') || '50';
+    const month = searchParams.get('month'); // Format: YYYY-MM
+    const year = searchParams.get('year');
+    const useMonthlyLog = searchParams.get('useMonthlyLog') === 'true'; // Use monthly log table for faster queries
 
     // First, get all teacher profile IDs
     const { data: teacherProfiles } = await supabaseAdmin
@@ -57,7 +135,10 @@ export async function GET(request: NextRequest) {
       .select('id')
       .eq('role', 'teacher');
     
-    const teacherProfileIds = (teacherProfiles || []).map((p: any) => p.id);
+    type ProfileId = {
+      id: string;
+    };
+    const teacherProfileIds = ((teacherProfiles || []) as ProfileId[]).map((p) => p.id);
     
     // If no teachers found, return empty result
     if (teacherProfileIds.length === 0) {
@@ -79,7 +160,13 @@ export async function GET(request: NextRequest) {
         .gte('end_date', today);
       
       const teacherTodayStatus: Record<string, { status: string; isOnLeave: boolean; leaveType?: string }> = {};
-      (allTeachers || []).forEach((teacher: any) => {
+      type Teacher = {
+        id: string;
+        email?: string | null;
+        full_name?: string | null;
+        profile_id?: string | null;
+      };
+      ((allTeachers || []) as Teacher[]).forEach((teacher) => {
         teacherTodayStatus[teacher.id] = { status: 'Not Marked', isOnLeave: false };
       });
       
@@ -157,6 +244,19 @@ export async function GET(request: NextRequest) {
       limit,
     });
 
+    type AttendanceDbRow = {
+      id?: string;
+      user_id?: string;
+      school_id?: string;
+      date?: string;
+      status?: string;
+      status_original?: string;
+      remarks?: string;
+      recorded_by?: string;
+      recorded_at?: string;
+      profiles?: unknown;
+      schools?: unknown;
+    };
     const { data: attendance, error } = await query;
 
     if (error) {
@@ -199,7 +299,13 @@ export async function GET(request: NextRequest) {
         .gte('end_date', today);
       
       const teacherTodayStatus: Record<string, { status: string; isOnLeave: boolean; leaveType?: string }> = {};
-      (allTeachers || []).forEach((teacher: any) => {
+      type Teacher = {
+        id: string;
+        email?: string | null;
+        full_name?: string | null;
+        profile_id?: string | null;
+      };
+      ((allTeachers || []) as Teacher[]).forEach((teacher) => {
         teacherTodayStatus[teacher.id] = { status: 'Not Marked', isOnLeave: false };
       });
       
@@ -230,8 +336,22 @@ export async function GET(request: NextRequest) {
 
     // Transform data to match old format (for backward compatibility)
      
-    const transformedAttendance = (attendance || []).map((record: any) => ({
+    type _AttendanceRecordLocal = {
+      id?: string;
+      user_id?: string;
+      school_id?: string;
+      date?: string;
+      status?: string;
+      remarks?: string;
+      recorded_by?: string;
+      recorded_at?: string;
+      profiles?: { full_name?: string; email?: string };
+      schools?: { name?: string };
+    };
+    
+    const transformedAttendance = ((attendance || []) as AttendanceDbRow[]).map((record) => ({
       id: record.id,
+      user_id: record.user_id,
       teacher_id: record.user_id, // Map user_id to teacher_id for compatibility
       school_id: record.school_id,
       date: record.date,
@@ -272,47 +392,115 @@ export async function GET(request: NextRequest) {
       .eq('role', 'teacher');
     
     // Create a mapping: profile.id -> teacher record
-    const profileToTeacherMap: Record<string, any> = {};
-    (allTeachers || []).forEach((teacher: any) => {
-      // Find matching profile by email
-      const profile = (teacherProfilesFull || []).find((p: any) => p.email === teacher.email);
-      if (profile) {
+    interface Teacher {
+      id?: string;
+      email?: string;
+      full_name?: string;
+      profile_id?: string;
+    }
+    
+    interface Profile {
+      id?: string;
+      email?: string;
+      full_name?: string;
+    }
+    
+    const profileToTeacherMap: Record<string, Teacher> = {};
+    const profilesList = (teacherProfilesFull || []) as Profile[];
+    ((allTeachers || []) as Teacher[]).forEach((teacher: Teacher) => {
+      const profile = profilesList.find((p: Profile) => p.email === teacher.email);
+      if (profile?.id != null) {
         profileToTeacherMap[profile.id] = teacher;
       }
-      // Also map by profile_id if available
       if (teacher.profile_id) {
         profileToTeacherMap[teacher.profile_id] = teacher;
       }
     });
 
     // Calculate today's attendance
-    const todayAttendance = transformedAttendance.filter((a: any) => a.date === today);
+    const todayAttendance = transformedAttendance.filter((a) => (a.date ?? '') === today);
     
     // Build per-teacher today status (using teacher.id as key for frontend matching)
-    const teacherTodayStatus: Record<string, { status: string; isOnLeave: boolean; leaveType?: string }> = {};
+    const teacherTodayStatus: Record<string, { status: string; isOnLeave: boolean; leaveType?: string; attendanceRate?: number }> = {};
+    
+    // Calculate per-teacher attendance rates from their attendance records
+    const teacherAttendanceRates: Record<string, number> = {};
+    const teacherAttendanceCounts: Record<string, { present: number; total: number }> = {};
+    
+    // Initialize counts for all teachers
+    (allTeachers || []).forEach((teacher: Teacher) => {
+      const tid = teacher.id;
+      if (tid != null) {
+        teacherAttendanceCounts[tid] = { present: 0, total: 0 };
+        teacherTodayStatus[tid] = { status: 'Not Marked', isOnLeave: false };
+      }
+    });
+    
+    // Calculate attendance rates from attendance records (current month only)
+    // This matches the monthly attendance calculation for consistency
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthStartStr = monthStart.toISOString().split('T')[0];
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const monthEndStr = monthEnd.toISOString().split('T')[0];
+    
+    ((attendance || []) as AttendanceDbRow[]).forEach((record) => {
+      const uid = record.user_id;
+      const teacher = uid != null ? profileToTeacherMap[uid] : undefined;
+      const recordDate = record.date ?? '';
+      if (teacher && recordDate >= monthStartStr && recordDate <= monthEndStr) {
+        const tid = teacher.id;
+        if (tid != null) {
+          if (!teacherAttendanceCounts[tid]) {
+            teacherAttendanceCounts[tid] = { present: 0, total: 0 };
+          }
+          teacherAttendanceCounts[tid].total++;
+          if (record.status === 'Present' || (record.status_original ?? record.status) === 'Present') {
+            teacherAttendanceCounts[tid].present++;
+          }
+        }
+      }
+    });
+    
+    // Calculate rates
+    Object.keys(teacherAttendanceCounts).forEach((teacherId) => {
+      const counts = teacherAttendanceCounts[teacherId];
+      teacherAttendanceRates[teacherId] = counts.total > 0 
+        ? Math.round((counts.present / counts.total) * 100) 
+        : 0;
+    });
     
     // Initialize all teachers as not marked (no attendance record)
-    (allTeachers || []).forEach((teacher: any) => {
-      teacherTodayStatus[teacher.id] = { status: 'Not Marked', isOnLeave: false };
+    ((allTeachers || []) as Teacher[]).forEach((teacher: Teacher) => {
+      const tid = teacher.id;
+      if (tid != null) {
+        teacherTodayStatus[tid] = { 
+          status: 'Not Marked', 
+          isOnLeave: false,
+          attendanceRate: teacherAttendanceRates[tid] || 0
+        };
+      }
     });
     
     // First, update with actual attendance records for today
-    todayAttendance.forEach((record: any) => {
-      // Find teacher by profile email or user_id
-      const profile = (teacherProfilesFull || []).find((p: any) => p.id === record.teacher_id);
-      if (profile) {
-        const teacher = profileToTeacherMap[profile.id] || 
-                       (allTeachers || []).find((t: any) => t.email === profile.email);
-        if (teacher && teacherTodayStatus[teacher.id]) {
-          const status = record.status_original || record.status;
-          // Only update if not already on leave (leaves take precedence)
-          if (!teacherTodayStatus[teacher.id].isOnLeave) {
-            teacherTodayStatus[teacher.id] = {
+    todayAttendance.forEach((record) => {
+      const recordTeacherId = record.teacher_id ?? record.user_id;
+      const profile = recordTeacherId != null ? profilesList.find((p: Profile) => p.id === recordTeacherId) : undefined;
+      const pid = profile?.id;
+      if (pid != null) {
+        const teacher = profileToTeacherMap[pid] || 
+                       (allTeachers || []).find((t: Teacher) => t.email === profile?.email);
+        const tid = teacher?.id;
+        if (tid != null && teacherTodayStatus[tid]) {
+          const status = (record as { status_original?: string }).status_original || record.status;
+          if (!teacherTodayStatus[tid].isOnLeave) {
+            teacherTodayStatus[tid] = {
               status: status === 'Leave-Approved' ? 'On Leave' : 
                      status === 'Present' ? 'Present' : 
-                     status === 'Absent' ? 'Absent' : status,
+                     status === 'Absent' ? 'Absent' : (status ?? 'Not Marked'),
               isOnLeave: status === 'Leave-Approved',
-              leaveType: status === 'Leave-Approved' ? 'Approved Leave' : undefined
+              leaveType: status === 'Leave-Approved' ? 'Approved Leave' : undefined,
+              attendanceRate: teacherAttendanceRates[tid] || teacherTodayStatus[tid].attendanceRate || 0
             };
           }
         }
@@ -321,22 +509,25 @@ export async function GET(request: NextRequest) {
     
     // Then, mark teachers on approved leave today (leaves take precedence over attendance records)
     // Leaves use profile.id as teacher_id
-    (todayLeaves || []).forEach((leave: any) => {
-      const teacher = profileToTeacherMap[leave.teacher_id];
-      if (teacher && teacherTodayStatus[teacher.id]) {
-        teacherTodayStatus[teacher.id] = {
+    (todayLeaves || []).forEach((leave: Leave) => {
+      const lid = leave.teacher_id;
+      const teacher = lid != null ? profileToTeacherMap[lid] : undefined;
+      const tid = teacher?.id;
+      if (tid != null && teacherTodayStatus[tid]) {
+        teacherTodayStatus[tid] = {
           status: 'On Leave',
           isOnLeave: true,
-          leaveType: leave.leave_type || 'Leave'
+          leaveType: leave.leave_type || 'Leave',
+          attendanceRate: teacherAttendanceRates[tid] || teacherTodayStatus[tid].attendanceRate || 0
         };
       }
     });
     
     // Calculate today's counts
-    const presentToday = Object.values(teacherTodayStatus).filter((s: any) => s.status === 'Present').length;
-    const onLeaveToday = Object.values(teacherTodayStatus).filter((s: any) => s.isOnLeave).length;
-    const notMarkedToday = Object.values(teacherTodayStatus).filter((s: any) => s.status === 'Not Marked').length;
-    const absentToday = Object.values(teacherTodayStatus).filter((s: any) => 
+    const presentToday = Object.values(teacherTodayStatus).filter((s: TeacherStatus) => s.status === 'Present').length;
+    const onLeaveToday = Object.values(teacherTodayStatus).filter((s: TeacherStatus) => s.isOnLeave).length;
+    const notMarkedToday = Object.values(teacherTodayStatus).filter((s: TeacherStatus) => s.status === 'Not Marked').length;
+    const absentToday = Object.values(teacherTodayStatus).filter((s: TeacherStatus) => 
       s.status === 'Absent' || s.status === 'On Leave'
     ).length;
 
@@ -362,9 +553,93 @@ export async function GET(request: NextRequest) {
       totalTeachers: (allTeachers || []).length
     });
 
+    // If requesting monthly data, also fetch from monthly log table
+    let monthlyData = null;
+    if (month || year || useMonthlyLog) {
+      try {
+        let monthlyQuery = supabaseAdmin
+          .from('teacher_monthly_attendance_log')
+          .select(`
+            *,
+            profiles!teacher_monthly_attendance_log_teacher_id_fkey (
+              id,
+              full_name,
+              email
+            ),
+            schools (
+              id,
+              name,
+              school_code
+            )
+          `);
+
+        if (teacherId) {
+          monthlyQuery = monthlyQuery.eq('teacher_id', teacherId);
+        }
+        if (schoolId) {
+          monthlyQuery = monthlyQuery.eq('school_id', schoolId);
+        }
+        if (month) {
+          // month format: YYYY-MM, convert to date (first day of month)
+          const monthDate = new Date(`${month}-01`);
+          monthlyQuery = monthlyQuery.eq('month', monthDate.toISOString().split('T')[0]);
+        }
+        if (year) {
+          monthlyQuery = monthlyQuery.eq('year', parseInt(year));
+        }
+
+        const { data: monthlyLogs, error: monthlyError } = await monthlyQuery.order('month', { ascending: false });
+
+        type MonthlyLogRow = {
+          id?: string;
+          teacher_id?: string;
+          school_id?: string;
+          month?: string;
+          year?: number;
+          month_number?: number;
+          present_days?: number;
+          absent_days?: number;
+          leave_days?: number;
+          unreported_days?: number;
+          total_working_days?: number;
+          attendance_percentage?: number | string;
+          created_at?: string;
+          updated_at?: string;
+          profiles?: unknown;
+          schools?: unknown;
+        };
+        if (!monthlyError && monthlyLogs) {
+          monthlyData = (monthlyLogs as MonthlyLogRow[]).map((log) => ({
+            id: log.id,
+            teacher_id: log.teacher_id,
+            school_id: log.school_id,
+            month: log.month,
+            year: log.year,
+            month_number: log.month_number,
+            present_days: log.present_days,
+            absent_days: log.absent_days,
+            leave_days: log.leave_days,
+            unreported_days: log.unreported_days,
+            total_working_days: log.total_working_days,
+            attendance_percentage: log.attendance_percentage,
+            created_at: log.created_at,
+            updated_at: log.updated_at,
+            profiles: log.profiles,
+            schools: log.schools
+          }));
+        }
+      } catch (monthlyErr) {
+        logger.warn('Error fetching monthly attendance logs', {
+          endpoint: '/api/admin/teacher-attendance',
+          error: monthlyErr instanceof Error ? monthlyErr.message : String(monthlyErr)
+        });
+      }
+    }
+
     return NextResponse.json({ 
       attendance: transformedAttendance,
-      summary: enhancedSummary 
+      summary: enhancedSummary,
+      monthlyData: monthlyData || undefined
     });
   } catch (error) {
     logger.error('Unexpected error in GET /api/admin/teacher-attendance', {
@@ -382,6 +657,13 @@ export async function GET(request: NextRequest) {
 
 // POST - Create or update attendance record (uses attendance table, teacher_attendance is deprecated)
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -406,7 +688,7 @@ try {
     const validation = validateRequestBody(adminTeacherAttendanceSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for teacher attendance', {
         endpoint: '/api/admin/teacher-attendance',
         errors: errorMessages,
@@ -455,70 +737,70 @@ try {
     }
 
     // Check if attendance record already exists for this teacher and date
+    type ExistingAttendanceRow = { id: string };
     const { data: existingRecord } = await supabaseAdmin
       .from('attendance')
       .select('id')
       .eq('user_id', teacher_id)
       .eq('school_id', school_id)
       .eq('date', date)
-       
-      .single() as any;
+      .single();
 
-    let result;
-    if (existingRecord) {
+    const existing = existingRecord as ExistingAttendanceRow | null;
+    let result: { id: string; user_id?: string; remarks?: string; [key: string]: unknown };
+    if (existing) {
       // Update existing record
-       
-      const { data, error } = await ((supabaseAdmin as any)
+      type _AttendanceUpdate = { status: string; remarks: string; recorded_at: string };
+      
+      const { data, error } = await supabaseAdmin
         .from('attendance')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .update({
           status: mappedStatus,
           remarks: remarks,
           recorded_at: new Date().toISOString()
-         
-        } as any)
-         
-        .eq('id', existingRecord.id as any)
+        })
+        .eq('id', existing.id)
         .select()
-         
-        .single() as any) as any;
+        .single();
 
       if (error) {
         console.error('Error updating attendance:', error);
         return NextResponse.json({ error: 'Failed to update attendance' }, { status: 500 });
       }
-      result = data;
+      result = (data ?? {}) as { id: string; user_id?: string; remarks?: string; [key: string]: unknown };
     } else {
       // Create new record
-      const { data, error } = await (supabaseAdmin
+      type _AttendanceInsert = { user_id: string; school_id: string; date: string; status: string; remarks: string; recorded_by: string; recorded_at: string };
+      
+      const { data, error } = await supabaseAdmin
         .from('attendance')
+        // @ts-expect-error - Supabase generated types use never for untyped schema
         .insert({
-          user_id: teacher_id, // Map teacher_id to user_id
+          user_id: teacher_id,
           school_id: school_id,
           date: date,
           status: mappedStatus,
           remarks: remarks,
-          recorded_by: teacher_id, // Default to teacher themselves
+          recorded_by: teacher_id,
           recorded_at: new Date().toISOString()
-         
-        } as any)
-         
-        .select() as any)
-         
-        .single() as any;
+        })
+        .select()
+        .single();
 
       if (error) {
         console.error('Error creating attendance:', error);
         return NextResponse.json({ error: 'Failed to create attendance record' }, { status: 500 });
       }
-      result = data;
+      result = (data ?? {}) as { id: string; user_id?: string; remarks?: string; [key: string]: unknown };
     }
 
     // Transform result to match old format for backward compatibility
     const transformedResult = {
-      ...result,
-      teacher_id: result.user_id,
-      notes: result.remarks,
-      status_original: status // Keep original status for compatibility
+      ...(result && typeof result === 'object' ? result : {}),
+      teacher_id: result?.user_id,
+      notes: result?.remarks,
+      status_original: status
     };
 
     return NextResponse.json({ 
@@ -542,22 +824,22 @@ try {
 
 // Helper function to calculate attendance summary
  
-function calculateAttendanceSummary(attendance: any[]) {
+function calculateAttendanceSummary(attendance: AttendanceRecord[]) {
   const totalDays = attendance.length;
   // Use status_original if available (for backward compatibility), otherwise use status
-  const presentDays = attendance.filter((a: any) => 
+  const presentDays = attendance.filter((a: AttendanceRecord) => 
     (a.status_original || a.status) === 'Present' || 
     (a.status_original || a.status) === 'Late'
   ).length;
-  const absentApprovedDays = attendance.filter((a: any) => 
+  const absentApprovedDays = attendance.filter((a: AttendanceRecord) => 
     (a.status_original || a.status) === 'Absent (Approved)' || 
     (a.status_original || a.status) === 'Leave-Approved'
   ).length;
-  const absentUnapprovedDays = attendance.filter((a: any) => 
+  const absentUnapprovedDays = attendance.filter((a: AttendanceRecord) => 
     (a.status_original || a.status) === 'Absent (Unapproved)' || 
     (a.status_original || a.status) === 'Absent'
   ).length;
-  const lateDays = attendance.filter((a: any) => 
+  const lateDays = attendance.filter((a: AttendanceRecord) => 
     (a.status_original || a.status) === 'Late'
   ).length;
 

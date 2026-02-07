@@ -9,7 +9,99 @@ import { getOrSetCache, CacheKeys, CacheTTL, invalidateCache } from '../../../..
 import { cleanupCourseStorage } from '../../../../../lib/storage-utils';
 import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+interface Assignment {
+  id?: string;
+  title?: string;
+  chapter_id?: string;
+  config?: string | Record<string, unknown>;
+  auto_grading_enabled?: boolean;
+  max_score?: number;
+  max_marks?: number;
+  assignment_type?: string;
+  questions?: Question[];
+  [key: string]: unknown;
+}
+
+interface Question {
+  id?: string;
+  assignment_id?: string;
+  question_type?: string;
+  question_text?: string;
+  options?: string[];
+  correct_answer?: string;
+  marks?: number;
+  explanation?: string;
+  order_index?: number;
+  [key: string]: unknown;
+}
+
+interface Chapter {
+  id?: string;
+  name?: string;
+  title?: string;
+  order_index?: number;
+  order_number?: number;
+  [key: string]: unknown;
+}
+
+interface ChapterContent {
+  id?: string;
+  chapter_id?: string;
+  content_type?: string;
+  title?: string;
+  content_url?: string;
+  content_text?: string;
+  duration_minutes?: number;
+  storage_path?: string;
+  thumbnail_url?: string;
+  content_label?: string;
+  order_index?: number;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+interface AssignmentConfig {
+  chapter_id?: string;
+  auto_grading_enabled?: boolean;
+  [key: string]: unknown;
+}
+
+interface Video {
+  chapter_id?: string;
+  title?: string;
+  video_url?: string;
+  duration?: number;
+  order_index?: number;
+  [key: string]: unknown;
+}
+
+interface Material {
+  chapter_id?: string;
+  title?: string;
+  file_url?: string;
+  file_type?: string;
+  order_index?: number;
+  [key: string]: unknown;
+}
+
+interface CourseAccess {
+  course_id?: string;
+  school_id?: string;
+  grade?: string;
+  [key: string]: unknown;
+}
+
+interface LogData {
+  location?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+  timestamp?: number;
+  sessionId?: string;
+  runId?: string;
+  hypothesisId?: string;
+  [key: string]: unknown;
+}
 
 // GET - Get a single course
 export async function GET(
@@ -41,8 +133,34 @@ export async function GET(
     const { id: courseId } = await params;
 
     // Fetch course metadata with caching (course metadata changes infrequently)
-    let course: any;
-    let fetchError: any;
+    type CourseData = {
+      id: string;
+      course_name?: string | null;
+      title?: string | null;
+      name?: string | null;
+      description?: string | null;
+      subject?: string | null;
+      grade?: string | null;
+      status?: string | null;
+      is_published?: boolean | null;
+      school_id?: string | null;
+      created_by?: string | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+      thumbnail_url?: string | null;
+      duration_weeks?: number | null;
+      prerequisites_course_ids?: string[] | null;
+      prerequisites_text?: string | null;
+      difficulty_level?: string | null;
+      total_chapters?: number | null;
+      num_chapters?: number | null;
+      total_videos?: number | null;
+      total_materials?: number | null;
+      total_assignments?: number | null;
+      release_type?: string | null;
+    };
+    let course: CourseData | null = null;
+    let fetchError: { code?: string; message?: string } | null = null;
     
     try {
       course = await getOrSetCache(
@@ -52,8 +170,7 @@ export async function GET(
             .from('courses')
             .select('id, course_name, title, name, description, subject, grade, status, is_published, school_id, created_by, created_at, updated_at, thumbnail_url, duration_weeks, prerequisites_course_ids, prerequisites_text, difficulty_level, total_chapters, num_chapters, total_videos, total_materials, total_assignments, release_type')
             .eq('id', courseId)
-             
-            .single() as any;
+            .single();
           
           if (error) {
             logger.error('Database error fetching course', {
@@ -78,7 +195,8 @@ export async function GET(
         CacheTTL.MEDIUM // Cache for 5 minutes
       );
     } catch (error: unknown) {
-      fetchError = error;
+      const errorObj = error as { code?: string; message?: string };
+      fetchError = { code: errorObj.code, message: errorObj.message || String(error) };
       logger.error('Error fetching course', {
         endpoint: '/api/admin/courses/[id]',
         courseId,
@@ -107,7 +225,7 @@ export async function GET(
         details: fetchError?.message || 'Course not found in database',
         courseId 
       }, { status: isNotFound ? 404 : 500 });
-      ensureCsrfToken(errorResponse, request);
+      ensureCsrfToken(errorResponse as NextResponse, request);
       return errorResponse;
     }
 
@@ -133,31 +251,41 @@ export async function GET(
     ]);
 
     // Handle course_access and fetch schools in parallel
-     
-    let courseAccess: any[] = [];
+    type CourseAccess = {
+      id: string;
+      course_id: string;
+      school_id: string;
+      grade?: string | null;
+      schools?: {
+        id: string;
+        name?: string | null;
+      } | null;
+    };
+    type School = {
+      id: string;
+      name?: string | null;
+    };
+    let courseAccess: CourseAccess[] = [];
     if (accessError) {
       console.error('❌ Error fetching course_access:', accessError);
     } else if (accessData) {
-      courseAccess = accessData;
+      courseAccess = accessData as CourseAccess[];
       console.log(`✅ Fetched ${accessData.length} course_access entries for course ${courseId}`);
       
       // Fetch school names if we have access data
-       
-      const schoolIds = Array.from(new Set(accessData.map((a: any) => a.school_id).filter(Boolean)));
+      const schoolIds = Array.from(new Set((accessData as CourseAccess[]).map((a) => a.school_id).filter(Boolean)));
       if (schoolIds.length > 0) {
         const { data: schoolsData, error: schoolsError } = await supabaseAdmin
           .from('schools')
           .select('id, name')
-           
-          .in('id', schoolIds) as any;
+          .in('id', schoolIds);
         
         if (schoolsError) {
           console.error('❌ Error fetching schools for course_access:', schoolsError);
         } else if (schoolsData) {
-           
-          const schoolsMap = new Map(schoolsData.map((s: any) => [s.id, s]));
-           
-          courseAccess = accessData.map((access: any) => ({
+          const schoolsMap = new Map(((schoolsData || []) as School[]).map((s) => [s.id, s]));
+          
+          courseAccess = (accessData as CourseAccess[]).map((access) => ({
             ...access,
             schools: schoolsMap.get(access.school_id) || null
           }));
@@ -177,14 +305,29 @@ export async function GET(
 
     // Now get chapter IDs first to fetch assignments chapter-wise
     const chapterIds = chaptersData && chaptersData.length > 0 
-      ? chaptersData.map((ch: any) => ch.id) 
+      ? ((chaptersData || []) as Array<{ id?: string }>).map((ch) => ch.id).filter((id): id is string => !!id)
       : [];
 
     // Fetch assignments both chapter-wise AND by course_id
     // This ensures we catch assignments with NULL chapter_id or mismatched chapter_ids
-    let assignmentsByChapter: any[] = [];
-    let assignmentsByCourse: any[] = [];
-    let assignmentsError: any = null;
+    type LocalAssignment = {
+      id: string;
+      course_id?: string | null;
+      chapter_id?: string | null;
+      title?: string | null;
+      description?: string | null;
+      assignment_type?: string | null;
+      due_date?: string | null;
+      max_score?: number | null;
+      max_marks?: number | null;
+      auto_grading_enabled?: boolean | null;
+      config?: unknown;
+      is_published?: boolean | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+    };
+    let assignmentsByChapter: LocalAssignment[] = [];
+    let assignmentsByCourse: LocalAssignment[] = [];
     
     // Fetch assignments chapter-wise (for properly linked assignments)
     if (chapterIds.length > 0) {
@@ -197,11 +340,10 @@ export async function GET(
       
       if (chapterErr) {
         console.warn('⚠️ Error fetching assignments chapter-wise (non-critical):', chapterErr.message);
-        assignmentsError = chapterErr;
       } else {
         console.log(`✅ Fetched ${assignmentsByChapter.length} assignment(s) chapter-wise for ${chapterIds.length} chapter(s)`);
         if (assignmentsByChapter.length > 0) {
-          console.log('📝 Assignments by chapter:', assignmentsByChapter.map((a: any) => ({
+          console.log('📝 Assignments by chapter:', assignmentsByChapter.map((a) => ({
             id: a.id,
             title: a.title,
             chapter_id: a.chapter_id,
@@ -212,12 +354,12 @@ export async function GET(
     }
     
     // Always also fetch by course_id to catch assignments with NULL chapter_id
-    const { data: courseData, error: courseErr } = await supabaseAdmin
+    const { data: assignmentsByCourseData, error: courseErr } = await supabaseAdmin
       .from('assignments')
       .select('id, course_id, chapter_id, title, description, assignment_type, due_date, max_score, max_marks, auto_grading_enabled, config, is_published, created_at, updated_at')
       .eq('course_id', courseId);
     
-    assignmentsByCourse = courseData || [];
+    assignmentsByCourse = (assignmentsByCourseData || []) as LocalAssignment[];
     
     if (courseErr) {
       console.error('❌ Error fetching assignments by course_id:', courseErr);
@@ -226,53 +368,115 @@ export async function GET(
         courseId,
         error: courseErr.message
       });
-      assignmentsError = courseErr;
     } else {
       console.log(`✅ Fetched ${assignmentsByCourse.length} assignment(s) by course_id`);
     }
     
     // Merge results: deduplicate by assignment ID
     // Prioritize chapter-wise results (they have proper chapter_id)
-    const assignmentMap = new Map<string, any>();
+    const assignmentMap = new Map<string, Assignment>();
     
     // First, add all chapter-wise assignments
-    assignmentsByChapter.forEach((a: any) => {
-      assignmentMap.set(a.id, a);
-    });
-    
-    // Then, add course_id assignments that weren't in chapter-wise results
-    assignmentsByCourse.forEach((a: any) => {
-      if (!assignmentMap.has(a.id)) {
-        // This assignment wasn't in chapter-wise results (likely NULL chapter_id or mismatched)
-        // Assign it to first chapter for display purposes
-        if (!a.chapter_id && chapterIds.length > 0) {
-          console.warn(`⚠️ Assignment "${a.title}" (${a.id}) has NULL chapter_id, assigning to first chapter: ${chapterIds[0]}`);
-          a.chapter_id = chapterIds[0];
-        }
-        assignmentMap.set(a.id, a);
+    assignmentsByChapter.forEach((a) => {
+      if (a.id) {
+        const localA = a as LocalAssignment;
+        const assignment: Assignment = {
+          ...localA,
+          title: localA.title ?? undefined,
+          chapter_id: localA.chapter_id ?? undefined,
+          config: (localA.config as string | Record<string, unknown> | undefined) ?? undefined,
+          auto_grading_enabled: (localA.auto_grading_enabled === null ? undefined : localA.auto_grading_enabled),
+          max_score: (localA.max_score === null ? undefined : localA.max_score),
+          max_marks: (localA.max_marks === null ? undefined : localA.max_marks),
+          assignment_type: (localA.assignment_type === null ? undefined : localA.assignment_type)
+        };
+        assignmentMap.set(a.id, assignment);
       }
     });
     
-    const assignmentsData = Array.from(assignmentMap.values());
+        // Then, add course_id assignments that weren't in chapter-wise results
+    assignmentsByCourse.forEach((a) => {
+      if (a.id && !assignmentMap.has(a.id)) {
+        // This assignment wasn't in chapter-wise results (likely NULL chapter_id or mismatched)
+        // Assign it to first chapter for display purposes
+        const localA = a as LocalAssignment;
+        const assignment: Assignment = {
+          ...localA,
+          title: localA.title ?? undefined,
+          chapter_id: localA.chapter_id ?? undefined,
+          config: (localA.config as string | Record<string, unknown> | undefined) ?? undefined,
+          auto_grading_enabled: (localA.auto_grading_enabled === null ? undefined : localA.auto_grading_enabled),
+          max_score: (localA.max_score === null ? undefined : localA.max_score),
+          max_marks: (localA.max_marks === null ? undefined : localA.max_marks),
+          assignment_type: (localA.assignment_type === null ? undefined : localA.assignment_type)
+        };
+        if (!assignment.chapter_id && chapterIds.length > 0) {
+          const firstChapterId = chapterIds[0];
+          if (firstChapterId) {
+            console.warn(`⚠️ Assignment "${assignment.title || ''}" (${assignment.id}) has NULL chapter_id, assigning to first chapter: ${firstChapterId}`);
+            assignment.chapter_id = firstChapterId;
+          }
+        }
+        if (assignment.id) {
+          assignmentMap.set(assignment.id, assignment);
+        }
+      }
+    });
+    
+    const assignmentsData = Array.from(assignmentMap.values()) as LocalAssignment[];
     
     console.log(`✅ Merged assignments: ${assignmentsData.length} total (${assignmentsByChapter.length} chapter-wise, ${assignmentsByCourse.length} by course_id, ${assignmentsByCourse.length - assignmentsByChapter.length} with NULL/mismatched chapter_id)`);
     
     if (assignmentsData.length > 0) {
-      console.log('📝 Final merged assignments:', assignmentsData.map((a: any) => ({
+      console.log('📝 Final merged assignments:', assignmentsData.map((a) => ({
         id: a.id,
-        title: a.title,
+        title: a.title || '',
         chapter_id: a.chapter_id,
-        wasFromChapterWise: assignmentsByChapter.some((ac: any) => ac.id === a.id)
+        wasFromChapterWise: assignmentsByChapter.some((ac) => ac.id === a.id)
       })));
     }
 
-    let chapterContentsData: any[] = [];
-     
-    let videosData: any[] = [];
-     
-    let materialsData: any[] = [];
-     
-    let assignmentQuestionsData: any[] = [];
+    interface Video {
+      id: string;
+      chapter_id: string;
+      title: string;
+      video_url?: string | null;
+      duration?: string | null;
+      order_index?: number | null;
+      created_at?: string;
+      updated_at?: string;
+    }
+    
+    interface Material {
+      id: string;
+      chapter_id: string;
+      title: string;
+      file_url?: string | null;
+      file_type?: string | null;
+      order_index?: number | null;
+      is_published?: boolean | null;
+      created_at?: string;
+      updated_at?: string;
+    }
+    
+    interface AssignmentQuestion {
+      id: string;
+      assignment_id: string;
+      question_text: string;
+      question_type: string;
+      options?: string[] | null;
+      correct_answer: string;
+      marks: number;
+      order_index?: number | null;
+      explanation?: string | null;
+      created_at?: string;
+      updated_at?: string;
+    }
+    
+    let chapterContentsData: ChapterContent[] = [];
+    let videosData: Video[] = [];
+    let materialsData: Material[] = [];
+    let assignmentQuestionsData: AssignmentQuestion[] = [];
 
     if (chapterIds.length > 0) {
       // Parallelize all chapter-related queries
@@ -327,24 +531,23 @@ export async function GET(
     // Fetch assignment questions after we have assignment IDs
     if (assignmentsData && assignmentsData.length > 0) {
        
-      const assignmentIds = assignmentsData.map((a: any) => a.id).filter(Boolean); // Filter out any null/undefined IDs
+      const assignmentIds = assignmentsData.map((a) => a.id).filter((id): id is string => !!id); // Filter out any null/undefined IDs
       console.log(`🔍 [API] Fetching questions for ${assignmentIds.length} assignment(s):`, assignmentIds);
       
       // CRITICAL: Log each assignment ID to verify they're correct
-      assignmentsData.forEach((a: any) => {
+      assignmentsData.forEach((a) => {
         console.log(`  Assignment: "${a.title}" (${a.id})`);
       });
       
       if (assignmentIds.length === 0) {
         console.warn('⚠️ [API] No valid assignment IDs to fetch questions for!');
-        console.warn('   Assignments data:', assignmentsData.map((a: any) => ({ id: a.id, title: a.title })));
+        console.warn('   Assignments data:', assignmentsData.map((a) => ({ id: a.id, title: a.title || '' })));
       } else {
         const { data: aqData, error: aqError } = await supabaseAdmin
           .from('assignment_questions')
           .select('id, assignment_id, question_text, question_type, options, correct_answer, marks, order_index, explanation, created_at, updated_at')
           .in('assignment_id', assignmentIds)
-           
-          .order('order_index', { ascending: true }) as any;
+          .order('order_index', { ascending: true });
         
         if (aqError) {
           console.error('❌ [API] Error fetching assignment questions:', aqError);
@@ -358,8 +561,21 @@ export async function GET(
           
           // CRITICAL: Log questions by assignment to verify they're being fetched
           if (assignmentQuestionsData.length > 0) {
-            const questionsByAssignment: Record<string, any[]> = {};
-            assignmentQuestionsData.forEach((q: any) => {
+            type AssignmentQuestion = {
+              id: string;
+              assignment_id: string;
+              question_text?: string | null;
+              question_type?: string | null;
+              options?: string | Record<string, unknown> | unknown[] | null;
+              correct_answer?: string | number | null;
+              marks?: number | null;
+              order_index?: number | null;
+              explanation?: string | null;
+              created_at?: string | null;
+              updated_at?: string | null;
+            };
+            const questionsByAssignment: Record<string, AssignmentQuestion[]> = {};
+            (assignmentQuestionsData as AssignmentQuestion[]).forEach((q) => {
               if (!questionsByAssignment[q.assignment_id]) {
                 questionsByAssignment[q.assignment_id] = [];
               }
@@ -369,7 +585,7 @@ export async function GET(
             console.log('📋 [API] Questions by assignment:');
             assignmentIds.forEach((aid: string) => {
               const questions = questionsByAssignment[aid] || [];
-              const assignment = assignmentsData.find((a: any) => a.id === aid);
+              const assignment = assignmentsData.find((a) => a.id === aid);
               console.log(`  "${assignment?.title || 'Unknown'}" (${aid}): ${questions.length} question(s)`);
               if (questions.length === 0) {
                 console.warn(`    ⚠️ No questions found for assignment "${assignment?.title}" (${aid})`);
@@ -380,7 +596,11 @@ export async function GET(
           }
           
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:346',message:'Questions fetched from DB',data:{questionsCount:assignmentQuestionsData.length,assignmentIds,questionsByAssignment:assignmentIds.map((aid:string)=>({assignmentId:aid,count:assignmentQuestionsData.filter((q:any)=>q.assignment_id===aid).length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          interface Question {
+            assignment_id?: string;
+          }
+          
+          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:346',message:'Questions fetched from DB',data:{questionsCount:assignmentQuestionsData.length,assignmentIds,questionsByAssignment:assignmentIds.map((aid:string)=>({assignmentId:aid,count:assignmentQuestionsData.filter((q:Question)=>q.assignment_id===aid).length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
           // #endregion
         }
       }
@@ -389,29 +609,61 @@ export async function GET(
     }
 
     // Extract content counts from content_summary if it's JSONB
-    const contentSummary = course.content_summary || {};
-    const totalVideos = course.total_videos || contentSummary.videos || videosData.length || 0;
-    const totalMaterials = course.total_materials || contentSummary.materials || materialsData.length || 0;
-    const totalAssignments = course.total_assignments || contentSummary.assignments || (assignmentsData?.length || 0);
+    // course is guaranteed to be non-null here due to early return check above
+    const courseWithSummary = course as CourseData & { content_summary?: Record<string, unknown> };
+    const contentSummary = (courseWithSummary.content_summary as Record<string, unknown>) || {};
+    const totalVideos = courseWithSummary.total_videos || (contentSummary.videos as number) || videosData.length || 0;
+    const totalMaterials = courseWithSummary.total_materials || (contentSummary.materials as number) || materialsData.length || 0;
+    const totalAssignments = courseWithSummary.total_assignments || (contentSummary.assignments as number) || (assignmentsData?.length || 0);
 
     // Map database schema
+    type LocalChapter = {
+      id?: string;
+      title?: string;
+      name?: string;
+      description?: string;
+      order_index?: number;
+      order_number?: number;
+      learning_outcomes?: unknown[];
+      release_date?: string | null;
+    };
+    
+    type LocalChapterContent = {
+      id?: string;
+      chapter_id?: string;
+      content_type?: string;
+      title?: string;
+      content_url?: string | null;
+      content_text?: string | null;
+      duration_minutes?: number | null;
+      storage_path?: string | null;
+      thumbnail_url?: string | null;
+      content_label?: string | null;
+      order_index?: number;
+      created_at?: string;
+      updated_at?: string;
+    };
+    
+    type Schedule = {
+      chapter_id?: string;
+      release_date?: string | null;
+    };
+    
     const mappedCourse = {
-      ...course,
-      name: course.course_name || course.name || course.title || '',
-      total_chapters: course.num_chapters || course.total_chapters || 0,
+      ...courseWithSummary,
+      name: courseWithSummary.course_name || courseWithSummary.name || courseWithSummary.title || '',
+      total_chapters: courseWithSummary.num_chapters || courseWithSummary.total_chapters || 0,
       total_videos: totalVideos,
       total_materials: totalMaterials,
       total_assignments: totalAssignments,
-      release_type: course.release_type || 'Weekly',
-      status: course.is_published ? 'Published' : (course.status || 'Draft'),
-      difficulty_level: course.difficulty_level || 'Beginner',
+      release_type: courseWithSummary.release_type || 'Weekly',
+      status: courseWithSummary.is_published ? 'Published' : (courseWithSummary.status || 'Draft'),
+      difficulty_level: courseWithSummary.difficulty_level || 'Beginner',
       course_access: courseAccess,
-       
-      chapters: (chaptersData || []).map((ch: any) => {
-         
+      chapters: (chaptersData || []).map((ch: LocalChapter) => {
         const chapterContents = chapterContentsData
-          .filter((content: any) => content.chapter_id === ch.id)
-          .map((content: any) => ({
+          .filter((content: LocalChapterContent) => content.chapter_id === ch.id)
+          .map((content: LocalChapterContent) => ({
             id: content.id,
             content_id: content.id, // For compatibility
             chapter_id: content.chapter_id,
@@ -428,12 +680,13 @@ export async function GET(
             updated_at: content.updated_at,
           }));
         // Try to find release date from course_schedules if missing in chapter
-        let releaseDate = ch.release_date;
+        const chapterData = ch as LocalChapter & { release_date?: string };
+        let releaseDate = chapterData.release_date;
         if (!releaseDate && schedulesData.length > 0) {
-           
-          const schedule = schedulesData.find((s: any) => s.chapter_id === ch.id) as any;
+          const schedule = schedulesData.find((s: Schedule) => s.chapter_id === ch.id);
           if (schedule) {
-            releaseDate = schedule.release_date;
+            const scheduleData = schedule as { release_date?: string };
+            releaseDate = scheduleData.release_date;
           }
         }
 
@@ -451,7 +704,7 @@ export async function GET(
       }),
       videos: videosData || [],
       materials: materialsData || [],
-      chapter_contents: (chapterContentsData || []).map((content: any) => ({
+      chapter_contents: (chapterContentsData || []).map((content: LocalChapterContent) => ({
         id: content.id,
         content_id: content.id, // For compatibility
         chapter_id: content.chapter_id,
@@ -468,8 +721,8 @@ export async function GET(
         updated_at: content.updated_at,
       })),
        
-      assignments: (assignmentsData || []).map((a: any) => {
-        let config: any = {};
+      assignments: (assignmentsData || []).map((a) => {
+        let config: AssignmentConfig = {};
         try {
           config = typeof a.config === 'string' ? JSON.parse(a.config) : (a.config || {});
         } catch (e) {
@@ -482,14 +735,14 @@ export async function GET(
         
         // CRITICAL: Verify assignmentQuestionsData is populated
         if (assignmentQuestionsData.length === 0) {
-          console.warn(`⚠️ [API] assignmentQuestionsData is EMPTY when filtering for assignment "${a.title}" (${a.id})`);
+          console.warn(`⚠️ [API] assignmentQuestionsData is EMPTY when filtering for assignment "${a.title || ''}" (${a.id})`);
           console.warn('   This means questions were not fetched from database or assignmentQuestionsData was not populated');
         }
         
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:453',message:'BEFORE filtering questions',data:{assignmentId:a.id,assignmentTitle:a.title,totalQuestionsAvailable:assignmentQuestionsData.length,questionAssignmentIds:assignmentQuestionsData.map((q:any)=>q.assignment_id),assignmentQuestionsDataIsEmpty:assignmentQuestionsData.length===0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:453',message:'BEFORE filtering questions',data:{assignmentId:a.id,assignmentTitle:a.title||'',totalQuestionsAvailable:assignmentQuestionsData.length,questionAssignmentIds:assignmentQuestionsData.map((q: AssignmentQuestion) => q.assignment_id),assignmentQuestionsDataIsEmpty:assignmentQuestionsData.length===0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
         // #endregion
-        const filteredQuestions = assignmentQuestionsData.filter((q: any) => {
+        const filteredQuestions = assignmentQuestionsData.filter((q) => {
           // Direct match
           if (q.assignment_id === a.id) {
             console.log(`✅ [Filter] Direct match found for question ${q.id} -> assignment ${a.id}`);
@@ -516,9 +769,9 @@ export async function GET(
             assignmentId: a.id,
             totalQuestionsInDB: assignmentQuestionsData.length,
             filteredCount: filteredQuestions.length,
-            questionIdsInDB: assignmentQuestionsData.map((q: any) => q.assignment_id),
-            questionIdsFiltered: filteredQuestions.map((q: any) => q.id),
-            allQuestionAssignmentIds: assignmentQuestionsData.map((q: any) => ({
+            questionIdsInDB: assignmentQuestionsData.map((q) => q.assignment_id),
+            questionIdsFiltered: filteredQuestions.map((q) => q.id),
+            allQuestionAssignmentIds: assignmentQuestionsData.map((q) => ({
               questionId: q.id,
               assignmentId: q.assignment_id,
               matches: q.assignment_id === a.id || String(q.assignment_id).toLowerCase() === String(a.id).toLowerCase()
@@ -526,7 +779,7 @@ export async function GET(
           });
         }
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:463',message:'AFTER filtering questions',data:{assignmentId:a.id,assignmentTitle:a.title,filteredCount:filteredQuestions.length,filteredQuestionIds:filteredQuestions.map((q:any)=>q.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:463',message:'AFTER filtering questions',data:{assignmentId:a.id,assignmentTitle:a.title,filteredCount:filteredQuestions.length,filteredQuestionIds:filteredQuestions.map((q: { id?: string }) => q.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
         // #endregion
         
         // Debug: Log filter results
@@ -534,7 +787,7 @@ export async function GET(
           console.warn(`⚠️ [API] No questions matched for assignment "${a.title}" (${a.id})`);
           console.warn(`   Assignment ID type: ${typeof a.id}, value: ${a.id}`);
           console.warn(`   Total questions in assignmentQuestionsData: ${assignmentQuestionsData.length}`);
-          console.warn(`   Question assignment_ids:`, assignmentQuestionsData.map((q: any) => ({
+          console.warn(`   Question assignment_ids:`, assignmentQuestionsData.map((q) => ({
             id: q.assignment_id,
             type: typeof q.assignment_id,
             matches: q.assignment_id === a.id || String(q.assignment_id).toLowerCase() === String(a.id).toLowerCase()
@@ -542,7 +795,7 @@ export async function GET(
         }
         
         // Map filtered questions to frontend format
-        const questions = filteredQuestions.map((q: any) => {
+        const questions = filteredQuestions.map((q) => {
             // Normalize question_type: database uses lowercase 'mcq', frontend expects 'MCQ'
             let normalizedQuestionType: 'MCQ' | 'FillBlank' = 'MCQ';
             const dbQuestionType = (q.question_type || 'mcq').toLowerCase();
@@ -556,7 +809,7 @@ export async function GET(
               id: q.id, // Include question ID for proper tracking
               question_type: normalizedQuestionType, // Normalize to frontend format
               question_text: q.question_text || '',
-              options: q.options || [],
+              options: (q.options && Array.isArray(q.options)) ? q.options : [],
               correct_answer: q.correct_answer || '',
               marks: q.marks || 1,
               explanation: q.explanation || '',
@@ -566,7 +819,7 @@ export async function GET(
         
         console.log(`📋 Mapped ${questions.length} question(s) for assignment "${a.title}" (${a.id})`);
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:499',message:'AFTER mapping questions to frontend format',data:{assignmentId:a.id,assignmentTitle:a.title,mappedQuestionsCount:questions.length,mappedQuestions:questions.map((q:any)=>({id:q.id,type:q.question_type,text:q.question_text?.substring(0,30)})),willIncludeInResponse:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:499',message:'AFTER mapping questions to frontend format',data:{assignmentId:a.id,assignmentTitle:a.title,mappedQuestionsCount:questions.length,mappedQuestions:questions.map((q: { id?: string; question_type?: string; question_text?: string }) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) })),willIncludeInResponse:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
         // #endregion
         
         // Extract chapter_id from both column and config, prioritizing column
@@ -583,13 +836,13 @@ export async function GET(
         
         // Validate chapter_id exists in the course's chapters
         if (chapterId) {
-          const isValidChapter = chaptersData?.some((ch: any) => ch.id === chapterId);
+          const isValidChapter = chaptersData?.some((ch: Chapter) => ch.id === chapterId);
           if (!isValidChapter) {
-            console.warn(`⚠️ Assignment "${a.title}" has invalid chapter_id: ${chapterId}. Available chapters:`, 
-              chaptersData?.map((ch: any) => ch.id) || []);
+            console.warn(`⚠️ Assignment "${a.title || ''}" has invalid chapter_id: ${chapterId}. Available chapters:`, 
+              chaptersData?.map((ch) => (ch as { id?: string }).id).filter((id): id is string => !!id) || []);
             // If invalid, try to use first chapter as fallback
             if (chaptersData && chaptersData.length > 0) {
-              chapterId = chaptersData[0].id;
+              chapterId = (chaptersData[0] as { id?: string }).id || null;
               console.warn(`   Using first chapter as fallback: ${chapterId}`);
             } else {
               chapterId = null;
@@ -598,24 +851,24 @@ export async function GET(
         } else {
           // No chapter_id found, use first chapter as fallback if available
           if (chaptersData && chaptersData.length > 0) {
-            chapterId = chaptersData[0].id;
-            console.warn(`⚠️ Assignment "${a.title}" has no chapter_id, using first chapter as fallback: ${chapterId}`);
+            chapterId = (chaptersData[0] as { id?: string }).id || null;
+            console.warn(`⚠️ Assignment "${a.title || ''}" has no chapter_id, using first chapter as fallback: ${chapterId}`);
           } else {
             // If no chapters available, still include the assignment but log a warning
-            console.warn(`⚠️ Assignment "${a.title}" has no chapter_id and no chapters available for fallback. Assignment will still be included.`);
+            console.warn(`⚠️ Assignment "${a.title || ''}" has no chapter_id and no chapters available for fallback. Assignment will still be included.`);
           }
         }
         
         console.log('📋 Mapping assignment:', {
           assignmentId: a.id,
-          assignmentTitle: a.title,
+          assignmentTitle: a.title || '',
           directChapterId: a.chapter_id,
           configChapterId: config.chapter_id,
           finalChapterId: chapterId,
           questionsCount: questions.length,
           hasChapterId: !!chapterId,
           chaptersAvailable: chaptersData?.length || 0,
-          questionsDetails: questions.length > 0 ? questions.map((q: any) => ({
+          questionsDetails: questions.length > 0 ? questions.map((q) => ({
             id: q.id,
             question_type: q.question_type,
             question_text: q.question_text?.substring(0, 30) + '...'
@@ -636,16 +889,25 @@ export async function GET(
         // Verify questions are included
         if (questions.length > 0) {
           console.log(`✅ [API] Assignment "${a.title}" (${a.id}) includes ${questions.length} question(s) in response:`, 
-            questions.map((q: any) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) }))
+            questions.map((q: Question) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) }))
           );
         } else {
           // Check if questions exist in database but weren't matched
-          const questionsForThisAssignment = assignmentQuestionsData.filter((q: any) => q.assignment_id === a.id);
+          const questionsForThisAssignment = assignmentQuestionsData.filter((q) => {
+            const question = q as { assignment_id?: string };
+            return question.assignment_id === a.id;
+          });
           if (questionsForThisAssignment.length > 0) {
             console.error(`❌ [API] CRITICAL: Found ${questionsForThisAssignment.length} question(s) in database for assignment "${a.title}" (${a.id}) but filter returned 0!`);
             console.error('   Assignment ID:', a.id, typeof a.id);
-            console.error('   Question assignment_ids:', questionsForThisAssignment.map((q: any) => ({ id: q.assignment_id, type: typeof q.assignment_id })));
-            console.error('   ID match check:', questionsForThisAssignment.map((q: any) => q.assignment_id === a.id));
+            console.error('   Question assignment_ids:', questionsForThisAssignment.map((q) => {
+              const question = q as { assignment_id?: string };
+              return { id: question.assignment_id, type: typeof question.assignment_id };
+            }));
+            console.error('   ID match check:', questionsForThisAssignment.map((q) => {
+              const question = q as { assignment_id?: string };
+              return question.assignment_id === a.id;
+            }));
           } else {
             console.log(`⚠️ [API] Assignment "${a.title}" (${a.id}) has 0 questions in database. Total questions fetched: ${assignmentQuestionsData.length}`);
           }
@@ -659,24 +921,32 @@ export async function GET(
       // CRITICAL FIX: Don't filter out assignments - include them even if chapter_id is null
       // The frontend will handle assignments with null chapter_id by matching them to the first chapter
       // This ensures assignments are never lost due to missing chapter_id
-      .map((a: any) => {
+      .map((a) => {
         // CRITICAL: Verify questions exist before mapping
         const questionsBeforeMap = a.questions;
         const hasQuestionsBefore = questionsBeforeMap && Array.isArray(questionsBeforeMap) && questionsBeforeMap.length > 0;
         
         // If chapter_id is still null after all fallbacks, try one more time with first chapter
         if (!a.chapter_id && chaptersData && chaptersData.length > 0) {
-          console.warn(`⚠️ Final fallback: Assigning "${a.title}" to first chapter: ${chaptersData[0].id}`);
+          const firstChapterId = (chaptersData[0] as { id?: string }).id;
+          console.warn(`⚠️ Final fallback: Assigning "${a.title || ''}" to first chapter: ${firstChapterId}`);
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:607',message:'Final fallback map - preserving questions',data:{assignmentId:a.id,assignmentTitle:a.title,questionsBeforeMap:questionsBeforeMap?.length||0,hasQuestionsBefore,willPreserveQuestions:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:607',message:'Final fallback map - preserving questions',data:{assignmentId:a.id,assignmentTitle:a.title||'',questionsBeforeMap:questionsBeforeMap?.length||0,hasQuestionsBefore,willPreserveQuestions:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
           // #endregion
-          const result = {
-            ...a, // This should preserve questions
-            chapter_id: chaptersData[0].id
+          const assignmentData = a as LocalAssignment;
+          const result: Assignment = {
+            ...assignmentData, // This should preserve questions
+            title: assignmentData.title ?? undefined,
+            chapter_id: firstChapterId || undefined,
+            config: (assignmentData.config as string | Record<string, unknown> | undefined) ?? undefined,
+            auto_grading_enabled: (assignmentData.auto_grading_enabled === null ? undefined : assignmentData.auto_grading_enabled),
+            max_score: (assignmentData.max_score === null ? undefined : assignmentData.max_score),
+            max_marks: (assignmentData.max_marks === null ? undefined : assignmentData.max_marks),
+            assignment_type: (assignmentData.assignment_type === null ? undefined : assignmentData.assignment_type)
           };
           // CRITICAL: Verify questions are preserved
           if (hasQuestionsBefore && (!result.questions || result.questions.length === 0)) {
-            console.error(`❌ [API] CRITICAL: Questions LOST in final fallback map for "${a.title}"!`, {
+            console.error(`❌ [API] CRITICAL: Questions LOST in final fallback map for "${a.title || ''}"!`, {
               assignmentId: a.id,
               questionsBefore: questionsBeforeMap?.length || 0,
               questionsAfter: result.questions?.length || 0,
@@ -688,12 +958,12 @@ export async function GET(
           return result;
         }
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:612',message:'Final map - returning assignment as-is',data:{assignmentId:a.id,assignmentTitle:a.title,questionsInAssignment:a.questions?.length||0,hasQuestionsProperty:'questions' in a},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:612',message:'Final map - returning assignment as-is',data:{assignmentId:a.id,assignmentTitle:a.title||'',questionsInAssignment:a.questions?.length||0,hasQuestionsProperty:'questions' in a},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
         // #endregion
         
         // CRITICAL: Verify questions are still present
         if (hasQuestionsBefore && (!a.questions || a.questions.length === 0)) {
-          console.error(`❌ [API] CRITICAL: Questions LOST for "${a.title}" in final map!`, {
+          console.error(`❌ [API] CRITICAL: Questions LOST for "${a.title || ''}" in final map!`, {
             assignmentId: a.id,
             questionsBefore: questionsBeforeMap?.length || 0,
             questionsAfter: a.questions?.length || 0
@@ -708,7 +978,10 @@ export async function GET(
 
     // CRITICAL VERIFICATION: Check if questions are included in final response
     const assignmentsInResponse = mappedCourse.assignments || [];
-    const assignmentA4 = assignmentsInResponse.find((a: any) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
+    const assignmentA4 = assignmentsInResponse.find((a) => {
+      const assignment = a as Assignment;
+      return assignment.title === 'a4' || assignment.id === 'ed84fe55-9c57-4a32-864b-105d44116428';
+    });
     
     console.log('🔍 [API] FINAL CHECK - Assignment a4 in response:', {
       exists: !!assignmentA4,
@@ -716,7 +989,7 @@ export async function GET(
       title: assignmentA4?.title,
       questionsCount: assignmentA4?.questions?.length || 0,
       hasQuestionsProperty: 'questions' in (assignmentA4 || {}),
-      questions: assignmentA4?.questions?.map((q: any) => ({ id: q.id, type: q.question_type })) || [],
+      questions: assignmentA4?.questions?.map((q: Question) => ({ id: q.id, type: q.question_type })) || [],
       allKeys: Object.keys(assignmentA4 || {}),
       // EXPANDED: Full assignment object for debugging
       fullAssignment: assignmentA4 ? JSON.stringify(assignmentA4, null, 2).substring(0, 1000) : 'NOT FOUND'
@@ -733,10 +1006,10 @@ export async function GET(
     }
     
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:625',message:'FINAL API RESPONSE - checking assignment a4',data:{totalAssignments:assignmentsInResponse.length,assignmentA4Exists:!!assignmentA4,assignmentA4Questions:assignmentA4?.questions?.length||0,assignmentA4HasQuestionsProp:'questions' in (assignmentA4||{}),assignmentA4Keys:Object.keys(assignmentA4||{}),allAssignmentTitles:assignmentsInResponse.map((a:any)=>a.title)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'route.ts:625',message:'FINAL API RESPONSE - checking assignment a4',data:{totalAssignments:assignmentsInResponse.length,assignmentA4Exists:!!assignmentA4,assignmentA4Questions:assignmentA4?.questions?.length||0,assignmentA4HasQuestionsProp:'questions' in (assignmentA4||{}),assignmentA4Keys:Object.keys(assignmentA4||{}),allAssignmentTitles:assignmentsInResponse.map((a: { title?: string }) => a.title)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
     const successResponse = NextResponse.json({ course: mappedCourse });
-    ensureCsrfToken(successResponse, request);
+    ensureCsrfToken(successResponse as NextResponse, request);
     return successResponse;
   } catch (error) {
     logger.error('Unexpected error in GET /api/admin/courses/[id]', {
@@ -789,19 +1062,26 @@ export async function PATCH(
     const cleanedBody = {
       ...body,
       school_ids: Array.isArray(body.school_ids) 
-        ? body.school_ids.filter((id: any) => id && typeof id === 'string' && id.trim().length > 0)
+        ? body.school_ids.filter((id: unknown) => {
+            const idVal = id as string | number | boolean;
+            return idVal && typeof idVal === 'string' && idVal.trim().length > 0;
+          })
         : body.school_ids,
       grades: Array.isArray(body.grades)
-        ? body.grades.filter((g: any) => g && typeof g === 'string' && g.trim().length > 0)
+        ? body.grades.filter((g: unknown) => {
+            const gVal = g as string | number | boolean;
+            return gVal && typeof gVal === 'string' && gVal.trim().length > 0;
+          })
         : body.grades
     };
 
     // Validate request body
     const validation = validateRequestBody(updateCourseSchema, cleanedBody);
     if (!validation.success) {
-      const errorMessages = validation.details?.issues?.map((e: any) => {
-        const path = Array.isArray(e.path) ? e.path.join('.') : String(e.path || '');
-        return `${path ? path + ': ' : ''}${e.message}`;
+      const errorMessages = validation.details?.issues?.map((e) => {
+        const issue = e as { path?: (string | number)[]; message?: string };
+        const path = Array.isArray(issue.path) ? issue.path.filter((p): p is string | number => typeof p === 'string' || typeof p === 'number').join('.') : String(issue.path || '');
+        return `${path ? path + ': ' : ''}${issue.message || ''}`;
       }).join(', ') || validation.error || 'Invalid request data';
       
       logger.warn('Validation failed for course update', {
@@ -825,7 +1105,7 @@ export async function PATCH(
     console.log('📋 [API] Request body keys:', Object.keys(body));
     
     // #region agent log
-    const logToFile = async (data: any) => {
+    const logToFile = async (data: LogData) => {
       try {
         await fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf', {
           method: 'POST',
@@ -834,7 +1114,7 @@ export async function PATCH(
         });
       } catch {}
     };
-    await logToFile({location:'route.ts:537',message:'PATCH request received',data:{courseId,bodyKeys:Object.keys(body),hasAssignments:!!body.assignments,isArray:Array.isArray(body.assignments),assignmentsCount:body.assignments?.length||0,assignments:body.assignments?.map((a:any)=>({title:a.title,chapter_id:a.chapter_id,id:a.id}))||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'});
+    await logToFile({location:'route.ts:537',message:'PATCH request received',data:{courseId,bodyKeys:Object.keys(body),hasAssignments:!!body.assignments,isArray:Array.isArray(body.assignments),assignmentsCount:body.assignments?.length||0,assignments:body.assignments?.map((a: Assignment) => ({ title: a.title, chapter_id: a.chapter_id, id: a.id })) || []},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'});
     // #endregion
     
     console.log('📋 [API] Assignments in request:', {
@@ -847,7 +1127,7 @@ export async function PATCH(
     // Use finalAssignments for all subsequent operations (will be set after destructuring)
     // This check happens before finalAssignments is available, so check body directly
     if (body.assignments && Array.isArray(body.assignments) && body.assignments.length > 0) {
-      console.log('✅ [API] Assignments received in body:', body.assignments.map((a: any) => ({
+      console.log('✅ [API] Assignments received in body:', body.assignments.map((a: Assignment) => ({
         title: a.title,
         chapter_id: a.chapter_id,
         assignment_type: a.assignment_type,
@@ -873,8 +1153,7 @@ export async function PATCH(
       .from('courses')
       .select('id')
       .eq('id', courseId)
-       
-      .single() as any;
+      .single();
     
     if (courseCheckError || !courseExists) {
       console.error('❌ Course not found:', courseCheckError);
@@ -884,7 +1163,8 @@ export async function PATCH(
       }, { status: 404 });
     }
     
-    console.log('✅ Course exists:', courseExists.id);
+    const courseExistsData = courseExists as { id?: string };
+    console.log('✅ Course exists:', courseExistsData.id);
     
     // CRITICAL: Extract assignments from body BEFORE validation merge
     // This ensures assignments are preserved even if validation strips them
@@ -894,7 +1174,7 @@ export async function PATCH(
       isArray: Array.isArray(assignmentsFromBody),
       assignmentsCount: assignmentsFromBody?.length || 0,
       assignmentsType: typeof assignmentsFromBody,
-      assignmentsPreview: assignmentsFromBody?.slice(0, 2).map((a: any) => ({
+      assignmentsPreview: assignmentsFromBody?.slice(0, 2).map((a: Assignment) => ({
         title: a.title,
         chapter_id: a.chapter_id,
         id: a.id
@@ -914,9 +1194,6 @@ export async function PATCH(
       is_published,
       num_chapters,
       total_chapters,
-      total_videos,
-      total_materials,
-      total_assignments,
       release_type,
       difficulty_level,
       school_ids,
@@ -945,7 +1222,7 @@ export async function PATCH(
     });
     
     if (assignments && Array.isArray(assignments) && assignments.length > 0) {
-      console.log('✅ [API] Assignments will be processed:', assignments.map((a: any) => ({
+      console.log('✅ [API] Assignments will be processed:', assignments.map((a: Assignment) => ({
         title: a.title || 'No title',
         chapter_id: a.chapter_id || 'No chapter_id',
         assignment_type: a.assignment_type || 'No type',
@@ -963,7 +1240,22 @@ export async function PATCH(
 
     // Update course basic info (only update columns that exist in the schema)
      
-    const updateData: any = {};
+    interface CourseUpdateData {
+      name?: string;
+      course_name?: string;
+      description?: string | null;
+      duration_weeks?: number | null;
+      prerequisites_course_ids?: string[] | null;
+      prerequisites_text?: string | null;
+      thumbnail_url?: string | null;
+      difficulty_level?: string;
+      status?: string;
+      is_published?: boolean;
+      num_chapters?: number;
+      [key: string]: unknown;
+    }
+    
+    const updateData: CourseUpdateData = {};
 
     // Handle name/title: accept name, title, or course_name
     // Update both name and course_name to keep them in sync
@@ -995,14 +1287,12 @@ export async function PATCH(
     // Update the course
     console.log('📝 Updating course with data:', JSON.stringify(updateData, null, 2));
      
-    const { data: course, error: courseError } = await ((supabaseAdmin as any)
+    const { data: course, error: courseError } = await supabaseAdmin
       .from('courses')
-       
-      .update(updateData as any)
+      .update(updateData as never)
       .eq('id', courseId)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (courseError) {
       console.error('❌ Error updating course:', courseError);
@@ -1032,7 +1322,7 @@ export async function PATCH(
           .from('schools')
           .select('id')
            
-          .in('id', validSchoolIds) as any;
+          .in('id', validSchoolIds);
 
         if (schoolsCheckError) {
           console.error('❌ Error validating schools:', schoolsCheckError);
@@ -1058,12 +1348,12 @@ export async function PATCH(
 
         // Get existing course_access entries to compare
          
-        let existingAccess: any[] = [];
+        let existingAccess: CourseAccess[] = [];
         const { data: fetchedAccess, error: checkError } = await supabaseAdmin
           .from('course_access')
           .select('id, course_id, school_id, grade')
            
-          .eq('course_id', courseId) as any;
+          .eq('course_id', courseId);
 
         if (checkError) {
           console.error('❌ Error checking existing course access:', checkError);
@@ -1171,10 +1461,10 @@ export async function PATCH(
         }
 
         console.log(`📋 Creating ${accessEntries.length} course_access entries:`, 
-          JSON.stringify(accessEntries.map((e: any) => ({ course_id: e.course_id, school_id: e.school_id, grade: e.grade })), null, 2));
+          JSON.stringify(accessEntries.map((e: CourseAccess) => ({ course_id: e.course_id, school_id: e.school_id, grade: e.grade })), null, 2));
         
         // Validate all entries before attempting insert
-        const invalidEntries = accessEntries.filter((e: any) => !e.course_id || !e.school_id || !e.grade);
+        const invalidEntries = accessEntries.filter((e: CourseAccess) => !e.course_id || !e.school_id || !e.grade);
         if (invalidEntries.length > 0) {
           console.error(`❌ Found ${invalidEntries.length} invalid entries:`, invalidEntries);
           return NextResponse.json({ 
@@ -1196,25 +1486,23 @@ export async function PATCH(
         // This prevents race conditions with proper table locking
         console.log(`🔄 Updating course_access entries atomically for course ${courseId}...`);
         
-        const { data: transactionResult, error: transactionError } = await (supabaseAdmin
-           
-          .rpc('update_course_access' as any, {
-            p_course_id: courseId,
-             
-            p_access_entries: accessEntries as any
-           
-          } as any) as any);
+        const { data: transactionResult, error: transactionError } = await supabaseAdmin.rpc('update_course_access', {
+          p_course_id: courseId,
+          p_access_entries: accessEntries
+        } as never) as { data: unknown; error: unknown };
 
-        if (transactionError || !transactionResult?.success) {
-          console.error('❌ Error updating course access:', transactionError || transactionResult?.error);
+        type RpcResult = { success?: boolean; error?: string; inserted_count?: number } | null;
+        const result = transactionResult as RpcResult;
+        if (transactionError || !result?.success) {
+          console.error('❌ Error updating course access:', transactionError || result?.error);
           return NextResponse.json({ 
             error: 'Failed to update course access', 
-            details: transactionResult?.error || transactionError?.message || 'Transaction failed',
-            code: transactionError?.code
+            details: result?.error || (transactionError instanceof Error ? transactionError.message : String(transactionError)) || 'Transaction failed',
+            code: (transactionError as { code?: string })?.code
           }, { status: 500 });
         }
         
-        console.log(`✅ Successfully updated ${transactionResult.inserted_count || accessEntries.length} course access entries`);
+        console.log(`✅ Successfully updated ${result.inserted_count || accessEntries.length} course access entries`);
         
         // Fetch the updated access entries to return
         console.log('📥 Fetching final course_access state...');
@@ -1222,9 +1510,9 @@ export async function PATCH(
           .from('course_access')
           .select('id, course_id, school_id, grade')
            
-          .eq('course_id', courseId) as any;
+          .eq('course_id', courseId);
 
-        let finalAccess: any[] = [];
+        let finalAccess: CourseAccess[] = [];
         if (!fetchError && fetchedFinalAccess) {
           finalAccess = fetchedFinalAccess;
         }
@@ -1241,7 +1529,7 @@ export async function PATCH(
           console.log('📋 Final course access entries:', JSON.stringify(finalAccess, null, 2));
         }
 
-      } catch (courseAccessError: any) {
+      } catch (courseAccessError: unknown) {
         logger.error('Exception during course_access update', {
           endpoint: '/api/admin/courses/[id]',
           courseId,
@@ -1249,17 +1537,19 @@ export async function PATCH(
         
         const errorInfo = await handleApiError(
           courseAccessError,
-          { endpoint: '/api/admin/courses/[id]', courseId },
+          { endpoint: '/api/admin/courses/[id]', courseId: courseId || '' },
           'Failed to update course access'
         );
         return NextResponse.json(errorInfo, { status: errorInfo.status });
       }
     } else {
+      const schoolIdsArray = school_ids as string[] | undefined;
+      const gradesArray = grades as string[] | undefined;
       console.log('⚠️ Skipping course_access update - missing school_ids or grades:', {
-        has_school_ids: !!school_ids,
-        school_ids_length: school_ids?.length || 0,
-        has_grades: !!grades,
-        grades_length: grades?.length || 0
+        has_school_ids: !!schoolIdsArray,
+        school_ids_length: schoolIdsArray?.length || 0,
+        has_grades: !!gradesArray,
+        grades_length: gradesArray?.length || 0
       });
     }
 
@@ -1272,19 +1562,23 @@ export async function PATCH(
       .select('id, order_index, order_number')
       .eq('course_id', courseId)
        
-      .order('order_index', { ascending: true }) as any;
+          .order('order_index', { ascending: true });
     
     if (existingChaptersForMapping && existingChaptersForMapping.length > 0) {
       console.log('📋 Building initial chapter ID mapping from existing chapters...');
        
-      existingChaptersForMapping.forEach((ch: any, index: number) => {
+      existingChaptersForMapping.forEach((ch, index: number) => {
+        const chapter = ch as { id?: string; order_index?: number };
         // Map by ID
-        chapterIdMap.set(String(ch.id).toLowerCase(), ch.id);
+        if (chapter.id) {
+          chapterIdMap.set(String(chapter.id).toLowerCase(), chapter.id);
+        }
         // Map by order index
-        if (ch.order_index) chapterIdMap.set(String(ch.order_index), ch.id);
-        if (ch.order_number) chapterIdMap.set(String(ch.order_number), ch.id);
+        if (chapter.order_index) chapterIdMap.set(String(chapter.order_index), chapter.id || '');
+        const chapterData = ch as { order_number?: number; id?: string };
+        if (chapterData.order_number && chapterData.id) chapterIdMap.set(String(chapterData.order_number), chapterData.id);
         // Map by array position
-        chapterIdMap.set(String(index), ch.id);
+        if (chapterData.id) chapterIdMap.set(String(index), chapterData.id);
       });
       console.log(`   Initial mapping: ${chapterIdMap.size} entries`);
     }
@@ -1296,7 +1590,7 @@ export async function PATCH(
         .from('chapters')
         .select('id, order_index, order_number')
          
-        .eq('course_id', courseId) as any;
+        .eq('course_id', courseId);
       
       if (fetchExistingError) {
         console.error('Error fetching existing chapters:', fetchExistingError);
@@ -1304,7 +1598,7 @@ export async function PATCH(
 
       const existingIds = existingChapters?.map((ch: { id: string }) => ch.id) || [];
        
-      const payloadIds = chapters.map((ch: any) => ch.id).filter((id: any) => id && typeof id === 'string');
+      const payloadIds = chapters.map((ch: Chapter) => ch.id).filter((id: string | undefined): id is string => id !== undefined && typeof id === 'string');
       
       console.log('🔄 Updating chapters:', {
         existingCount: existingIds.length,
@@ -1326,20 +1620,31 @@ export async function PATCH(
       }
 
       // 3. Upsert chapters (update existing, insert new)
+      type ChapterData = {
+        course_id: string;
+        title: string;
+        name: string;
+        description?: string;
+        learning_outcomes?: string[];
+        order_index: number;
+        order_number: number;
+        release_date?: string | null;
+        is_published: boolean;
+        id?: string;
+      };
+      
       if (chapters.length > 0) {
-         
-        const chaptersToUpsert = chapters.map((chapter: any, index: number) => {
-           
-          const chapterData: any = {
+        const chaptersToUpsert = chapters.map((chapter: Chapter, index: number): ChapterData => {
+          const chapterData: ChapterData = {
             course_id: courseId,
             title: chapter.name || chapter.title || '',
             // Try both column names to be safe or prefer 'name' if schema matches migration
             name: chapter.name || chapter.title || '', 
-            description: chapter.description || '',
-            learning_outcomes: chapter.learning_outcomes || [],
+            description: (chapter as { description?: string }).description || '',
+            learning_outcomes: (chapter as { learning_outcomes?: string[] }).learning_outcomes || [],
             order_index: chapter.order_number || chapter.order_index || index + 1,
             order_number: chapter.order_number || chapter.order_index || index + 1,
-            release_date: chapter.release_date || null,
+            release_date: (chapter as { release_date?: string | null }).release_date || null,
             is_published: true
           };
           
@@ -1354,12 +1659,10 @@ export async function PATCH(
           return chapterData;
         });
 
-        const { data: upsertedChapters, error: chaptersError } = await (supabaseAdmin
+        const { data: upsertedChapters, error: chaptersError } = await supabaseAdmin
           .from('chapters')
-           
-          .upsert(chaptersToUpsert as any)
-           
-          .select('id, order_index, order_number') as any);
+          .upsert(chaptersToUpsert as never)
+          .select('id, order_index, order_number');
 
         if (chaptersError) {
           console.error('Error updating/inserting chapters:', chaptersError);
@@ -1368,18 +1671,24 @@ export async function PATCH(
           console.log('📋 Updating chapter ID mapping after upsert...');
            
           // First, map by array index/order since upsert usually preserves order or we can match by properties
-          chapters.forEach((frontendChapter: any, index: number) => {
+          chapters.forEach((frontendChapter: Chapter, index: number) => {
             const frontendId = frontendChapter.id;
             const orderIndex = frontendChapter.order_number || frontendChapter.order_index || index + 1;
             
             // Try to find matching chapter by ID first (if frontend ID was valid UUID and preserved)
-            let dbChapter = upsertedChapters.find((ch: any) => 
+            interface UpsertedChapter {
+              id: string;
+              order_index?: number;
+              order_number?: number;
+            }
+            
+            let dbChapter = upsertedChapters.find((ch: UpsertedChapter) => 
               frontendId && ch.id === frontendId
             );
             
             // If not found by ID, match by order_index/order_number
             if (!dbChapter) {
-              dbChapter = upsertedChapters.find((ch: any) => 
+              dbChapter = upsertedChapters.find((ch: UpsertedChapter) => 
                 (ch.order_index === orderIndex) || (ch.order_number === orderIndex)
               );
             }
@@ -1419,7 +1728,7 @@ export async function PATCH(
         .select('id, order_index, order_number')
         .eq('course_id', courseId)
          
-        .order('order_index', { ascending: true }) as any;
+        .order('order_index', { ascending: true });
 
       if (courseChapters && courseChapters.length > 0) {
         const chapterIds = courseChapters.map((ch: { id: string }) => ch.id);
@@ -1428,14 +1737,18 @@ export async function PATCH(
         if (chapterIdMap.size === 0 || chapterIds.length > chapterIdMap.size) {
           console.log('📋 Building/updating chapter ID mapping from existing chapters for video mapping...');
            
-          courseChapters.forEach((ch: any, index: number) => {
+          courseChapters.forEach((ch, index: number) => {
+            const chapter = ch as { id?: string; order_index?: number };
             // Map by ID
-            chapterIdMap.set(String(ch.id).toLowerCase(), ch.id);
+            if (chapter.id) {
+              chapterIdMap.set(String(chapter.id).toLowerCase(), chapter.id);
+            }
             // Map by order index
-            if (ch.order_index) chapterIdMap.set(String(ch.order_index), ch.id);
-            if (ch.order_number) chapterIdMap.set(String(ch.order_number), ch.id);
+            if (chapter.order_index && chapter.id) chapterIdMap.set(String(chapter.order_index), chapter.id);
+            const chapterData = ch as { order_number?: number; id?: string };
+            if (chapterData.order_number && chapterData.id) chapterIdMap.set(String(chapterData.order_number), chapterData.id);
             // Map by array position
-            chapterIdMap.set(String(index), ch.id);
+            if (chapterData.id) chapterIdMap.set(String(index), chapterData.id);
           });
           console.log(`   Mapping now has ${chapterIdMap.size} entries`);
         }
@@ -1451,13 +1764,23 @@ export async function PATCH(
           console.log(`   Chapter ID map size: ${chapterIdMap.size}`);
           console.log(`   Available chapter IDs:`, chapterIds);
           
+          type VideoInsertData = {
+            chapter_id: string;
+            title: string | undefined;
+            video_url: string;
+            duration: number | null;
+            uploaded_by: string | null;
+          };
+          
           const videosToInsert = videos
-             
-            .filter((v: any) => v.chapter_id && v.title)
-             
-            .map((video: any) => {
+            .filter((v) => {
+              const video = v as Video;
+              return video.chapter_id && video.title;
+            })
+            .map((video): VideoInsertData | null => {
+              const v = video as Video;
               // Map frontend chapter_id to database chapter_id
-              const frontendChapterId = String(video.chapter_id).trim().toLowerCase();
+              const frontendChapterId = String(v.chapter_id).trim().toLowerCase();
               let dbChapterId = chapterIdMap.get(frontendChapterId);
               
               // If not found in map, try direct match (in case it's already a DB ID)
@@ -1465,14 +1788,14 @@ export async function PATCH(
                 const directMatch = chapterIds.find((id: string) => String(id).toLowerCase() === frontendChapterId);
                 if (directMatch) {
                   dbChapterId = directMatch;
-                  console.log(`   ✅ Direct match found for video "${video.title}": ${frontendChapterId} -> ${dbChapterId}`);
+                  console.log(`   ✅ Direct match found for video "${v.title}": ${frontendChapterId} -> ${dbChapterId}`);
                 }
               } else {
-                console.log(`   ✅ Mapped video "${video.title}": ${frontendChapterId} -> ${dbChapterId}`);
+                console.log(`   ✅ Mapped video "${v.title}": ${frontendChapterId} -> ${dbChapterId}`);
               }
               
               if (!dbChapterId) {
-                console.error(`❌ Could not map video "${video.title}" chapter_id "${video.chapter_id}" to database chapter ID`);
+                console.error(`❌ Could not map video "${v.title}" chapter_id "${v.chapter_id}" to database chapter ID`);
                 console.error(`   Frontend chapter_id: ${frontendChapterId}`);
                 console.error(`   Available mappings:`, Array.from(chapterIdMap.entries()).slice(0, 10));
                 console.error(`   Available chapter IDs:`, chapterIds);
@@ -1481,28 +1804,25 @@ export async function PATCH(
               
               return {
                 chapter_id: dbChapterId,
-                title: video.title,
-                video_url: video.video_url || '',
-                duration: video.duration || null,
-                uploaded_by: body.created_by || null
+                title: v.title,
+                video_url: v.video_url || '',
+                duration: v.duration ?? null,
+                uploaded_by: (body as { created_by?: string }).created_by || null
               };
             })
-             
-            .filter((v: any) => v !== null); // Remove null entries
+            .filter((v): v is VideoInsertData => v !== null); // Remove null entries
 
-          console.log(`💾 Saving ${videosToInsert.length} video(s) to database (${videos.length} total, ${videos.length - videosToInsert.length} filtered):`, videosToInsert.map((v: any) => ({
+          console.log(`💾 Saving ${videosToInsert.length} video(s) to database (${videos.length} total, ${videos.length - videosToInsert.length} filtered):`, videosToInsert.map((v) => ({
             title: v.title,
             chapter_id: v.chapter_id,
             video_url: v.video_url?.substring(0, 60) + '...'
           })));
 
           if (videosToInsert.length > 0) {
-            const { data: insertedVideos, error: videosError } = await (supabaseAdmin
+            const { data: insertedVideos, error: videosError } = await supabaseAdmin
               .from('videos')
-               
-              .insert(videosToInsert as any)
-               
-              .select() as any);
+              .insert(videosToInsert as never)
+              .select();
 
             if (videosError) {
               console.error('❌ Error updating videos:', videosError);
@@ -1511,7 +1831,7 @@ export async function PATCH(
               console.log(`✅ Successfully saved ${insertedVideos?.length || 0} video(s) to database`);
               if (insertedVideos) {
                  
-                console.log('   Saved videos:', insertedVideos.map((v: any) => ({
+                console.log('   Saved videos:', insertedVideos.map((v: { id?: string; title?: string; chapter_id?: string; video_url?: string }) => ({
                   id: v.id,
                   title: v.title,
                   chapter_id: v.chapter_id,
@@ -1535,7 +1855,7 @@ export async function PATCH(
         .from('chapters')
         .select('id')
          
-        .eq('course_id', courseId) as any;
+        .eq('course_id', courseId);
 
       if (courseChapters && courseChapters.length > 0) {
         const chapterIds = courseChapters.map((ch: { id: string }) => ch.id);
@@ -1548,9 +1868,8 @@ export async function PATCH(
         if (materials.length > 0) {
           const materialsToInsert = materials
              
-            .filter((m: any) => m.chapter_id && m.title)
-             
-            .map((material: any) => {
+            .filter((m: Material) => m.chapter_id && m.title)
+            .map((material: Material) => {
               // Map frontend chapter_id to database chapter_id
               const frontendChapterId = String(material.chapter_id).trim().toLowerCase();
               let dbChapterId = chapterIdMap.get(frontendChapterId);
@@ -1577,13 +1896,21 @@ export async function PATCH(
               };
             })
              
-            .filter((m: any) => m !== null); // Remove null entries
+            .filter((m: Material | null): m is Material => m !== null); // Remove null entries
 
+          type MaterialInsertData = {
+            chapter_id: string;
+            title: string | undefined;
+            file_url: string;
+            file_type: string;
+            uploaded_by: string | null;
+          };
+          
           if (materialsToInsert.length > 0) {
-            const { error: materialsError } = await (supabaseAdmin
+            const materialsData = materialsToInsert as MaterialInsertData[];
+            const { error: materialsError } = await supabaseAdmin
               .from('materials')
-               
-              .insert(materialsToInsert as any) as any);
+              .insert(materialsData as never);
 
             if (materialsError) {
               console.error('Error updating materials:', materialsError);
@@ -1599,7 +1926,7 @@ export async function PATCH(
       }
     }
 
-    const synchronizeChapterContents = async (payloadContents: any[]) => {
+    const synchronizeChapterContents = async (payloadContents: ChapterContent[]) => {
       // Check if chapter_contents table exists by trying a simple query
       try {
         const { error: tableCheckError } = await supabaseAdmin
@@ -1613,7 +1940,7 @@ export async function PATCH(
           return;
         }
        
-      } catch (checkError: any) {
+      } catch (checkError: unknown) {
         logger.warn('Error checking chapter_contents table (non-critical)', {
           endpoint: '/api/admin/courses/[id]',
           courseId,
@@ -1625,8 +1952,7 @@ export async function PATCH(
       const { data: courseChaptersForContents } = await supabaseAdmin
         .from('chapters')
         .select('id')
-         
-        .eq('course_id', courseId) as any;
+        .eq('course_id', courseId);
 
       const chapterIdsForContents = courseChaptersForContents?.map((ch: { id: string }) => ch.id) || [];
       if (chapterIdsForContents.length === 0) {
@@ -1634,13 +1960,15 @@ export async function PATCH(
         return;
       }
 
-      const resolveChapterId = (rawChapterId: any, fallbackOrder?: number) => {
+      const resolveChapterId = (rawChapterId: string | number | null | undefined, fallbackOrder?: number): string | null => {
         if (rawChapterId) {
           const key = String(rawChapterId).trim().toLowerCase();
           const rawKey = String(rawChapterId);
           
-          if (chapterIdMap.has(key)) return chapterIdMap.get(key);
-          if (chapterIdMap.has(rawKey)) return chapterIdMap.get(rawKey);
+          const keyResult = chapterIdMap.get(key);
+          if (keyResult) return keyResult;
+          const rawKeyResult = chapterIdMap.get(rawKey);
+          if (rawKeyResult) return rawKeyResult;
           
           // Check direct match against actual IDs
           const directMatch = chapterIdsForContents.find((id: string) => String(id).toLowerCase() === key);
@@ -1651,8 +1979,9 @@ export async function PATCH(
 
         if (typeof fallbackOrder === 'number') {
           const orderKey = String(fallbackOrder);
-          if (chapterIdMap.has(orderKey)) {
-            return chapterIdMap.get(orderKey);
+          const orderResult = chapterIdMap.get(orderKey);
+          if (orderResult) {
+            return orderResult;
           }
         }
 
@@ -1661,7 +1990,7 @@ export async function PATCH(
 
       const contentsToUpsert = payloadContents
          
-        .map((content: any, index: number) => {
+        .map((content: ChapterContent, index: number) => {
           const chapterId = resolveChapterId(content.chapter_id, content.order_index || index + 1);
           if (!chapterId) {
             console.warn('⚠️ Skipping chapter content - could not resolve chapter ID', content);
@@ -1681,24 +2010,26 @@ export async function PATCH(
             }
           }
 
+          const contentUrl = content.content_url || content.video_url || content.file_url;
+          const contentUrlStr = typeof contentUrl === 'string' ? contentUrl : (contentUrl ? String(contentUrl) : null);
+          
           return {
             id: content.id,
             chapter_id: chapterId,
             content_type: content.content_type || (content.file_type === 'pdf' ? 'pdf' : content.file_type ? 'file' : 'text'),
             title: content.title || `Content item ${index + 1}`,
-            content_url: content.content_url || content.video_url || content.file_url || null,
+            content_url: contentUrlStr || undefined,
             content_text: content.content_text || null,
             order_index: content.order_index || index + 1,
             duration_minutes: content.duration_minutes || content.duration || null,
             is_published: content.is_published ?? true,
             storage_path: content.storage_path || null,
-            content_metadata: metadata,
+            content_metadata: metadata || null,
             thumbnail_url: content.thumbnail_url || null,
             content_label: content.content_label || null
           };
         })
-         
-        .filter((item: any) => item !== null);
+        .filter((item): item is NonNullable<typeof item> => item !== null);
 
       if (contentsToUpsert.length === 0) {
         console.log('ℹ️ No valid chapter contents to upsert');
@@ -1707,19 +2038,18 @@ export async function PATCH(
 
       // Delete contents that are no longer present (only those with IDs)
        
-      const payloadIds = contentsToUpsert.map((item: any) => item.id).filter(Boolean);
+      const payloadIds = contentsToUpsert.map((item) => item.id).filter((id): id is string => !!id);
       const { data: existingContents } = await supabaseAdmin
         .from('chapter_contents')
         .select('id')
-         
-        .in('chapter_id', chapterIdsForContents) as any;
+        .in('chapter_id', chapterIdsForContents);
 
       if (existingContents && payloadIds.length > 0) {
         const idsToDelete = existingContents
            
-          .filter((existing: any) => !payloadIds.includes(existing.id))
-           
-          .map((existing: any) => existing.id);
+          .filter((existing: { id?: string }) => existing.id && !payloadIds.includes(existing.id))
+          .map((existing: { id?: string }) => existing.id)
+          .filter((id): id is string => id !== undefined);
 
         if (idsToDelete.length > 0) {
           console.log(`🗑️ Deleting ${idsToDelete.length} removed chapter content item(s)`);
@@ -1734,10 +2064,9 @@ export async function PATCH(
       console.log('   Sample content item:', JSON.stringify(contentsToUpsert[0], null, 2));
       
       try {
-        const { error: contentsError } = await (supabaseAdmin
+        const { error: contentsError } = await supabaseAdmin
           .from('chapter_contents')
-           
-          .upsert(contentsToUpsert as any) as any);
+          .upsert(contentsToUpsert as never);
 
         if (contentsError) {
           console.error('❌ Error upserting chapter contents:', contentsError);
@@ -1747,7 +2076,7 @@ export async function PATCH(
           console.log('✅ Successfully upserted chapter contents');
         }
        
-      } catch (error: any) {
+      } catch (error: unknown) {
         logger.warn('Exception in synchronizeChapterContents (non-critical)', {
           endpoint: '/api/admin/courses/[id]',
         }, error instanceof Error ? error : new Error(String(error)));
@@ -1764,10 +2093,9 @@ export async function PATCH(
         await synchronizeChapterContents(chapterContentsPayload);
       } else if ((videos && videos.length > 0) || (materials && materials.length > 0)) {
          
-        const fallbackContents: any[] = [];
+        const fallbackContents: ChapterContent[] = [];
         if (videos && videos.length > 0) {
-           
-          videos.forEach((video: any, index: number) => {
+          videos.forEach((video: Video, index: number) => {
             fallbackContents.push({
               ...video,
               content_type: 'video_link',
@@ -1778,7 +2106,7 @@ export async function PATCH(
         }
         if (materials && materials.length > 0) {
            
-          materials.forEach((material: any, index: number) => {
+          materials.forEach((material: Material, index: number) => {
             fallbackContents.push({
               ...material,
               content_type: material.file_type === 'pdf' ? 'pdf' : 'file',
@@ -1793,7 +2121,7 @@ export async function PATCH(
         }
       }
      
-    } catch (chapterContentsError: any) {
+    } catch (chapterContentsError: unknown) {
       logger.warn('Error processing chapter contents (non-critical)', {
         endpoint: '/api/admin/courses/[id]',
         courseId,
@@ -1815,7 +2143,7 @@ export async function PATCH(
     });
     
     // #region agent log
-    await logToFile({location:'route.ts:1486',message:'Starting assignment processing',data:{hasAssignments:!!assignmentsToProcess,isArray:Array.isArray(assignmentsToProcess),assignmentsCount:assignmentsToProcess?.length||0,courseId,assignments:assignmentsToProcess?.map((a:any)=>({title:a.title,chapter_id:a.chapter_id,id:a.id}))||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
+        await logToFile({location:'route.ts:1486',message:'Starting assignment processing',data:{hasAssignments:!!assignmentsToProcess,isArray:Array.isArray(assignmentsToProcess),assignmentsCount:assignmentsToProcess?.length||0,courseId,assignments:assignmentsToProcess?.map((a:Assignment)=>({title:a.title,chapter_id:a.chapter_id,id:a.id}))||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
     // #endregion
     
     if (assignmentsToProcess && Array.isArray(assignmentsToProcess)) {
@@ -1849,11 +2177,11 @@ export async function PATCH(
           .select('id, order_index, order_number')
            
           .eq('course_id', courseId)
-          .order('order_index', { ascending: true }) as any;
+          .order('order_index', { ascending: true });
         const chapterIds = courseChapters?.map((ch: { id: string }) => ch.id) || [];
         
         // #region agent log
-        await logToFile({location:'route.ts:1526',message:'Fetched chapters for assignment matching',data:{courseId,chaptersCount:courseChapters?.length||0,chapterIds,assignmentsCount:assignments.length,assignments:assignments.map((a:any)=>({title:a.title,chapter_id:a.chapter_id,id:a.id}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'});
+        await logToFile({location:'route.ts:1526',message:'Fetched chapters for assignment matching',data:{courseId,chaptersCount:courseChapters?.length||0,chapterIds,assignmentsCount:assignments.length,assignments:assignments.map((a: Assignment) => ({ title: a.title, chapter_id: a.chapter_id, id: a.id }))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'});
         // #endregion
         
         if (chapterIds.length === 0) {
@@ -1960,7 +2288,7 @@ export async function PATCH(
             let configObj: string | null = null;
             try {
               // Store any additional metadata in config, but primary fields go in columns
-              const configData: any = {};
+              const configData: AssignmentConfig = {};
               if (assignment.auto_grading_enabled !== undefined) {
                 configData.auto_grading_enabled = assignment.auto_grading_enabled;
               }
@@ -1976,7 +2304,22 @@ export async function PATCH(
             
             // Use assignment.id if provided (permanent ID from frontend), otherwise let database generate it
             // Store chapter_id in database column (like videos and materials) for proper foreign key relationship
-            const assignmentData: any = {
+            interface AssignmentInsertData {
+              course_id: string;
+              chapter_id: string;
+              title: string;
+              description: string;
+              assignment_type: string;
+              max_marks: number;
+              max_score: number;
+              auto_grading_enabled: boolean;
+              is_published: boolean;
+              config: string | null;
+              created_by: string | null;
+              id?: string;
+            }
+            
+            const assignmentData: AssignmentInsertData = {
               course_id: courseId,
               chapter_id: dbChapterId, // Store in column for proper foreign key relationship
               title: assignment.title,
@@ -2009,13 +2352,11 @@ export async function PATCH(
             await logToFile({location:'route.ts:1664',message:'About to insert assignment into database',data:{assignmentTitle:assignment.title,assignmentId:assignment.id,dbChapterId,assignmentData:{course_id:assignmentData.course_id,chapter_id:assignmentData.chapter_id,title:assignmentData.title}},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'});
             // #endregion
             
-            const { data: insertedAssignment, error: assignmentsError } = await ((supabaseAdmin
+            const { data: insertedAssignment, error: assignmentsError } = await supabaseAdmin
               .from('assignments')
-               
-              .insert(assignmentData as any) as any)
+              .insert(assignmentData as never)
               .select()
-               
-              .single() as any) as any;
+              .single();
 
             // #region agent log
             await logToFile({location:'route.ts:1672',message:'Database insert result',data:{assignmentTitle:assignment.title,hasError:!!assignmentsError,errorMessage:assignmentsError?.message,hasInsertedData:!!insertedAssignment,insertedId:insertedAssignment?.id,insertedChapterId:insertedAssignment?.chapter_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'});
@@ -2056,7 +2397,7 @@ export async function PATCH(
             if (insertedAssignment && assignment.questions && assignment.questions.length > 0) {
               console.log(`📋 Inserting ${assignment.questions.length} question(s) for assignment ${insertedAssignment.id}...`);
 
-              const questionsToInsert = assignment.questions.map((q: any, index: number) => {
+              const questionsToInsert = assignment.questions.map((q: Question, index: number) => {
                 // Normalize question_type to match database constraint
                 // Database accepts: 'mcq', 'essay', 'true_false', 'short_answer', 'fill_blank' (lowercase)
                 // OR: 'MCQ', 'FillBlank', 'mcq', 'fill_blank', 'essay', 'true_false' (mixed case)
@@ -2131,10 +2472,11 @@ export async function PATCH(
             
             // Verify assignment was actually saved by querying it back
             if (insertedAssignment?.id) {
+              const insertedData = insertedAssignment as { id?: string };
               const { data: verifyAssignment, error: verifyError } = await supabaseAdmin
                 .from('assignments')
                 .select('id, title, course_id, config')
-                .eq('id', insertedAssignment.id)
+                .eq('id', insertedData.id || '')
                 .single();
               
               if (verifyError || !verifyAssignment) {
@@ -2142,11 +2484,12 @@ export async function PATCH(
                 console.error(`   ❌ [API] ${errorMsg}`, verifyError);
                 assignmentErrors.push(errorMsg);
               } else {
-                console.log(`   ✅ [API] Verified assignment "${assignment.title}" exists in database with ID: ${verifyAssignment.id}`);
+                const verifyData = verifyAssignment as { id?: string };
+                console.log(`   ✅ [API] Verified assignment "${assignment.title}" exists in database with ID: ${verifyData.id}`);
               }
             }
            
-          } catch (error: any) {
+          } catch (error: unknown) {
             const errorMsg = `Exception while processing assignment "${assignment.title}": ${error instanceof Error ? error.message : String(error)}`;
             console.error(`   ❌ [API] ${errorMsg}`);
             assignmentErrors.push(errorMsg);
@@ -2196,12 +2539,12 @@ export async function PATCH(
         .select('id, order_index, release_date')
         .eq('course_id', courseId)
          
-        .order('order_index', { ascending: true }) as any;
+        .order('order_index', { ascending: true });
 
       if (courseChapters && courseChapters.length > 0 && scheduling.start_date) {
         const startDate = new Date(scheduling.start_date);
          
-        const schedulesToInsert = courseChapters.map((chapter: any, index: number) => {
+        const schedulesToInsert = courseChapters.map((chapter: Chapter, index: number) => {
           const releaseDate = new Date(startDate);
           if (scheduling.release_type === 'Weekly') {
             releaseDate.setDate(startDate.getDate() + (index * 7));
@@ -2211,9 +2554,10 @@ export async function PATCH(
             releaseDate.setDate(startDate.getDate() + (index * 14));
           }
 
+          const chapterData = chapter as { id?: string };
           return {
             course_id: courseId,
-            chapter_id: chapter.id,
+            chapter_id: chapterData.id || '',
             release_type: scheduling.release_type,
             release_date: releaseDate.toISOString(),
             next_release: index < courseChapters.length - 1 ? new Date(releaseDate.getTime() + (scheduling.release_type === 'Weekly' ? 7 : scheduling.release_type === 'Daily' ? 1 : 14) * 24 * 60 * 60 * 1000).toISOString() : null
@@ -2222,7 +2566,7 @@ export async function PATCH(
 
         const { error: schedulesError } = await supabaseAdmin
           .from('course_schedules')
-          .insert(schedulesToInsert);
+          .insert(schedulesToInsert as never);
 
         if (schedulesError) {
           console.error('Error updating course schedules:', schedulesError);
@@ -2234,16 +2578,16 @@ export async function PATCH(
     const { data: finalChapters } = await supabaseAdmin
       .from('chapters')
       .select('id')
-      .eq('course_id', courseId) as any;
+      .eq('course_id', courseId);
     
     if (finalChapters && finalChapters.length > 0) {
-      const chapterIds = finalChapters.map((ch: any) => ch.id);
+      const chapterIds = finalChapters.map((ch: unknown) => (ch as { id?: string }).id).filter((id: unknown): id is string => typeof id === 'string' && !!id);
       
       // Count content
       const [
         { count: videosCount },
         { count: materialsCount },
-        { count: contentsCount },
+        ,
         { count: assignmentsCount }
       ] = await Promise.all([
         supabaseAdmin
@@ -2270,11 +2614,11 @@ export async function PATCH(
         .update({
           num_chapters: finalChapters.length,
           total_chapters: finalChapters.length,
-          total_videos: videosCount || 0,
-          total_materials: materialsCount || 0,
-          total_assignments: assignmentsCount || 0,
+          total_videos: videosCount ?? 0,
+          total_materials: materialsCount ?? 0,
+          total_assignments: assignmentsCount ?? 0,
           updated_at: new Date().toISOString()
-        })
+        } as never)
         .eq('id', courseId);
       
       console.log(`✅ Updated course totals:`, {
@@ -2290,8 +2634,7 @@ export async function PATCH(
       .from('courses')
       .select('id, course_name, title, name, description, subject, grade, status, is_published, school_id, created_by, created_at, updated_at, thumbnail_url, duration_weeks, prerequisites_course_ids, prerequisites_text, difficulty_level, total_chapters, num_chapters, total_videos, total_materials, total_assignments, release_type')
       .eq('id', courseId)
-       
-      .single() as any;
+      .single();
 
     if (fetchError) {
       console.error('❌ Error fetching updated course:', fetchError);
@@ -2299,34 +2642,33 @@ export async function PATCH(
 
     // Fetch course_access separately
      
-    let courseAccess: any[] = [];
+    let courseAccess: CourseAccess[] = [];
     try {
       const { data: accessData, error: accessError } = await supabaseAdmin
         .from('course_access')
         .select('id, course_id, school_id, grade')
          
-        .eq('course_id', courseId) as any;
+        .eq('course_id', courseId);
 
       if (!accessError && accessData) {
         courseAccess = accessData;
         
         // Fetch school names separately
          
-        const schoolIds = Array.from(new Set(accessData.map((a: any) => a.school_id).filter(Boolean)));
+        const schoolIds = Array.from(new Set(accessData.map((a: CourseAccess) => a.school_id).filter(Boolean)));
         if (schoolIds.length > 0) {
           const { data: schoolsData, error: schoolsError } = await supabaseAdmin
             .from('schools')
             .select('id, name')
              
-            .in('id', schoolIds) as any;
+            .in('id', schoolIds);
           
           if (!schoolsError && schoolsData) {
+            const schoolsMap = new Map(schoolsData.map((s: { id: string; name?: string }) => [s.id, s]));
              
-            const schoolsMap = new Map(schoolsData.map((s: any) => [s.id, s]));
-             
-            courseAccess = accessData.map((access: any) => ({
+            courseAccess = accessData.map((access: CourseAccess) => ({
               ...access,
-              schools: schoolsMap.get(access.school_id) || null
+              schools: schoolsMap.get(access.school_id || '') || null
             }));
           }
         }
@@ -2343,21 +2685,20 @@ export async function PATCH(
     let totalMaterials = 0;
     let totalAssignments = 0;
 
-    let updatedChapterContents: any[] = [];
-     
-    let chaptersData: any[] | null = null;
+    let updatedChapterContents: ChapterContent[] = [];
+    let chaptersData: Chapter[] | null = null;
     if (updatedCourse) {
       // Count videos
       const { data: fetchedChapters } = await supabaseAdmin
         .from('chapters')
         .select('id')
          
-        .eq('course_id', courseId) as any;
+        .eq('course_id', courseId);
 
       chaptersData = fetchedChapters;
       
       if (chaptersData && chaptersData.length > 0) {
-        const chapterIds = chaptersData.map((ch: any) => ch.id);
+        const chapterIds = chaptersData.map((ch) => (ch as { id?: string }).id).filter((id): id is string => !!id);
         const { count: videosCount } = await supabaseAdmin
           .from('videos')
           .select('id', { count: 'exact', head: true })
@@ -2375,7 +2716,7 @@ export async function PATCH(
           .select('id, chapter_id, content_type, title, content_url, content_text, duration_minutes, storage_path, thumbnail_url, content_label, order_index, created_at, updated_at')
           .in('chapter_id', chapterIds)
            
-          .order('order_index', { ascending: true }) as any;
+          .order('order_index', { ascending: true });
         if (contentsFetch) {
           updatedChapterContents = contentsFetch;
         }
@@ -2390,17 +2731,18 @@ export async function PATCH(
     }
 
     // Map database schema
-    const mappedCourse = updatedCourse ? {
-      ...updatedCourse,
-      name: updatedCourse.course_name || updatedCourse.name || updatedCourse.title || '',
-      total_chapters: updatedCourse.num_chapters || 0,
+    const courseData = updatedCourse as { course_name?: string; name?: string; title?: string; num_chapters?: number; is_published?: boolean; status?: string; [key: string]: unknown } | null;
+    const mappedCourse = courseData ? {
+      ...courseData,
+      name: courseData.course_name || courseData.name || courseData.title || '',
+      total_chapters: courseData.num_chapters || 0,
       total_videos: totalVideos,
       total_materials: totalMaterials,
       total_assignments: totalAssignments,
       release_type: release_type || 'Weekly', // Use provided release_type or default
-      status: updatedCourse.is_published ? 'Published' : (updatedCourse.status || 'Draft'),
+      status: courseData.is_published ? 'Published' : (courseData.status || 'Draft'),
       course_access: courseAccess, // Use separately fetched course_access
-      chapter_contents: (updatedChapterContents || []).map((content: any) => ({
+      chapter_contents: (updatedChapterContents || []).map((content: ChapterContent) => ({
         id: content.id,
         content_id: content.id, // For compatibility
         chapter_id: content.chapter_id,
@@ -2418,17 +2760,27 @@ export async function PATCH(
       }))
     } : course;
     
+    const mappedCourseData = mappedCourse as { id?: string; name?: string; course_access?: unknown[] };
     console.log('✅ Returning updated course:', {
-      id: mappedCourse.id,
-      name: mappedCourse.name,
-      course_access_count: mappedCourse.course_access?.length || 0
+      id: mappedCourseData.id,
+      name: mappedCourseData.name,
+      course_access_count: mappedCourseData.course_access?.length || 0
     });
 
     // Invalidate cache after update
     invalidateCache(CacheKeys.courseMetadata(courseId));
 
     // Include assignment processing results in response if assignments were processed
-    const responseData: any = { 
+    interface ResponseData {
+      course: typeof mappedCourse;
+      assignmentResults?: {
+        successes: string[];
+        errors: string[];
+      };
+      [key: string]: unknown;
+    }
+    
+    const responseData: ResponseData = { 
       course: mappedCourse, 
       message: 'Course updated successfully' 
     };
@@ -2443,7 +2795,7 @@ export async function PATCH(
     }
     
     const successResponse = NextResponse.json(responseData);
-    ensureCsrfToken(successResponse, request);
+    ensureCsrfToken(successResponse as NextResponse, request);
     return successResponse;
   } catch (error) {
     logger.error('Unexpected error in PATCH /api/admin/courses/[id]', {
@@ -2507,7 +2859,7 @@ export async function DELETE(
       .from('courses')
       .select('id, name, course_name')
       .eq('id', courseId)
-      .single() as any;
+      .single();
 
     if (courseCheckError || !courseExists) {
       logger.warn('Course not found for deletion', {
@@ -2519,14 +2871,15 @@ export async function DELETE(
         { error: 'Course not found', details: `Course with ID ${courseId} does not exist` },
         { status: 404 }
       );
-      ensureCsrfToken(errorResponse, request);
+      ensureCsrfToken(errorResponse as NextResponse, request);
       return errorResponse;
     }
 
+    const courseExistsData = courseExists as { name?: string; course_name?: string };
     logger.info('Course found, proceeding with deletion', {
       endpoint: '/api/admin/courses/[id]',
       courseId,
-      courseName: courseExists.name || courseExists.course_name,
+      courseName: courseExistsData.name || courseExistsData.course_name,
     });
 
     // 2. Clean up storage files BEFORE deleting course record
@@ -2568,7 +2921,7 @@ export async function DELETE(
     const { data: courseChapters } = await supabaseAdmin
       .from('chapters')
       .select('id')
-      .eq('course_id', courseId) as any;
+      .eq('course_id', courseId);
     
     const chapterIds = courseChapters?.map((ch: { id: string }) => ch.id) || [];
     logger.info('Found chapters for course', {
@@ -2581,7 +2934,7 @@ export async function DELETE(
     const { data: courseAssignments } = await supabaseAdmin
       .from('assignments')
       .select('id')
-      .eq('course_id', courseId) as any;
+      .eq('course_id', courseId);
     
     const assignmentIds = courseAssignments?.map((a: { id: string }) => a.id) || [];
     logger.info('Found assignments for course', {
@@ -2597,11 +2950,10 @@ export async function DELETE(
         courseId,
         assignmentCount: assignmentIds.length,
       });
-      const { count: questionsCount, error: questionsError } = await supabaseAdmin
-        .from('assignment_questions')
+      const { count: questionsCount, error: questionsError } = await supabaseAdmin.from('assignment_questions')
         .delete()
         .in('assignment_id', assignmentIds)
-        .select('*', { count: 'exact', head: true }) as any;
+        .select('*', { count: 'exact', head: true });
       
       deletionResults.assignment_questions = {
         count: questionsCount || 0,
@@ -2634,11 +2986,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: assignmentsCount, error: assignmentsError } = await supabaseAdmin
-      .from('assignments')
+    const { count: assignmentsCount, error: assignmentsError } = await supabaseAdmin.from('assignments')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.assignments = {
       count: assignmentsCount || 0,
@@ -2670,7 +3021,7 @@ export async function DELETE(
         .from('chapter_contents')
         .delete()
         .in('chapter_id', chapterIds)
-        .select('*', { count: 'exact', head: true }) as any;
+        .select('*', { count: 'exact', head: true });
       
       deletionResults.chapter_contents = {
         count: contentsCount || 0,
@@ -2705,11 +3056,10 @@ export async function DELETE(
         courseId,
         chapterCount: chapterIds.length,
       });
-      const { count: videosCount, error: videosError } = await supabaseAdmin
-        .from('videos')
+      const { count: videosCount, error: videosError } = await supabaseAdmin.from('videos')
         .delete()
         .in('chapter_id', chapterIds)
-        .select('*', { count: 'exact', head: true }) as any;
+        .select('*', { count: 'exact', head: true });
       
       deletionResults.videos = {
         count: videosCount || 0,
@@ -2744,11 +3094,10 @@ export async function DELETE(
         courseId,
         chapterCount: chapterIds.length,
       });
-      const { count: materialsCount, error: materialsError } = await supabaseAdmin
-        .from('materials')
+      const { count: materialsCount, error: materialsError } = await supabaseAdmin.from('materials')
         .delete()
         .in('chapter_id', chapterIds)
-        .select('*', { count: 'exact', head: true }) as any;
+        .select('*', { count: 'exact', head: true });
       
       deletionResults.materials = {
         count: materialsCount || 0,
@@ -2781,11 +3130,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: chaptersCount, error: chaptersError } = await supabaseAdmin
-      .from('chapters')
+    const { count: chaptersCount, error: chaptersError } = await supabaseAdmin.from('chapters')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.chapters = {
       count: chaptersCount || 0,
@@ -2811,11 +3159,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: accessCount, error: accessError } = await supabaseAdmin
-      .from('course_access')
+    const { count: accessCount, error: accessError } = await supabaseAdmin.from('course_access')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.course_access = {
       count: accessCount || 0,
@@ -2841,11 +3188,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: schedulesCount, error: schedulesError } = await supabaseAdmin
-      .from('course_schedules')
+    const { count: schedulesCount, error: schedulesError } = await supabaseAdmin.from('course_schedules')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.course_schedules = {
       count: schedulesCount || 0,
@@ -2871,11 +3217,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: studentCoursesCount, error: studentCoursesError } = await supabaseAdmin
-      .from('student_courses')
+    const { count: studentCoursesCount, error: studentCoursesError } = await supabaseAdmin.from('student_courses')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.student_courses = {
       count: studentCoursesCount || 0,
@@ -2901,11 +3246,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: progressCount, error: progressError } = await supabaseAdmin
-      .from('course_progress')
+    const { count: progressCount, error: progressError } = await supabaseAdmin.from('course_progress')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.course_progress = {
       count: progressCount || 0,
@@ -2931,11 +3275,10 @@ export async function DELETE(
       endpoint: '/api/admin/courses/[id]',
       courseId,
     });
-    const { count: versionsCount, error: versionsError } = await supabaseAdmin
-      .from('course_versions')
+    const { count: versionsCount, error: versionsError } = await supabaseAdmin.from('course_versions')
       .delete()
       .eq('course_id', courseId)
-      .select('*', { count: 'exact', head: true }) as any;
+      .select('*', { count: 'exact', head: true });
     
     deletionResults.course_versions = {
       count: versionsCount || 0,
@@ -2980,7 +3323,7 @@ export async function DELETE(
         { error: 'Failed to delete course', details: deleteError.message },
         { status: 500 }
       );
-      ensureCsrfToken(errorResponse, request);
+      ensureCsrfToken(errorResponse as NextResponse, request);
       return errorResponse;
     }
 
@@ -3016,7 +3359,7 @@ export async function DELETE(
       },
       deletedRecords: deletionResults,
     });
-    ensureCsrfToken(successResponse, request);
+    ensureCsrfToken(successResponse as NextResponse, request);
     
     logger.info('Course deletion completed successfully', {
       endpoint: '/api/admin/courses/[id]',
@@ -3039,7 +3382,7 @@ export async function DELETE(
       'Failed to delete course'
     );
     const errorResponse = NextResponse.json(errorInfo, { status: errorInfo.status });
-    ensureCsrfToken(errorResponse, request);
+    ensureCsrfToken(errorResponse as NextResponse, request);
     return errorResponse;
   }
 }

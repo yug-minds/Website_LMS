@@ -3,7 +3,6 @@ import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '@/lib/rate-
 import { updateStudentSchema, validateRequestBody } from '@/lib/validation-schemas';
 import { supabaseAdmin } from '@/lib/supabase';
 import { logger, handleApiError } from '@/lib/logger';
-import { ensureCsrfToken } from '../../../../../lib/csrf-middleware';
 
 
 // PATCH - Update a student
@@ -43,7 +42,7 @@ export async function PATCH(
     const validation = validateRequestBody(updateStudentSchema, body);
     if (!validation.success) {
        
-      const errorMessages = (validation.details as any)?.errors?.map((e: { path: string[]; message: string }) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -59,6 +58,7 @@ export async function PATCH(
       password,
       school_id,
       grade,
+      section,
       joining_code,
       phone,
       address,
@@ -74,8 +74,15 @@ export async function PATCH(
     }
 
     // Build profile update data (only include fields that are provided)
-     
-    const profileUpdateData: any = {};
+    type ProfileUpdateData = {
+      full_name?: string;
+      email?: string;
+      phone?: string | null;
+      address?: string | null;
+      parent_name?: string | null;
+      parent_phone?: string | null;
+    };
+    const profileUpdateData: ProfileUpdateData = {};
 
     if (full_name !== undefined) profileUpdateData.full_name = full_name;
     if (email !== undefined) profileUpdateData.email = email;
@@ -99,9 +106,8 @@ export async function PATCH(
 
     // Use transaction function to atomically update profile and enrollment
     // This prevents race conditions and ensures data consistency
-    const { data: transactionResult, error: transactionError } = await (supabaseAdmin
-       
-      .rpc('update_student_enrollment' as any, {
+    const { data: transactionResult, error: transactionError } = await supabaseAdmin
+      .rpc('update_student_enrollment', {
         p_student_id: studentId,
         p_full_name: full_name,
         p_email: email,
@@ -111,12 +117,16 @@ export async function PATCH(
         p_parent_phone: parent_phone,
         p_school_id: school_id || null,
         p_grade: grade,
+        p_section: section,
         p_joining_code: joining_code
-       
-      } as any) as any);
+      } as never);
 
-     
-    const result = transactionResult as any;
+    interface TransactionResult {
+      success?: boolean;
+      error?: string;
+    }
+    
+    const result = transactionResult as TransactionResult | null;
     if (transactionError || !result?.success) {
       console.error('Error updating student:', transactionError || result?.error);
       return NextResponse.json(
@@ -141,6 +151,7 @@ export async function PATCH(
         student_schools (
           school_id,
           grade,
+          section,
           is_active,
           schools (
             id,
@@ -149,8 +160,7 @@ export async function PATCH(
         )
       `)
       .eq('id', studentId)
-       
-      .single() as any;
+      .single();
 
     if (fetchError) {
       console.error('Error fetching updated student:', fetchError);

@@ -35,17 +35,19 @@ export default function NoteTakingPanel({
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        const { data: notes } = await supabase
+        type NoteRow = { note_text?: string | null };
+        const { data: notesData } = await supabase
           .from('student_notes')
           .select('note_text')
           .eq('student_id', user.id)
           .eq('course_id', courseId)
           .eq('chapter_id', chapterId || '')
           .eq('content_id', contentId)
-          .single()
+          .maybeSingle()
 
+        const notes = notesData as NoteRow | null;
         if (notes) {
-          setNoteText(notes.note_text || '')
+          setNoteText(notes.note_text ?? '')
           setSaved(true)
         }
       } catch (error) {
@@ -73,7 +75,7 @@ export default function NoteTakingPanel({
           content_id: contentId,
           note_text: noteText,
           updated_at: new Date().toISOString(),
-        }, {
+        } as never, {
           onConflict: 'student_id,course_id,chapter_id,content_id'
         })
 

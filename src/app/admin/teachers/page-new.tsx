@@ -102,6 +102,7 @@ export default function TeachersManagement() {
   // Load all data on mount
   useEffect(() => {
     loadAllData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
 
   // Filter teachers based on search term
@@ -109,7 +110,7 @@ export default function TeachersManagement() {
     if (searchTerm.trim() === "") {
       setFilteredTeachers(teachers);
     } else {
-      const filtered = teachers.filter((teacher: any) =>
+      const filtered = teachers.filter((teacher: Teacher) =>
         teacher.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         teacher.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
         teacher.teacher_id.toLowerCase().includes(searchTerm.toLowerCase())
@@ -120,7 +121,7 @@ export default function TeachersManagement() {
 
   // Update statistics
   const updateStats = useCallback((teachersData: Teacher[]) => {
-    const active = teachersData.filter((t: any) => t.status === 'Active').length;
+    const active = teachersData.filter((t: Teacher) => t.status === 'Active').length;
     setStats({
       totalTeachers: teachersData.length,
       activeTeachers: active,
@@ -143,6 +144,7 @@ export default function TeachersManagement() {
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadAllData intentionally stable
   }, []);
 
   // Load teachers with enhanced error handling
@@ -195,7 +197,7 @@ export default function TeachersManagement() {
       const data = await response.json();
       // Filter active schools (if is_active property exists)
        
-      const activeSchools = (data.schools || []).filter((s: any) => s.is_active !== false);
+      const activeSchools = (data.schools || []).filter((s: School & { is_active?: boolean }) => s.is_active !== false);
       setSchools(activeSchools);
     } catch (error) {
       console.error('Unexpected error loading schools:', error);

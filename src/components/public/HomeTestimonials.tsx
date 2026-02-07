@@ -1,7 +1,7 @@
 "use client";
 
-import { TestimonialStack, type Testimonial } from "../ui/glass-testimonial-swiper";
-import { Star, Award } from "lucide-react";
+import { TestimonialSlider, type Testimonial } from "../ui/testimonial-slider";
+import { Star, Award, Code, Rocket } from "lucide-react";
 
 const testimonialsData: Testimonial[] = [
   {
@@ -29,10 +29,40 @@ const testimonialsData: Testimonial[] = [
     initials: "S8",
     name: "Student, Grade 8",
     role: "Game Developer",
-    quote: "The coding skills I learned here helped me create my own Games . Thank you Robo Coders!",
+    quote: "The coding skills I learned here helped me create my own Games. Thank you Robo Coders!",
     tags: [{ text: "Coding", type: "featured" }, { text: "Game Development", type: "default" }],
     stats: [{ icon: Star, text: "5.0 Rating" }, { icon: Award, text: "Game Creator" }],
     avatarGradient: "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)"
+  },
+  {
+    id: 4,
+    initials: "S9",
+    name: "Student, Grade 9",
+    role: "App Developer",
+    quote: "The advanced coding techniques I learned here enabled me to develop complex mobile apps. The hands-on projects were amazing!",
+    tags: [{ text: "App Development", type: "featured" }, { text: "Mobile Apps", type: "default" }],
+    stats: [{ icon: Star, text: "5.0 Rating" }, { icon: Code, text: "App Creator" }],
+    avatarGradient: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)"
+  },
+  {
+    id: 5,
+    initials: "S10",
+    name: "Student, Grade 10",
+    role: "AI Enthusiast",
+    quote: "Learning AI and machine learning here has been a transformative experience. I've built projects I never thought possible!",
+    tags: [{ text: "AI & ML", type: "featured" }, { text: "Innovation", type: "default" }],
+    stats: [{ icon: Star, text: "5.0 Rating" }, { icon: Rocket, text: "Innovator" }],
+    avatarGradient: "linear-gradient(135deg, #ec4899 0%, #be185d 100%)"
+  },
+  {
+    id: 6,
+    initials: "P2",
+    name: "Parent",
+    role: "Happy Parent",
+    quote: "Both my children attend Robo Coders and their problem-solving skills have improved dramatically. Highly recommend!",
+    tags: [{ text: "Problem Solving", type: "featured" }, { text: "Skill Development", type: "default" }],
+    stats: [{ icon: Star, text: "5.0 Rating" }],
+    avatarGradient: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)"
   }
 ];
 
@@ -51,7 +81,7 @@ export default function HomeTestimonials() {
         </div>
         <div className="w-full flex items-center justify-center">
           <div className="w-full max-w-5xl mx-auto relative">
-            <TestimonialStack testimonials={testimonialsData} visibleBehind={2} />
+            <TestimonialSlider testimonials={testimonialsData} />
           </div>
         </div>
       </div>

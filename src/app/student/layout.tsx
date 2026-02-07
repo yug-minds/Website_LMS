@@ -20,7 +20,8 @@ export default function StudentLayoutWrapper({
   const { data: profile } = useStudentProfile();
   const { data: assignments } = useStudentAssignments();
   const { data: notifications } = useStudentNotifications();
-  const [user, setUser] = useState<any>(null);
+  type AuthUser = { id: string; email?: string };
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   
   // Get sidebar state from store
@@ -101,15 +102,16 @@ export default function StudentLayoutWrapper({
             setTimeout(() => reject(new Error('Session check timeout')), 20000) // Increased to 20 seconds
           );
           
-          const result = await Promise.race([sessionPromise, timeoutPromise]) as any;
-          session = result.data?.session;
+          const result = await Promise.race([sessionPromise, timeoutPromise]) as { data?: { session?: unknown }; error?: unknown };
+          session = result.data?.session as typeof session;
           sessionError = result.error;
           
-        } catch (error: any) {
-          console.warn('⚠️ Session check failed:', error.message);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.warn('⚠️ Session check failed:', msg);
           
           // If it's a timeout or network error, try to continue with localStorage session
-          if (error.message.includes('timeout') || error.message.includes('took too long') || error.message.includes('AbortError')) {
+          if (msg.includes('timeout') || msg.includes('took too long') || msg.includes('AbortError')) {
             console.log('🔄 Attempting to recover session from localStorage...');
             
             try {
@@ -181,8 +183,8 @@ export default function StudentLayoutWrapper({
         } else {
           console.warn('⚠️ Student layout: Component unmounted before user could be set');
         }
-      } catch (error: any) {
-        const errorMessage = error?.message || String(error);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('❌ Student layout: Error getting user:', error);
         
         // Handle timeout errors specifically
@@ -236,7 +238,8 @@ export default function StudentLayoutWrapper({
       // Don't reset userLoadedRef here - it should persist across re-renders
       subscription.unsubscribe();
     };
-  }, []); // Empty dependency array - router is stable in Next.js 13+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run once on mount, router is stable
+  }, []);
 
   // Start activity tracking when user is authenticated
   useEffect(() => {
@@ -252,11 +255,13 @@ export default function StudentLayoutWrapper({
   useEffect(() => {
     // Role verification when profile loads (primary role check)
     if (profile && user) {
-      const normalizedRole = profile.role?.trim().toLowerCase();
-      console.log('🔍 Student layout: Profile loaded, checking role:', profile.role, 'Normalized:', normalizedRole);
+      type ProfileWithRole = { role?: string };
+      const profileTyped = profile as ProfileWithRole;
+      const normalizedRole = profileTyped.role?.trim().toLowerCase();
+      console.log('🔍 Student layout: Profile loaded, checking role:', profileTyped.role, 'Normalized:', normalizedRole);
       
       if (normalizedRole !== 'student') {
-        console.error('❌ Student layout: Profile role check failed! Role:', profile.role, 'Normalized:', normalizedRole);
+        console.error('❌ Student layout: Profile role check failed! Role:', profileTyped.role, 'Normalized:', normalizedRole);
         console.log('🔄 Redirecting to appropriate dashboard...');
         router.push('/redirect');
       } else {
@@ -322,17 +327,21 @@ export default function StudentLayoutWrapper({
   }
 
   // Get user's full name from profile, fallback to email
-  const userName = profile?.full_name || user?.email?.split('@')[0] || 'Student';
-  const userEmail = user?.email || profile?.email || '';
+  type ProfileWithName = { full_name?: string; email?: string };
+  const profileTyped = profile as ProfileWithName | null;
+  const userName = profileTyped?.full_name || user?.email?.split('@')[0] || 'Student';
+  const userEmail = user?.email || profileTyped?.email || '';
 
   // Calculate real-time badge counts
+  type AssignmentItem = { status?: string };
+  type NotificationItem = { is_read?: boolean };
   const pendingAssignmentsCount = Array.isArray(assignments) 
-    ? (assignments as any[]).filter((a: any) => 
+    ? (assignments as AssignmentItem[]).filter((a: AssignmentItem) => 
         a.status === 'not_started' || a.status === 'in_progress' || a.status === 'overdue'
       ).length 
     : 0;
   
-  const unreadNotificationsCount = notifications?.filter((n: any) => !n.is_read).length || 0;
+  const unreadNotificationsCount = (notifications as NotificationItem[] | undefined)?.filter((n: NotificationItem) => !n.is_read).length || 0;
 
   return (
     <div className="flex h-screen bg-gray-50" style={{ backgroundColor: '#f9fafb' }}>

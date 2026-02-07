@@ -7,6 +7,41 @@ import { logger, handleApiError } from '../../../../lib/logger';
 import { parseCursorParams, applyCursorPagination, createCursorResponse } from '../../../../lib/pagination';
 import { addCacheHeaders, CachePresets, checkETag } from '../../../../lib/http-cache';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface Teacher {
+  id: string;
+  teacher_id?: string;
+  full_name?: string;
+  email?: string;
+  phone?: string;
+  qualification?: string;
+  experience_years?: number;
+  specialization?: string;
+  address?: string;
+  temp_password?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  profile_id?: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface AttendanceLog {
+  attendance_percentage?: string | number;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface AttendanceRecord {
+  date?: string;
+  [key: string]: unknown;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface LeaveRecord {
+  end_date?: string;
+  [key: string]: unknown;
+}
 
 // GET - Fetch teachers for the school admin's school
 export async function GET(request: NextRequest) {
@@ -62,12 +97,12 @@ try {
 
     // Apply pagination - use assigned_at for cursor pagination
     if (useCursor && cursorParams.cursor) {
-      query = applyCursorPagination(query, cursorParams.cursor, cursorParams.direction, 'assigned_at') as any;
-      query = query.limit(limit + 1) as any; // Fetch one extra to check if there's more
+      query = applyCursorPagination(query, cursorParams.cursor, cursorParams.direction, 'assigned_at');
+      query = query.limit(limit + 1); // Fetch one extra to check if there's more
     } else {
-      query = query.order('assigned_at', { ascending: false }) as any;
+      query = query.order('assigned_at', { ascending: false });
       if (limit > 0) {
-        query = query.range(offset, offset + limit - 1) as any;
+        query = query.range(offset, offset + limit - 1);
       }
     }
 
@@ -109,9 +144,32 @@ try {
 
     // Step 2: For each teacher_schools record, fetch the corresponding teacher record
     // We need to find the teacher record using the profile's email
+    // Also fetch attendance percentage and leaves taken
+    // Get current month start in UTC to match database format
+    const now = new Date();
+    const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const currentMonthStartStr = currentMonthStart.toISOString().split('T')[0];
+    
+    type TeacherSchoolData = {
+      id: string;
+      assigned_at?: string;
+      created_at?: string;
+      teacher_id?: string;
+      profile?: {
+        id: string;
+        email?: string;
+        full_name?: string;
+        phone?: string;
+      } | Array<{
+        id: string;
+        email?: string;
+        full_name?: string;
+        phone?: string;
+      }>;
+    };
+    
     const mergedData = await Promise.all(
-       
-      teacherSchools.map(async (ts: any) => {
+      teacherSchools.map(async (ts: TeacherSchoolData) => {
         // Handle joined data - Supabase joins can return arrays or objects
         const profile = Array.isArray(ts.profile) ? ts.profile[0] : ts.profile;
         
@@ -120,7 +178,9 @@ try {
           return {
             ...ts,
             teacher: null,
-            profile: profile
+            profile: profile,
+            attendance_percentage: 0,
+            leaves_taken: 0
           };
         }
 
@@ -130,7 +190,7 @@ try {
           .select('id, teacher_id, full_name, email, phone, qualification, experience_years, specialization, address, temp_password, status, created_at, updated_at')
           .eq('email', profile.email)
            
-          .maybeSingle() as any;
+          .maybeSingle();
 
         if (teacherError) {
           console.warn(`⚠️ Error fetching teacher record for ${profile.email}:`, teacherError);
@@ -151,10 +211,119 @@ try {
           created_at: ts.assigned_at
         };
 
+        // Fetch current month's attendance percentage
+        // First try monthly log, then fallback to calculating from attendance table
+        let attendancePercentage = 0;
+        try {
+          // Try to get from monthly log first (faster if available)
+          const { data: attendanceLog, error: attendanceError } = await supabaseAdmin
+            .from('teacher_monthly_attendance_log')
+            .select('attendance_percentage')
+            .eq('teacher_id', profile.id)
+            .eq('school_id', schoolId)
+            .eq('month', currentMonthStartStr)
+            .maybeSingle();
+          
+          const logData = attendanceLog as { attendance_percentage?: string | number } | null;
+          if (!attendanceError && logData && logData.attendance_percentage != null) {
+            const logPercentage = parseFloat(String(logData.attendance_percentage));
+            // Use log if it has a valid percentage (including 0, which is a valid value)
+            if (!isNaN(logPercentage) && logPercentage >= 0) {
+              attendancePercentage = logPercentage;
+            }
+          }
+          
+          // If monthly log doesn't exist (error or null), calculate directly from attendance table
+          // This ensures we always have data even if the monthly log hasn't been populated yet
+          if (attendanceError || !logData || logData.attendance_percentage == null) {
+            const now = new Date();
+            const currentMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+            const currentMonthEndStr = currentMonthEnd.toISOString().split('T')[0];
+            
+            const { data: attendanceRecords, error: attendanceCalcError } = await supabaseAdmin
+              .from('attendance')
+              .select('status')
+              .eq('user_id', profile.id)
+              .eq('school_id', schoolId)
+              .gte('date', currentMonthStartStr)
+              .lte('date', currentMonthEndStr);
+            
+            if (!attendanceCalcError && attendanceRecords && attendanceRecords.length > 0) {
+              const totalDays = attendanceRecords.length;
+              interface AttendanceRecord {
+                status?: string;
+              }
+              
+              const presentDays = attendanceRecords.filter((r: AttendanceRecord) => r.status === 'Present').length;
+              attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+            }
+          }
+        } catch (err) {
+          console.warn(`⚠️ Error fetching attendance for ${profile.email}:`, err);
+          // On error, try direct calculation as fallback
+          try {
+            const now = new Date();
+            const currentMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+            const currentMonthEndStr = currentMonthEnd.toISOString().split('T')[0];
+            
+            const { data: attendanceRecords } = await supabaseAdmin
+              .from('attendance')
+              .select('status')
+              .eq('user_id', profile.id)
+              .eq('school_id', schoolId)
+              .gte('date', currentMonthStartStr)
+              .lte('date', currentMonthEndStr);
+            
+            if (attendanceRecords && attendanceRecords.length > 0) {
+              const totalDays = attendanceRecords.length;
+              interface AttendanceRecord {
+                status?: string;
+              }
+              
+              const presentDays = attendanceRecords.filter((r: AttendanceRecord) => r.status === 'Present').length;
+              attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+            }
+          } catch (fallbackErr) {
+            console.warn(`⚠️ Fallback attendance calculation also failed for ${profile.email}:`, fallbackErr);
+          }
+        }
+
+        // Fetch total leaves taken (sum of approved leaves for current year)
+        let leavesTaken = 0;
+        try {
+          const currentYearStart = new Date();
+          currentYearStart.setMonth(0, 1);
+          currentYearStart.setHours(0, 0, 0, 0);
+          const currentYearEnd = new Date();
+          currentYearEnd.setMonth(11, 31);
+          currentYearEnd.setHours(23, 59, 59, 999);
+          
+          const { data: leavesData, error: leavesError } = await supabaseAdmin
+            .from('teacher_leaves')
+            .select('total_days')
+            .eq('teacher_id', profile.id)
+            .eq('school_id', schoolId)
+            .eq('status', 'Approved')
+            .gte('start_date', currentYearStart.toISOString().split('T')[0])
+            .lte('end_date', currentYearEnd.toISOString().split('T')[0]);
+          
+          if (!leavesError && leavesData) {
+            interface Leave {
+              total_days?: string | number;
+            }
+            
+            leavesTaken = leavesData.reduce((sum: number, leave: Leave) => sum + (parseInt(String(leave.total_days)) || 0), 0);
+          }
+        } catch (err) {
+          console.warn(`⚠️ Error fetching leaves for ${profile.email}:`, err);
+        }
+
         return {
           ...ts,
           teacher: teacher,
-          profile: profile
+          profile: profile,
+          attendance_percentage: Math.round(attendancePercentage),
+          leaves_taken: leavesTaken
         };
       })
     );
@@ -164,9 +333,10 @@ try {
     if (search) {
       const searchLower = search.toLowerCase();
        
-      filteredTeachers = filteredTeachers.filter((ts: any) => {
-        const teacher = ts.teacher || ts.profile;
-        return (
+      filteredTeachers = filteredTeachers.filter((ts) => {
+        const tsData = ts as { teacher?: { full_name?: string; email?: string } | null; profile?: { full_name?: string; email?: string } };
+        const teacher = (tsData.teacher && tsData.teacher !== null) ? tsData.teacher : tsData.profile;
+        return !!(
           teacher?.full_name?.toLowerCase().includes(searchLower) ||
           teacher?.email?.toLowerCase().includes(searchLower)
         );
@@ -180,10 +350,19 @@ try {
     });
 
     // For cursor pagination, create response with cursor
-    let responseData: any;
+    interface TeacherResponse {
+      teachers: Array<Record<string, unknown>>;
+      pagination?: {
+        nextCursor?: string;
+        prevCursor?: string;
+        hasMore: boolean;
+      };
+    }
+    
+    let responseData: TeacherResponse;
     if (useCursor) {
       // Map assigned_at to created_at for cursor response
-      const mappedTeachers = filteredTeachers.map((t: any) => ({
+      const mappedTeachers = filteredTeachers.map((t: TeacherSchoolData & { assigned_at?: string; created_at?: string }) => ({
         ...t,
         created_at: t.assigned_at || t.created_at,
         id: t.id || t.teacher_id
@@ -193,8 +372,8 @@ try {
         limit
       );
       responseData = {
-        teachers: cursorResponse.data.map((t: any) => {
-          const { created_at, ...rest } = t;
+        teachers: cursorResponse.data.map((t: Record<string, unknown> & { created_at?: string }) => {
+          const { created_at: _created_at, ...rest } = t;
           return rest;
         }),
         pagination: {
@@ -309,7 +488,12 @@ try {
     const validation = validateRequestBody(createTeacherSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => {
+        const issue = e as { path?: (string | number)[]; message?: string };
+        const path = issue.path || [];
+        const pathStr = path.filter((p): p is string | number => typeof p === 'string' || typeof p === 'number').join('.');
+        return `${pathStr}: ${issue.message || ''}`;
+      }).join(', ') || validation.error || 'Invalid request data';
       return NextResponse.json(
         { 
           error: 'Validation failed',
@@ -359,8 +543,13 @@ try {
     // Step 1: Check if user already exists
     let userId: string | null = null;
     const { data: authUsers } = await supabaseAdmin.auth.admin.listUsers();
+    
+    interface AuthUser {
+      id: string;
+      email?: string;
+    }
      
-    const existingAuthUser = authUsers?.users?.find((user: any) => user.email === email);
+    const existingAuthUser = authUsers?.users?.find((user: AuthUser) => user.email === email);
     
     if (existingAuthUser) {
       userId = existingAuthUser.id;
@@ -389,19 +578,24 @@ try {
 
     // Step 3: Create/update profile
      
-    const { error: profileError } = await ((supabaseAdmin as any)
-      .from('profiles')
-      .upsert({
-        id: userId,
-        full_name: full_name,
-        email: email,
-        role: 'teacher',
-        phone: phone || null
-       
-      } as any, {
-        onConflict: 'id'
-       
-      } as any)) as any;
+    type ProfileUpsert = {
+      id: string;
+      full_name: string;
+      email: string;
+      role: string;
+      phone: string | null;
+    }
+    
+    const profileData: ProfileUpsert = {
+      id: userId,
+      full_name: full_name,
+      email: email,
+      role: 'teacher',
+      phone: phone || null
+    };
+    const { error: profileError } = await supabaseAdmin.from('profiles').upsert(profileData as never, {
+      onConflict: 'id'
+    });
 
     if (profileError) {
       logger.error('Error creating profile', {
@@ -421,24 +615,32 @@ try {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
     
-     
-    const { error: teacherError } = await ((supabaseAdmin as any)
-      .from('teachers')
-      .upsert({
-        profile_id: userId,
-        teacher_id: `TCH-${userId.slice(0, 8).toUpperCase()}`,
-        full_name: full_name,
-        email: email,
-        phone: phone || '',
-        qualification: qualification || '',
-        experience_years: experience_years || 0,
-        specialization: specialization || '',
-        status: 'Active'
-       
-      } as any, {
-        onConflict: 'profile_id'
-       
-      } as any)) as any;
+    type TeacherUpsert = {
+      profile_id: string;
+      teacher_id: string;
+      full_name: string;
+      email: string;
+      phone: string;
+      qualification: string;
+      experience_years: number;
+      specialization: string;
+      status: string;
+    }
+    
+    const teacherData: TeacherUpsert = {
+      profile_id: userId,
+      teacher_id: `TCH-${userId.slice(0, 8).toUpperCase()}`,
+      full_name: full_name,
+      email: email,
+      phone: phone || '',
+      qualification: qualification || '',
+      experience_years: experience_years || 0,
+      specialization: specialization || '',
+      status: 'Active'
+    };
+    const { error: teacherError } = await supabaseAdmin.from('teachers').upsert(teacherData as never, {
+      onConflict: 'profile_id'
+    });
 
     if (teacherError) {
       logger.error('Error creating teacher record', {
@@ -454,19 +656,28 @@ try {
     }
 
     // Step 5: Create teacher_schools record (automatically assigns school_id)
-    const { data: teacherSchool, error: teacherSchoolError } = await supabaseAdmin
-      .from('teacher_schools')
-      .insert({
-        teacher_id: userId,
-        school_id: schoolId, // Automatically assigned from admin's school
-        grades_assigned: grades_assigned || [],
-        subjects: subjects || [],
-        working_days_per_week: 5,
-        max_students_per_session: 30,
-        is_primary: true,
-        assigned_at: new Date().toISOString()
-       
-      } as any)
+    // Extract grade_sections_assigned from validation data or body
+    const gradeSectionsData = validation.data?.school_assignments?.[0]?.grade_sections_assigned 
+      || body.school_assignments?.[0]?.grade_sections_assigned
+      || body.grade_sections_assigned;
+    // Convert grade_sections_assigned to JSONB format if provided
+    const gradeSectionsJsonb = gradeSectionsData 
+      ? JSON.stringify(gradeSectionsData)
+      : null;
+    
+    const teacherSchoolData = {
+      teacher_id: userId,
+      school_id: schoolId, // Automatically assigned from admin's school
+      grades_assigned: grades_assigned || [],
+      grade_sections_assigned: gradeSectionsJsonb || null,
+      subjects: subjects || [],
+      working_days_per_week: 5,
+      max_students_per_session: 30,
+      is_primary: true,
+      assigned_at: new Date().toISOString()
+    };
+    const { data: teacherSchool, error: teacherSchoolError } = await supabaseAdmin.from('teacher_schools')
+      .insert(teacherSchoolData as never)
       .select(`
         *,
         teacher:teachers!teacher_schools_teacher_id_fkey (
@@ -480,7 +691,7 @@ try {
         )
       `)
        
-      .single() as any;
+      .single();
 
     if (teacherSchoolError) {
       logger.error('Failed to create teacher_schools record', {

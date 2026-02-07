@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { frontendLogger } from '../lib/frontend-logger';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface UseRealtimeNotificationsOptions {
   userId?: string;
@@ -14,7 +15,7 @@ export interface UseRealtimeNotificationsOptions {
   role?: 'student' | 'teacher' | 'school_admin' | 'admin';
   queryKey: string | string[];
   enabled?: boolean;
-  onNotification?: (payload: any) => void;
+  onNotification?: (payload: { eventType?: string; new?: { id?: string }; old?: { id?: string } }) => void;
 }
 
 /**
@@ -23,13 +24,13 @@ export interface UseRealtimeNotificationsOptions {
  */
 export function useRealtimeNotifications(options: UseRealtimeNotificationsOptions) {
   const queryClient = useQueryClient();
-  const channelRef = useRef<any>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const { userId, schoolId, role, queryKey, enabled = true, onNotification } = options;
 
   useEffect(() => {
     if (!enabled) return;
 
-    let channel: any = null;
+    let channel: RealtimeChannel | null = null;
 
     const setupSubscription = async () => {
       try {
@@ -66,7 +67,7 @@ export function useRealtimeNotifications(options: UseRealtimeNotificationsOption
               table: 'notifications',
               filter: filter,
             },
-            (payload: any) => {
+            (payload: { eventType?: string; new?: { id?: string }; old?: { id?: string } }) => {
               frontendLogger.debug('Realtime notification update received', {
                 component: 'useRealtimeNotifications',
                 event: payload.eventType,

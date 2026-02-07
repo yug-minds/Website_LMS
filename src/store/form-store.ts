@@ -28,7 +28,7 @@ const getSafeStorage = (storageType: 'localStorage' | 'sessionStorage') => {
 
 interface FormState {
   // Form data per form ID
-  formData: Record<string, any>;
+  formData: Record<string, unknown>;
   
   // Dirty flags per form ID
   isDirty: Record<string, boolean>;

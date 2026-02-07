@@ -15,6 +15,7 @@ interface ValidationResult {
   school_id?: string;
   school_name?: string;
   grade?: string;
+  section?: string;
   expires_at?: string;
   message?: string;
 }
@@ -244,9 +245,18 @@ export default function SignupPage() {
                     <School className="h-4 w-4 text-blue-600" />
                     <AlertDescription className="text-blue-800">
                       <div className="font-semibold">{validationResult.school_name}</div>
-                      {validationResult.grade && (
-                        <div className="text-sm">Grade: {validationResult.grade}</div>
-                      )}
+                      <div className="text-sm space-y-1">
+                        {validationResult.grade && (
+                          <div>
+                            {validationResult.grade.startsWith('Grade ') 
+                              ? validationResult.grade 
+                              : `Grade ${validationResult.grade}`}
+                          </div>
+                        )}
+                        {validationResult.section && (
+                          <div>Section: {validationResult.section}</div>
+                        )}
+                      </div>
                     </AlertDescription>
                   </Alert>
                 )}

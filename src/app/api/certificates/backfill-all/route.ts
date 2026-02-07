@@ -13,6 +13,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../../lib/supabase'
 
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '50', 10)
@@ -36,6 +45,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2: Group by student and course to calculate completion
+    type ProgressRow = { student_id: string; course_id: string; completed?: boolean };
     const studentCourseMap = new Map<string, {
       studentId: string
       courseId: string
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
       total: number
     }>()
 
-    for (const progress of allProgress || []) {
+    for (const progress of (allProgress || []) as ProgressRow[]) {
       const key = `${progress.student_id}-${progress.course_id}`
       if (!studentCourseMap.has(key)) {
         studentCourseMap.set(key, {
@@ -68,8 +78,9 @@ export async function POST(request: NextRequest) {
       .in('course_id', courseIds)
       .eq('is_published', true)
 
+    type ChapterRow = { id?: string; course_id: string };
     const courseChapterCounts = new Map<string, number>()
-    for (const chapter of chapters || []) {
+    for (const chapter of (chapters || []) as ChapterRow[]) {
       const count = courseChapterCounts.get(chapter.course_id) || 0
       courseChapterCounts.set(chapter.course_id, count + 1)
     }
@@ -87,6 +98,7 @@ export async function POST(request: NextRequest) {
 
       if (completion >= 80) {
         // Check if certificate exists with URL
+        type CertRow = { certificate_url?: string | null };
         const { data: existingCert } = await supabaseAdmin
           .from('certificates')
           .select('certificate_url')
@@ -94,7 +106,8 @@ export async function POST(request: NextRequest) {
           .eq('course_id', entry.courseId)
           .maybeSingle()
 
-        if (!existingCert?.certificate_url) {
+        const certRow = existingCert as CertRow | null;
+        if (!certRow?.certificate_url) {
           eligible.push({
             studentId: entry.studentId,
             courseId: entry.courseId,
@@ -147,18 +160,21 @@ export async function POST(request: NextRequest) {
 
         if (!existingCert) {
           // Create certificate record
+          type CourseRow = { name?: string | null; title?: string | null };
           const { data: course } = await supabaseAdmin
             .from('courses')
             .select('name, title')
             .eq('id', item.courseId)
             .single()
 
+          const courseRow = course as CourseRow | null;
           await supabaseAdmin
             .from('certificates')
+            // @ts-expect-error - Supabase generated types use never for untyped schema
             .insert({
               student_id: item.studentId,
               course_id: item.courseId,
-              certificate_name: `${course?.name || course?.title || 'Course'} - Certificate of Completion`,
+              certificate_name: `${courseRow?.name || courseRow?.title || 'Course'} - Certificate of Completion`,
               certificate_url: null,
               issued_at: new Date().toISOString(),
             })
@@ -195,12 +211,12 @@ export async function POST(request: NextRequest) {
           })
           console.error(`❌ Failed to generate certificate:`, result.error)
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
         results.push({
           ...item,
           success: false,
-          error: error.message || 'Failed to generate certificate',
+          error: error instanceof Error ? error.message : 'Failed to generate certificate',
         })
         console.error(`❌ Error processing certificate:`, error)
       }
@@ -215,12 +231,12 @@ export async function POST(request: NextRequest) {
       results,
       message: `Processed ${toProcess.length} of ${eligible.length} eligible certificate(s): ${successCount} success, ${errorCount} errors`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in backfill-all:', error)
     return NextResponse.json(
       {
         error: 'Internal server error',
-        details: error.message
+        details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     )
@@ -232,15 +248,16 @@ export async function POST(request: NextRequest) {
  * 
  * Returns count of eligible students without processing
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Similar logic to POST but just count
     const { data: allProgress } = await supabaseAdmin
       .from('course_progress')
       .select('student_id, course_id, completed')
 
+    type ProgressRow = { student_id: string; course_id: string; completed?: boolean };
     const studentCourseMap = new Map<string, { completed: number; total: number }>()
-    for (const progress of allProgress || []) {
+    for (const progress of (allProgress || []) as ProgressRow[]) {
       const key = `${progress.student_id}-${progress.course_id}`
       if (!studentCourseMap.has(key)) {
         studentCourseMap.set(key, { completed: 0, total: 0 })
@@ -257,11 +274,13 @@ export async function GET(request: NextRequest) {
       .in('course_id', courseIds)
       .eq('is_published', true)
 
+    type ChapterRow = { course_id: string };
     const courseChapterCounts = new Map<string, number>()
-    for (const chapter of chapters || []) {
+    for (const chapter of (chapters || []) as ChapterRow[]) {
       courseChapterCounts.set(chapter.course_id, (courseChapterCounts.get(chapter.course_id) || 0) + 1)
     }
 
+    type CertRow = { certificate_url?: string | null };
     let eligibleCount = 0
     for (const [key, entry] of studentCourseMap.entries()) {
       const [, courseId] = key.split('-')
@@ -275,7 +294,8 @@ export async function GET(request: NextRequest) {
           .eq('student_id', studentId)
           .eq('course_id', courseId)
           .maybeSingle()
-        if (!cert?.certificate_url) {
+        const certRow = cert as CertRow | null;
+        if (!certRow?.certificate_url) {
           eligibleCount++
         }
       }
@@ -285,9 +305,9 @@ export async function GET(request: NextRequest) {
       eligibleCount,
       message: `Found ${eligibleCount} student-course combination(s) eligible for certificates`,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: 'Internal server error', details: error.message },
+      { error: 'Internal server error', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

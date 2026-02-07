@@ -7,27 +7,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
-import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../../../components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { 
-  Plus,
   Search,
-  Edit,
-  Trash2,
   Download,
-  Filter,
   User,
-  Mail,
-  Calendar,
   Users,
-  Eye,
   CheckCircle,
   XCircle,
   Clock,
-  TrendingUp,
   AlertCircle
 } from "lucide-react";
 
@@ -44,6 +34,7 @@ interface Teacher {
   created_at: string;
   teacher_schools: {
     grades_assigned: string[];
+    grade_sections_assigned?: string | Array<{ grade: string; sections: string[] }>;
     subjects: string[];
     working_days_per_week: number;
     max_students_per_session: number;
@@ -73,22 +64,35 @@ interface LeaveRequest {
     full_name: string;
     email: string;
   };
+  reviewer?: {
+    id: string;
+    full_name: string;
+    email: string;
+    role: string;
+  };
+  approver?: {
+    id: string;
+    full_name: string;
+    email: string;
+    role: string;
+  };
 }
 
 function TeachersContent() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [pendingLeavesCount, setPendingLeavesCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [leaveStatusFilter, setLeaveStatusFilter] = useState("Pending");
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState("all");
   // Removed isAddDialogOpen and isEditDialogOpen - school admins cannot add or edit teachers, only main admins can
   // Removed selectedTeacher - no longer needed since editing is disabled
-  const [schoolId, setSchoolId] = useState<string>("");
+  const [_schoolId, setSchoolId] = useState<string>("");
 
   // Form states
-  const [formData, setFormData] = useState({
+  const [_formData, _setFormData] = useState({
     full_name: "",
     email: "",
     phone: "",
@@ -121,7 +125,7 @@ function TeachersContent() {
 
       // Parallel API calls for better performance
       const profileHeaders = await addTokensToHeaders();
-      const [profileResponse, teachersResponse, leavesResponse] = await Promise.allSettled([
+      const [profileResponse, teachersResponse, leavesResponse, pendingLeavesResponse] = await Promise.allSettled([
         fetch(`/api/profile?userId=${user.id}`, {
           cache: 'no-store',
           method: 'GET',
@@ -130,7 +134,14 @@ function TeachersContent() {
         fetchWithCsrf('/api/school-admin/teachers', {
           cache: 'no-store',
         }),
-        fetch(`/api/school-admin/leaves?status=${leaveStatusFilter === 'all' ? '' : leaveStatusFilter}`, {
+        fetch(`/api/school-admin/leaves${leaveStatusFilter === 'all' ? '' : `?status=${leaveStatusFilter}`}`, {
+          cache: 'no-store',
+          headers: {
+            'Authorization': `Bearer ${session.data.session?.access_token || ''}`
+          }
+        }),
+        // Always fetch pending leaves separately for the badge count
+        fetch(`/api/school-admin/leaves?status=Pending`, {
           cache: 'no-store',
           headers: {
             'Authorization': `Bearer ${session.data.session?.access_token || ''}`
@@ -208,7 +219,8 @@ function TeachersContent() {
         } else {
           // Transform the API response to match expected format
            
-          const teachersData = teacherSchools.map((ts: any) => {
+          type TeacherSchoolRow = { teacher?: { id?: string; teacher_id?: string; full_name?: string; email?: string; phone?: string; qualification?: string; experience_years?: number; specialization?: string; status?: string; created_at?: string; profile_id?: string }; profile?: { id?: string; full_name?: string; email?: string; phone?: string }; teacher_id?: string; id?: string; assigned_at?: string; grades_assigned?: string[]; subjects?: string[]; working_days_per_week?: number; max_students_per_session?: number; attendance_percentage?: number; leaves_taken?: number };
+          const teachersData = teacherSchools.map((ts: TeacherSchoolRow) => {
             const teacher = ts.teacher || {};
             const profile = ts.profile || {};
             const userId = teacher.id || profile.id || teacher.profile_id || ts.teacher_id;
@@ -224,6 +236,8 @@ function TeachersContent() {
               specialization: teacher.specialization || '',
               status: teacher.status || 'Active',
               created_at: teacher.created_at || ts.assigned_at,
+              attendance_percentage: ts.attendance_percentage ?? 0,
+              leaves_taken: ts.leaves_taken ?? 0,
               teacher_schools: [{
                 grades_assigned: ts.grades_assigned || [],
                 subjects: ts.subjects || [],
@@ -232,7 +246,7 @@ function TeachersContent() {
               }]
             };
            
-          }).filter((teacher: any) => teacher.full_name !== 'Unknown' || teacher.email);
+          }).filter((teacher: Teacher) => teacher.full_name !== 'Unknown' || teacher.email);
 
           // Set teachers without mock stats - stats should come from database
           // If stats are needed, they should be fetched from the API
@@ -250,17 +264,50 @@ function TeachersContent() {
       // Handle leave requests response (non-blocking)
       if (leavesResponse.status === 'fulfilled' && leavesResponse.value.ok) {
         const leavesData = await leavesResponse.value.json();
-        setLeaveRequests(leavesData.leaves || []);
+        const leaves = leavesData.leaves || [];
+        
+        // Debug logging to see what data we're receiving
+        leaves.forEach((leave: LeaveRequest) => {
+          if (leave.status === 'Approved') {
+            console.log('📋 Leave approval data:', {
+              leaveId: leave.id,
+              status: leave.status,
+              approved_by: leave.approved_by,
+              approver: leave.approver ? {
+                id: leave.approver.id,
+                name: leave.approver.full_name,
+                role: leave.approver.role
+              } : null,
+              reviewed_by: leave.reviewed_by,
+              reviewer: leave.reviewer ? {
+                id: leave.reviewer.id,
+                name: leave.reviewer.full_name,
+                role: leave.reviewer.role
+              } : null
+            });
+          }
+        });
+        
+        setLeaveRequests(leaves);
       } else {
         console.warn('⚠️ Leave requests unavailable:', leavesResponse.status === 'rejected' ? 'Network error' : 'API error');
         setLeaveRequests([]);
+      }
+
+      // Handle pending leaves count for badge (non-blocking)
+      if (pendingLeavesResponse.status === 'fulfilled' && pendingLeavesResponse.value.ok) {
+        const pendingLeavesData = await pendingLeavesResponse.value.json();
+        setPendingLeavesCount(pendingLeavesData.leaves?.length || 0);
+      } else {
+        console.warn('⚠️ Pending leaves count unavailable:', pendingLeavesResponse.status === 'rejected' ? 'Network error' : 'API error');
+        setPendingLeavesCount(0);
       }
 
       setLoading(false);
     } catch (error) {
       console.error('❌ Error loading teachers:', error);
        
-      setError((error as any)?.message || 'Failed to load teachers. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to load teachers. Please try again.');
       setTeachers([]);
       setLoading(false);
     }
@@ -282,15 +329,13 @@ function TeachersContent() {
     }
 
     // Prepare CSV data
-    const headers = ['Name', 'Email', 'Phone', 'Qualification', 'Specialization', 'Experience (Years)', 'Attendance %', 'Leaves Taken', 'Status'];
-    const rows = filteredTeachers.map((teacher: any) => [
+    const headers = ['Name', 'Email', 'Phone', 'Qualification', 'Specialization', 'Leaves Taken', 'Status'];
+    const rows = filteredTeachers.map((teacher: Teacher) => [
       teacher.full_name || '',
       teacher.email || '',
       teacher.phone || '',
       teacher.qualification || '',
       teacher.specialization || '',
-      teacher.experience_years || 0,
-      teacher.attendance_percentage || 0,
       teacher.leaves_taken || 0,
       teacher.status || 'Active'
     ]);
@@ -298,7 +343,7 @@ function TeachersContent() {
     // Create CSV content
     const csvContent = [
       headers.join(','),
-      ...rows.map((row: any) => row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ...rows.map((row: (string | number)[]) => row.map((cell: string | number) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     // Create blob and download
@@ -331,18 +376,15 @@ function TeachersContent() {
       });
 
       if (response.ok) {
-        // Reload leave requests
-        const statusParam = leaveStatusFilter === 'all' ? '' : `?status=${leaveStatusFilter}`;
-        const leavesResponse = await fetchWithCsrf(`/api/school-admin/leaves${statusParam}`, {
-          cache: 'no-store',
-        });
-        if (leavesResponse.ok) {
-          const leavesData = await leavesResponse.json();
-          setLeaveRequests(leavesData.leaves || []);
-        }
+        // Immediately update pending count (optimistic update)
+        setPendingLeavesCount((prev) => Math.max(0, prev - 1));
+        
+        // Reload leave requests - trigger reload by calling loadTeachers which will use current filter
+        // This will also refresh the pending count from the server
+        await loadTeachers();
         alert(`Leave request ${action === 'approve' ? 'approved' : 'rejected'} successfully! Attendance has been updated automatically.`);
       } else {
-        let errorData: any = null;
+        let errorData: { details?: string; error?: string; message?: string } | null = null;
         let errorText: string | null = null;
         try {
           errorData = await response.json();
@@ -369,7 +411,7 @@ function TeachersContent() {
     }
   };
 
-  const filteredTeachers = teachers.filter((teacher: any) => {
+  const filteredTeachers = teachers.filter((teacher: Teacher) => {
     const matchesSearch = teacher.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          teacher.email.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || teacher.status.toLowerCase() === statusFilter;
@@ -449,9 +491,9 @@ function TeachersContent() {
           <TabsTrigger value="teachers">Teachers</TabsTrigger>
           <TabsTrigger value="leaves">
             Leave Requests
-            {leaveRequests.length > 0 && (
+            {pendingLeavesCount > 0 && (
               <Badge variant="destructive" className="ml-2">
-                {leaveRequests.length}
+                {pendingLeavesCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -515,8 +557,6 @@ function TeachersContent() {
                   <TableRow>
                     <TableHead>Teacher</TableHead>
                     <TableHead>Qualification</TableHead>
-                    <TableHead>Experience</TableHead>
-                    <TableHead>Attendance %</TableHead>
                     <TableHead>Leaves Taken</TableHead>
                     <TableHead>Status</TableHead>
                     </TableRow>
@@ -540,16 +580,7 @@ function TeachersContent() {
                         <div className="text-xs text-gray-500">{teacher.specialization}</div>
                       </TableCell>
                       <TableCell>
-                        <div className="text-sm">{teacher.experience_years} years</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center">
-                          <TrendingUp className="h-4 w-4 mr-1 text-green-600" />
-                          <span className="text-sm font-medium">{teacher.attendance_percentage}%</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">{teacher.leaves_taken} days</div>
+                        <div className="text-sm">{teacher.leaves_taken ?? 0} days</div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={
@@ -596,40 +627,28 @@ function TeachersContent() {
                   <Button
                     variant={leaveStatusFilter === 'all' ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => {
-                      setLeaveStatusFilter('all');
-                      loadTeachers();
-                    }}
+                    onClick={() => setLeaveStatusFilter('all')}
                   >
                     All
                   </Button>
                   <Button
                     variant={leaveStatusFilter === 'Pending' ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => {
-                      setLeaveStatusFilter('Pending');
-                      loadTeachers();
-                    }}
+                    onClick={() => setLeaveStatusFilter('Pending')}
                   >
                     Pending
                   </Button>
                   <Button
                     variant={leaveStatusFilter === 'Approved' ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => {
-                      setLeaveStatusFilter('Approved');
-                      loadTeachers();
-                    }}
+                    onClick={() => setLeaveStatusFilter('Approved')}
                   >
                     Approved
                   </Button>
                   <Button
                     variant={leaveStatusFilter === 'Rejected' ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => {
-                      setLeaveStatusFilter('Rejected');
-                      loadTeachers();
-                    }}
+                    onClick={() => setLeaveStatusFilter('Rejected')}
                   >
                     Rejected
                   </Button>
@@ -657,6 +676,31 @@ function TeachersContent() {
                           </div>
                           {leave.substitute_required && (
                             <Badge variant="outline" className="mt-1 text-xs">Substitute Required</Badge>
+                          )}
+                          {(leave.status === 'Approved' || leave.status === 'Rejected') && (
+                            <div className="text-sm text-gray-600 mt-1">
+                              <span className="font-medium">
+                                {leave.status === 'Approved' ? 'Approved by:' : 'Reviewed by:'}
+                              </span>{' '}
+                              <span className="text-gray-700">
+                                {(() => {
+                                  // For approved leaves, prioritize approver, fallback to reviewer
+                                  if (leave.status === 'Approved') {
+                                    if (leave.approver?.full_name) {
+                                      return `${leave.approver.full_name}${leave.approver.role ? ` (${leave.approver.role})` : ''}`;
+                                    } else if (leave.reviewer?.full_name) {
+                                      return `${leave.reviewer.full_name}${leave.reviewer.role ? ` (${leave.reviewer.role})` : ''}`;
+                                    }
+                                  } else {
+                                    // For rejected leaves, show reviewer
+                                    if (leave.reviewer?.full_name) {
+                                      return `${leave.reviewer.full_name}${leave.reviewer.role ? ` (${leave.reviewer.role})` : ''}`;
+                                    }
+                                  }
+                                  return 'N/A';
+                                })()}
+                              </span>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -695,7 +739,7 @@ function TeachersContent() {
                         )}
                         {leave.reviewed_at && (
                           <div className="text-xs text-gray-500 ml-2">
-                            Reviewed: {new Date(leave.reviewed_at).toLocaleDateString()}
+                            {new Date(leave.reviewed_at).toLocaleDateString()}
                           </div>
                         )}
                       </div>

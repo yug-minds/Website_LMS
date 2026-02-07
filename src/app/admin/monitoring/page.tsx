@@ -158,14 +158,20 @@ export default function MonitoringDashboard() {
   };
 
   // Transform data for charts
-  const endpointData = Object.entries(metrics.requestsByEndpoint || {})
+  type EndpointData = {
+    endpoint: string;
+    requests: number;
+    errors: number;
+    successRate: string;
+  };
+  const endpointData: EndpointData[] = Object.entries(metrics.requestsByEndpoint || {})
     .map(([endpoint, count]) => ({
       endpoint: endpoint.length > 30 ? endpoint.substring(0, 30) + '...' : endpoint,
       requests: count,
       errors: metrics.errorsByEndpoint[endpoint] || 0,
-      successRate: count > 0 ? ((count - (metrics.errorsByEndpoint[endpoint] || 0)) / count * 100).toFixed(1) : 100
+      successRate: count > 0 ? ((count - (metrics.errorsByEndpoint[endpoint] || 0)) / count * 100).toFixed(1) : '100'
     }))
-    .sort((a: any, b: any) => b.requests - a.requests)
+    .sort((a, b) => b.requests - a.requests)
     .slice(0, 10); // Top 10 endpoints
 
   const errorRate = metrics.totalRequests > 0 
@@ -179,7 +185,7 @@ export default function MonitoringDashboard() {
   // Prepare time series data from recent metrics
   const timeSeriesData = recentMetrics
     .slice(-20)
-    .map((metric: any) => ({
+    .map((metric) => ({
       time: new Date(metric.timestamp).toLocaleTimeString(),
       duration: metric.duration,
       statusCode: metric.statusCode,
@@ -187,7 +193,7 @@ export default function MonitoringDashboard() {
     }));
 
   // Status code distribution
-  const statusCodeData = recentMetrics.reduce((acc: Record<string, number>, metric: any) => {
+  const statusCodeData = recentMetrics.reduce((acc: Record<string, number>, metric) => {
     const code = Math.floor(metric.statusCode / 100) * 100;
     const key = `${code}xx`;
     acc[key] = (acc[key] || 0) + 1;
@@ -589,25 +595,25 @@ export default function MonitoringDashboard() {
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Fast (&lt; 200ms)</span>
                     <Badge variant="default" className="bg-green-100 text-green-800">
-                      {recentMetrics.filter((m: any) => m.duration < 200).length}
+                      {recentMetrics.filter((m) => m.duration < 200).length}
                     </Badge>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Normal (200-500ms)</span>
                     <Badge variant="default" className="bg-blue-100 text-blue-800">
-                      {recentMetrics.filter((m: any) => m.duration >= 200 && m.duration < 500).length}
+                      {recentMetrics.filter((m) => m.duration >= 200 && m.duration < 500).length}
                     </Badge>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Slow (500-1000ms)</span>
                     <Badge variant="default" className="bg-yellow-100 text-yellow-800">
-                      {recentMetrics.filter((m: any) => m.duration >= 500 && m.duration < 1000).length}
+                      {recentMetrics.filter((m) => m.duration >= 500 && m.duration < 1000).length}
                     </Badge>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Very Slow (&gt; 1000ms)</span>
                     <Badge variant="default" className="bg-red-100 text-red-800">
-                      {recentMetrics.filter((m: any) => m.duration >= 1000).length}
+                      {recentMetrics.filter((m) => m.duration >= 1000).length}
                     </Badge>
                   </div>
                 </div>
@@ -628,13 +634,13 @@ export default function MonitoringDashboard() {
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Min Response Time</span>
                     <span className="text-lg font-bold">
-                      {recentMetrics.length > 0 ? Math.min(...recentMetrics.map((m: any) => m.duration)).toFixed(0) : '0'}ms
+                      {recentMetrics.length > 0 ? Math.min(...recentMetrics.map((m) => m.duration)).toFixed(0) : '0'}ms
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium">Max Response Time</span>
                     <span className="text-lg font-bold">
-                      {recentMetrics.length > 0 ? Math.max(...recentMetrics.map((m: any) => m.duration)).toFixed(0) : '0'}ms
+                      {recentMetrics.length > 0 ? Math.max(...recentMetrics.map((m) => m.duration)).toFixed(0) : '0'}ms
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

@@ -7,16 +7,12 @@ import { Progress } from '../ui/progress'
 import { Badge } from '../ui/badge'
 import { 
   BookOpen, 
-  Play, 
-  Clock, 
-  CheckCircle,
-  MoreHorizontal
+  Play
 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { cn } from '../../lib/utils'
 
-interface CourseCardProps {
+export interface CourseCardProps {
   course: {
     id: string
     title: string
@@ -34,7 +30,7 @@ interface CourseCardProps {
     status: 'active' | 'completed' | 'not_started'
   }
    
-  onViewChapters?: (course: any) => void
+  onViewChapters?: (course: CourseCardProps['course']) => void
 }
 
 export default function CourseCard({ course, onViewChapters }: CourseCardProps) {

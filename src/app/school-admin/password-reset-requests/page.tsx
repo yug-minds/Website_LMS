@@ -27,7 +27,6 @@ import {
   Clock,
   Search,
   Eye,
-  Trash2,
   AlertCircle
 } from "lucide-react";
 import { 
@@ -82,6 +81,7 @@ export default function PasswordResetRequestsPage() {
 
   useEffect(() => {
     loadRequests();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load on statusFilter only, loadRequests is stable
   }, [statusFilter]);
 
   const loadRequests = async () => {
@@ -102,9 +102,10 @@ export default function PasswordResetRequestsPage() {
         alert(`Failed to load password reset requests: ${data.error || 'Unknown error'}`);
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error loading password reset requests:', error);
-      alert(`Error loading password reset requests: ${error.message}`);
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Error loading password reset requests: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -162,7 +163,7 @@ export default function PasswordResetRequestsPage() {
         }
         
         // Build request body - ensure all fields are properly formatted
-        const requestBody: any = {
+        const requestBody: Record<string, unknown> = {
           // Ensure id is a string and valid UUID format
           id: String(selectedRequest.id).trim(),
           // Ensure status is exactly one of the valid enum values
@@ -253,7 +254,7 @@ export default function PasswordResetRequestsPage() {
           headers: Object.fromEntries(response.headers.entries())
         });
 
-        let data: any;
+        let data: { error?: string; details?: string; validationIssues?: Array<{ path?: string; message?: string }> } | undefined;
         try {
           data = await response.json();
         } catch (parseError) {
@@ -278,12 +279,12 @@ export default function PasswordResetRequestsPage() {
           });
           
           // Build detailed error message
-          let errorMsg = data.error || 'Unknown error';
-          if (data.details) {
+          let errorMsg = data?.error || 'Unknown error';
+          if (data?.details) {
             errorMsg += `\n\nDetails: ${data.details}`;
           }
-          if (data.validationIssues && Array.isArray(data.validationIssues) && data.validationIssues.length > 0) {
-            const issues = data.validationIssues.map((issue: any) => 
+          if (data?.validationIssues && Array.isArray(data.validationIssues) && data.validationIssues.length > 0) {
+            const issues = data.validationIssues.map((issue: { path?: string; message?: string }) => 
               `  • ${issue.path || 'unknown field'}: ${issue.message}`
             ).join('\n');
             errorMsg += `\n\nValidation Issues:\n${issues}`;
@@ -299,9 +300,10 @@ export default function PasswordResetRequestsPage() {
         }
       }
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error performing action:', error);
-      alert(`Error: ${error.message || 'Please try again'}`);
+      const msg = error instanceof Error ? error.message : 'Please try again';
+      alert(`Error: ${msg}`);
     } finally {
       setActionLoading(false);
     }
@@ -333,12 +335,13 @@ export default function PasswordResetRequestsPage() {
     });
   };
 
-  const filteredRequests = requests.filter((req: any) => {
-    const matchesSearch = !searchQuery || 
-      req.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.profiles?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.profiles?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.user_role.toLowerCase().includes(searchQuery.toLowerCase());
+  type RequestRow = { email?: string; user_role?: string; profiles?: { full_name?: string; email?: string } };
+  const filteredRequests = requests.filter((req: RequestRow) => {
+    const matchesSearch = !searchQuery ||
+      (req.email?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (req.profiles?.full_name?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (req.profiles?.email?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (req.user_role?.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesSearch;
   });
 
@@ -378,7 +381,7 @@ export default function PasswordResetRequestsPage() {
                 />
               </div>
             </div>
-            <Select value={statusFilter} onValueChange={(value: any) => setStatusFilter(value)}>
+            <Select value={statusFilter} onValueChange={(value: string) => setStatusFilter(value)}>
               <SelectTrigger className="w-48">
                 <SelectValue />
               </SelectTrigger>

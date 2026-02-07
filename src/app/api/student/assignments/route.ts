@@ -3,7 +3,7 @@ import { logger, handleApiError } from '../../../../lib/logger';
 import { supabaseAdmin } from '../../../../lib/supabase';
 import { rateLimit, RateLimitPresets, createRateLimitHeaders } from '../../../../lib/rate-limit';
 import { ensureCsrfToken } from '../../../../lib/csrf-middleware';
-import { getOrSetCache, CacheKeys, CacheTTL } from '../../../../lib/cache';
+import { getOrSetCache, CacheTTL } from '../../../../lib/cache';
 
 interface Submission {
   id: string;
@@ -12,6 +12,14 @@ interface Submission {
   submitted_at: string | null;
   status: string;
   feedback: string | null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for typing
+interface AssignmentBasic {
+  id: string;
+  title?: string | null;
+  course_id?: string | null;
+  chapter_id?: string | null;
 }
 
 // GET - Get all assignments for the authenticated student
@@ -85,13 +93,15 @@ export async function GET(request: NextRequest) {
           .eq('status', 'active');
 
         // Get student's school and grade for course_access check
-        const { data: studentSchool } = await supabaseAdmin
+        type StudentSchoolRow = { school_id?: string | null; grade?: string | null };
+        const { data: studentSchoolData } = await supabaseAdmin
           .from('student_schools')
           .select('school_id, grade')
           .eq('student_id', user.id)
           .eq('is_active', true)
           .maybeSingle();
 
+        const studentSchool = studentSchoolData as StudentSchoolRow | null;
     const courseIds = new Set<string>();
     
     // Add courses from enrollments
@@ -111,7 +121,7 @@ export async function GET(request: NextRequest) {
         const normalizeGrade = (g: string) => 
           g.toLowerCase().trim().replace(/^grade\s*/i, '').replace(/grade/i, '');
         
-        const studentGradeNormalized = normalizeGrade(studentSchool.grade);
+        const studentGradeNormalized = normalizeGrade(studentSchool.grade ?? '');
         courseAccess.forEach((ca: { course_id: string; grade: string }) => {
           const accessGradeNormalized = normalizeGrade(ca.grade);
           if (
@@ -148,63 +158,98 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch published assignments for accessible courses AND chapters
-    const assignmentQueries: Promise<any>[] = [];
+    type AssignmentQueryResult = {
+      data: Array<{
+        id: string;
+        title?: string | null;
+        description?: string | null;
+        assignment_type?: string | null;
+        due_date?: string | null;
+        max_marks?: number | null;
+        max_attempts?: number | null;
+        course_id?: string | null;
+        chapter_id?: string | null;
+        is_published?: boolean | null;
+        created_at?: string | null;
+      }> | null;
+      error?: unknown;
+    };
+    const assignmentQueries: Promise<AssignmentQueryResult>[] = [];
 
     // Fetch assignments by course_id (including those with or without chapter_id)
     if (courseIds.size > 0) {
       assignmentQueries.push(
-        supabaseAdmin
-          .from('assignments')
-          .select(`
-            id,
-            title,
-            description,
-            assignment_type,
-            due_date,
-            max_marks,
-            max_attempts,
-            course_id,
-            chapter_id,
-            is_published,
-            created_at
-          `)
-          .in('course_id', Array.from(courseIds))
-          .eq('is_published', true)
+        (async () => {
+          const r = await supabaseAdmin
+            .from('assignments')
+            .select(`
+              id,
+              title,
+              description,
+              assignment_type,
+              due_date,
+              max_marks,
+              max_attempts,
+              course_id,
+              chapter_id,
+              is_published,
+              created_at
+            `)
+            .in('course_id', Array.from(courseIds))
+            .eq('is_published', true);
+          return { data: r.data, error: r.error };
+        })()
       );
     }
 
     // Fetch assignments by chapter_id (these might not have course_id set)
     if (chapterIds.length > 0) {
       assignmentQueries.push(
-        supabaseAdmin
-          .from('assignments')
-          .select(`
-            id,
-            title,
-            description,
-            assignment_type,
-            due_date,
-            max_marks,
-            max_attempts,
-            course_id,
-            chapter_id,
-            is_published,
-            created_at
-          `)
-          .in('chapter_id', chapterIds)
-          .eq('is_published', true)
+        (async () => {
+          const r = await supabaseAdmin
+            .from('assignments')
+            .select(`
+              id,
+              title,
+              description,
+              assignment_type,
+              due_date,
+              max_marks,
+              max_attempts,
+              course_id,
+              chapter_id,
+              is_published,
+              created_at
+            `)
+            .in('chapter_id', chapterIds)
+            .eq('is_published', true);
+          return { data: r.data, error: r.error };
+        })()
       );
     }
 
     const assignmentResults = await Promise.all(assignmentQueries);
     
     // Combine all assignments and remove duplicates
-    const allAssignments: any[] = [];
+    type AssignmentRow = {
+      id: string;
+      title?: string | null;
+      description?: string | null;
+      assignment_type?: string | null;
+      due_date?: string | null;
+      max_marks?: number | null;
+      max_attempts?: number | null;
+      course_id?: string | null;
+      chapter_id?: string | null;
+      is_published?: boolean | null;
+      created_at?: string | null;
+    };
+    const allAssignments: AssignmentRow[] = [];
     const seenIds = new Set<string>();
     
     assignmentResults.forEach(result => {
       if (result.data) {
-        result.data.forEach((assignment: any) => {
+        (result.data as AssignmentRow[]).forEach((assignment) => {
           if (!seenIds.has(assignment.id)) {
             seenIds.add(assignment.id);
             allAssignments.push(assignment);
@@ -232,11 +277,11 @@ export async function GET(request: NextRequest) {
       chapterIds: chapterIds,
       assignmentsCount: assignments.length,
       hasError: !!assignmentsError,
-      assignments: assignments.map((a: any) => ({
+      assignments:       allAssignments.map((a) => ({
         id: a.id,
-        title: a.title,
-        course_id: a.course_id,
-        chapter_id: a.chapter_id
+        title: a.title ?? undefined,
+        course_id: a.course_id ?? undefined,
+        chapter_id: a.chapter_id ?? undefined
       }))
     });
 
@@ -255,13 +300,15 @@ export async function GET(request: NextRequest) {
       .select('id, assignment_id, grade, submitted_at, status, feedback')
       .eq('student_id', user.id);
 
+    type SubmissionRow = { id: string; assignment_id: string; grade: number | null; submitted_at: string | null; status: string; feedback: string | null };
+    const submissionRows = (submissions || []) as SubmissionRow[];
     const submissionMap = new Map<string, Submission>(
-      (submissions || []).map((s: Submission) => [s.assignment_id, s])
+      submissionRows.map((s) => [s.assignment_id, { id: s.id, assignment_id: s.assignment_id, grade: s.grade, submitted_at: s.submitted_at, status: s.status, feedback: s.feedback }])
     );
 
     // Fetch course information for all assignments (batch fetch)
     const allCourseIds = new Set<string>();
-    assignments.forEach((assignment: any) => {
+    assignments.forEach((assignment) => {
       if (assignment.course_id) {
         allCourseIds.add(assignment.course_id);
       }
@@ -269,10 +316,10 @@ export async function GET(request: NextRequest) {
 
     // Fetch chapter information for assignments linked to chapters
     const allChapterIds = assignments
-      .filter((a: any) => a.chapter_id)
-      .map((a: any) => a.chapter_id);
+      .filter((a) => a.chapter_id != null)
+      .map((a) => a.chapter_id!);
     
-    const chaptersMap = new Map<string, any>();
+    const chaptersMap = new Map<string, { id: string; name: string | null; title: string | null; course_id: string }>();
     if (allChapterIds.length > 0) {
       const { data: chapters } = await supabaseAdmin
         .from('chapters')
@@ -296,7 +343,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all course information
-    const coursesMap = new Map<string, any>();
+    const coursesMap = new Map<string, { id: string; title: string | null; grade: string | null; subject: string | null }>();
     if (allCourseIds.size > 0) {
       const { data: courses } = await supabaseAdmin
         .from('courses')
@@ -315,8 +362,40 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Helper function to normalize grade to display format (e.g., "grade4" -> "Grade 4")
+    const normalizeGradeToDisplay = (grade: string | null | undefined): string => {
+      if (!grade) return '';
+      const trimmed = typeof grade === 'string' ? grade.trim() : String(grade).trim();
+      
+      // If already in "Grade X" format, return as-is
+      if (/^Grade\s+\d+$/i.test(trimmed)) {
+        return trimmed;
+      }
+      
+      // Remove "grade" prefix if present (case-insensitive)
+      const normalized = trimmed.replace(/^grade\s*/i, '').trim();
+      
+      // Handle special cases
+      const lower = normalized.toLowerCase();
+      if (lower === 'pre-k' || lower === 'prek' || lower === 'pre-kg') {
+        return 'Pre-K';
+      }
+      if (lower === 'k' || lower === 'kindergarten' || lower === 'kg') {
+        return 'Kindergarten';
+      }
+      
+      // Extract number and format as "Grade X"
+      const numMatch = normalized.match(/(\d{1,2})/);
+      if (numMatch) {
+        return `Grade ${numMatch[1]}`;
+      }
+      
+      // If no number found, return as-is (capitalize first letter)
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+    };
+
     // Process assignments with submission data
-    const processedAssignments = (assignments || []).map((assignment: any) => {
+    const processedAssignments = (assignments || []).map((assignment) => {
       const submission = submissionMap.get(assignment.id);
       const dueDate = assignment.due_date ? new Date(assignment.due_date) : null;
       const now = new Date();
@@ -362,9 +441,11 @@ export async function GET(request: NextRequest) {
       
       // Get course details from coursesMap
       const course = courseId ? coursesMap.get(courseId) : null;
-      const courseTitle = course?.title;
-      const courseGrade = course?.grade;
-      const courseSubject = course?.subject;
+      const courseTitle = course?.title || 'Unknown';
+      // Use student's grade as fallback if course grade is missing
+      const courseGradeRaw = course?.grade || studentSchool?.grade || null;
+      const courseGrade = courseGradeRaw ? normalizeGradeToDisplay(courseGradeRaw) : 'Unknown';
+      const courseSubject = course?.subject || 'Unknown';
       
       // Get chapter details
       const chapter = assignment.chapter_id ? chaptersMap.get(assignment.chapter_id) : null;

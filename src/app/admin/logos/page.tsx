@@ -1,14 +1,14 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Badge } from "../../../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { Edit, Trash2, Upload, Eye, RefreshCw, Image as ImageIcon, Shield } from "lucide-react";
+import { Edit, Trash2, Upload, RefreshCw, Image as ImageIcon, Shield } from "lucide-react";
 import { withCsrfToken } from "../../../lib/csrf-client";
 import { getAuthenticatedFetch } from "../../../lib/api-client";
 
@@ -21,7 +21,6 @@ interface LogoItem {
 }
 
 export default function LogoManagementPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [logos, setLogos] = useState<LogoItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -51,8 +50,8 @@ export default function LogoManagementPage() {
       } else {
         alert(data.error || "Failed to load logos");
       }
-    } catch (e: any) {
-      alert(e?.message || "Failed to load logos");
+    } catch (e: unknown) {
+      alert((e instanceof Error ? e.message : String(e)) || "Failed to load logos");
     } finally {
       setLoading(false);
     }
@@ -60,6 +59,7 @@ export default function LogoManagementPage() {
 
   useEffect(() => {
     fetchLogos();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchLogos ref is stable, limit/offset trigger refetch
   }, [limit, offset]);
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -73,7 +73,8 @@ export default function LogoManagementPage() {
     if (!['image/png', 'image/jpeg', 'image/svg+xml'].includes(f.type)) return { ok: false, error: 'Only JPG, PNG, SVG allowed' };
     if (f.size > 2 * 1024 * 1024) return { ok: false, error: 'Max file size is 2MB' };
     const dims = await new Promise<{ w: number; h: number } | null>((resolve) => {
-      const img = new Image();
+      const img = typeof window !== 'undefined' ? new window.Image() : (null as unknown as HTMLImageElement);
+      if (!img) { resolve(null); return; }
       img.onload = () => resolve({ w: img.width, h: img.height });
       img.onerror = () => resolve(null);
       img.src = URL.createObjectURL(f);
@@ -109,8 +110,8 @@ export default function LogoManagementPage() {
       } else {
         alert(data.error || 'Upload failed');
       }
-    } catch (e: any) {
-      alert(e?.message || 'Upload failed');
+    } catch (e: unknown) {
+      alert((e instanceof Error ? e.message : String(e)) || 'Upload failed');
     } finally {
       setUploading(false);
     }
@@ -134,8 +135,8 @@ export default function LogoManagementPage() {
       } else {
         alert(data.error || 'Replace failed');
       }
-    } catch (e: any) {
-      alert(e?.message || 'Replace failed');
+    } catch (e: unknown) {
+      alert((e instanceof Error ? e.message : String(e)) || 'Replace failed');
     } finally {
       setActionLoadingId(null);
     }
@@ -155,8 +156,8 @@ export default function LogoManagementPage() {
       } else {
         alert(data.error || 'Delete failed');
       }
-    } catch (e: any) {
-      alert(e?.message || 'Delete failed');
+    } catch (e: unknown) {
+      alert((e instanceof Error ? e.message : String(e)) || 'Delete failed');
     } finally {
       setActionLoadingId(null);
     }
@@ -208,8 +209,8 @@ export default function LogoManagementPage() {
                   <section className="border rounded-lg p-4 bg-gray-50">
                     <div className="flex items-center gap-2 mb-2"><ImageIcon className="h-5 w-5" /><span className="font-medium">Preview</span></div>
                     {previewUrl ? (
-                      <div className="aspect-[4/1] flex items-center justify-center bg-white border rounded-lg">
-                        <img src={previewUrl} alt="Preview" className="max-h-24" />
+                      <div className="aspect-[4/1] flex items-center justify-center bg-white border rounded-lg relative min-h-24">
+                        <Image src={previewUrl} alt="Preview" fill className="object-contain" unoptimized />
                       </div>
                     ) : (
                       <div className="h-24 flex items-center justify-center text-gray-400">No file selected</div>
@@ -244,8 +245,8 @@ export default function LogoManagementPage() {
                 ) : (
                   logos.map((logo) => (
                     <div key={logo.id} className="border rounded-lg p-3 group">
-                      <div className="flex items-center justify-center h-20 overflow-hidden">
-                        <img src={logo.image_url} alt={logo.school_name} className="max-h-16 opacity-80 group-hover:opacity-100 transition-opacity" />
+                      <div className="flex items-center justify-center h-20 overflow-hidden relative">
+                        <Image src={logo.image_url} alt={logo.school_name} width={80} height={80} className="max-h-16 opacity-80 group-hover:opacity-100 transition-opacity object-contain" />
                       </div>
                       <div className="mt-2 text-sm font-medium truncate" title={logo.school_name}>{logo.school_name}</div>
                       <div className="mt-1 text-xs text-gray-500 truncate" title={logo.description || ''}>{logo.description || '—'}</div>
@@ -275,7 +276,7 @@ export default function LogoManagementPage() {
                 <div className="flex items-center gap-2">
                   <Label>Per page</Label>
                   <select className="border rounded-md p-2 text-sm" value={limit} onChange={(e) => { setLimit(parseInt(e.target.value, 10)); setOffset(0); }}>
-                    {[10, 20, 50].map((n: any) => (<option key={n} value={n}>{n}</option>))}
+                    {[10, 20, 50].map((n: number) => (<option key={n} value={n}>{n}</option>))}
                   </select>
                 </div>
                 <div className="flex items-center gap-2">

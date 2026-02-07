@@ -2,13 +2,10 @@
 
 import { useState, useEffect, useCallback, Suspense, lazy } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabase";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { 
-  AlertCircle,
   RefreshCw,
   UserPlus,
   School,
@@ -24,14 +21,10 @@ import { fetchWithCsrf } from "../../lib/csrf-client";
 
 // Lazy load tab components
 const AdminOverviewTab = lazy(() => import("../../components/admin/AdminOverviewTab"));
-const AdminAnalyticsTab = lazy(() => import("../../components/admin/AdminAnalyticsTab"));
 const AdminManagementTab = lazy(() => import("../../components/admin/AdminManagementTab"));
 const AdminReportsTab = lazy(() => import("../../components/admin/AdminReportsTab"));
 const AdminStudentProgressTab = lazy(() => import("../../components/admin/AdminStudentProgressTab"));
 // Enrollments feature removed
-
-// Chart color palette
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
 // Enhanced interfaces for real-time data
 interface DashboardStats {
@@ -102,17 +95,15 @@ export default function AdminDashboard() {
       setIsMounted(true);
       console.log('✅ isMounted set successfully');
      
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Error in useEffect:', error);
       setHasError(true);
-      setErrorMessage(error?.message || 'Unknown error');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setErrorMessage(errorMessage);
     }
   }, []);
   
-  // Real-time chart data states
-  const [growthData, setGrowthData] = useState<Array<{name: string; schools: number; teachers: number; students: number}>>([]);
-  const [attendanceData, setAttendanceData] = useState<Array<{name: string; attendance: number}>>([]);
-  const [courseProgressData, setCourseProgressData] = useState<Array<{name: string; completed: number; pending: number}>>([]);
+  // Monthly trends for stats cards
   const [monthlyTrends, setMonthlyTrends] = useState<Array<{name: string; value: number; change: number}>>([]);
 
   const loadDashboardData = useCallback(async () => {
@@ -164,6 +155,15 @@ export default function AdminDashboard() {
       // Always set stats (even if API failed) to prevent blank screen
       setStats(newStats);
 
+      // Set monthly trends with actual values and 0 change (no fake data)
+      const trends = [
+        { name: "Schools", value: newStats.totalSchools, change: 0 },
+        { name: "Teachers", value: newStats.totalTeachers, change: 0 },
+        { name: "Students", value: newStats.totalStudents, change: 0 },
+        { name: "Courses", value: newStats.activeCourses, change: 0 }
+      ];
+      setMonthlyTrends(trends);
+
       // Load recent activity - Note: If notifications API doesn't exist, create /api/admin/notifications
       // For now, we'll skip this or handle gracefully
       try {
@@ -174,18 +174,12 @@ export default function AdminDashboard() {
         setRecentActivity([]);
       }
 
-      // Parallelize quick action previews and chart data loading
+      // Load quick action previews immediately (needed for Overview tab)
       try {
-        await Promise.all([
-          loadQuickActionPreviews().catch(error => {
-            console.error('Error loading quick action previews:', error);
-            // Continue anyway
-          }),
-          loadChartData(newStats).catch(error => {
-            console.error('Error loading chart data:', error);
-            // Continue anyway
-          })
-        ]);
+        await loadQuickActionPreviews().catch((error: unknown) => {
+          console.error('Error loading quick action previews:', error);
+          // Continue anyway
+        });
       } catch (error) {
         console.error('Error loading dashboard components:', error);
         // Continue anyway
@@ -209,37 +203,9 @@ export default function AdminDashboard() {
     } finally {
       setIsRefreshing(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadQuickActionPreviews is stable, avoid circular deps
   }, []);
 
-  const loadChartData = useCallback(async (statsToUse: DashboardStats) => {
-    try {
-      // Set empty growth data - will be populated from real data when available
-      setGrowthData([]);
-
-      // Set empty attendance data - will be populated from real data when available
-      setAttendanceData([]);
-
-      // Set empty course progress data - will be populated from real data when available
-      setCourseProgressData([]);
-
-      // Set monthly trends with actual values and 0 change (no fake data)
-      const trends = [
-        { name: "Schools", value: statsToUse.totalSchools, change: 0 },
-        { name: "Teachers", value: statsToUse.totalTeachers, change: 0 },
-        { name: "Students", value: statsToUse.totalStudents, change: 0 },
-        { name: "Courses", value: statsToUse.activeCourses, change: 0 }
-      ];
-      setMonthlyTrends(trends);
-
-    } catch (error) {
-      console.log('Error loading chart data:', error);
-      // Set empty data on error
-      setGrowthData([]);
-      setAttendanceData([]);
-      setCourseProgressData([]);
-      setMonthlyTrends([]);
-    }
-  }, []);
 
   const loadQuickActionPreviews = useCallback(async () => {
     const previews: QuickActionPreview[] = [];
@@ -252,7 +218,7 @@ export default function AdminDashboard() {
       coursesResponse
     ] = await Promise.allSettled([
       fetchWithCsrf('/api/admin/schools', {}),
-      fetchWithCsrf('/api/admin/teachers', {}),
+      fetchWithCsrf('/api/admin/teachers?limit=3&offset=0', {}),
       fetchWithCsrf('/api/admin/students?limit=3', {}),
       fetchWithCsrf('/api/admin/courses?limit=3&offset=0', {})
     ]);
@@ -260,85 +226,185 @@ export default function AdminDashboard() {
     // Process schools preview
     if (schoolsResponse.status === 'fulfilled' && schoolsResponse.value.ok) {
       try {
-        const { schools } = await schoolsResponse.value.json();
+        const responseData = await schoolsResponse.value.json();
+        const schools = responseData.schools || [];
+        
+        if (!Array.isArray(schools)) {
+          console.warn('Schools API returned non-array data:', responseData);
+        }
+        
+        // Sort by created_at DESC to get most recent, then take first 3
+        const recentSchools = Array.isArray(schools) 
+          ? schools
+              .sort((a: { created_at?: string }, b: { created_at?: string }) => {
+                const dateA = new Date(a.created_at || 0).getTime();
+                const dateB = new Date(b.created_at || 0).getTime();
+                return dateB - dateA; // DESC order
+              })
+              .slice(0, 3)
+              .map((s: { id: string; name: string; created_at?: string }) => ({
+                id: s.id,
+                name: s.name,
+                created_at: s.created_at ?? ''
+              }))
+          : [];
+        
         previews.push({
           id: 'schools',
           title: 'Recent Schools',
           description: 'Latest registered schools',
           icon: <School className="h-4 w-4" />,
-          data: (schools || []).slice(0, 3),
+          data: recentSchools,
           loading: false,
           lastUpdated: new Date().toISOString()
         });
       } catch (error) {
-        console.error('Schools preview unavailable', error);
+        console.error('Schools preview unavailable:', error);
+        // Still add the preview card but with empty data so UI doesn't break
+        previews.push({
+          id: 'schools',
+          title: 'Recent Schools',
+          description: 'Latest registered schools',
+          icon: <School className="h-4 w-4" />,
+          data: [],
+          loading: false,
+          lastUpdated: new Date().toISOString()
+        });
       }
+    } else if (schoolsResponse.status === 'rejected') {
+      console.error('Schools API request failed:', schoolsResponse.reason);
     }
 
     // Process teachers preview
     if (teachersResponse.status === 'fulfilled' && teachersResponse.value.ok) {
       try {
-        const { teachers } = await teachersResponse.value.json();
+        const responseData = await teachersResponse.value.json();
+        // Handle both pagination formats: {teachers: [...]} or {data: [...]}
+        const teachers = responseData.teachers || responseData.data || [];
+        
+        if (!Array.isArray(teachers)) {
+          console.warn('Teachers API returned non-array data:', responseData);
+        }
+        
+        const teacherData = Array.isArray(teachers) ? teachers.slice(0, 3).map((t: { id: string; full_name: string; email: string; created_at?: string }) => ({
+          id: t.id,
+          full_name: t.full_name,
+          email: t.email,
+          created_at: t.created_at ?? ''
+        })) : [];
+        
         previews.push({
           id: 'teachers',
           title: 'Recent Teachers',
           description: 'Latest teacher registrations',
           icon: <Users className="h-4 w-4" />,
-          data: (teachers || []).slice(0, 3),
+          data: teacherData,
           loading: false,
           lastUpdated: new Date().toISOString()
         });
       } catch (error) {
-        console.error('Teachers preview unavailable', error);
+        console.error('Teachers preview unavailable:', error);
+        // Still add the preview card but with empty data so UI doesn't break
+        previews.push({
+          id: 'teachers',
+          title: 'Recent Teachers',
+          description: 'Latest teacher registrations',
+          icon: <Users className="h-4 w-4" />,
+          data: [],
+          loading: false,
+          lastUpdated: new Date().toISOString()
+        });
       }
+    } else if (teachersResponse.status === 'rejected') {
+      console.error('Teachers API request failed:', teachersResponse.reason);
     }
 
     // Process students preview
     if (studentsResponse.status === 'fulfilled' && studentsResponse.value.ok) {
       try {
-        const { students } = await studentsResponse.value.json();
+        const responseData = await studentsResponse.value.json();
+        // Handle both pagination formats: {students: [...]} or {data: [...]}
+        const students = responseData.students || responseData.data || [];
+        
+        if (!Array.isArray(students)) {
+          console.warn('Students API returned non-array data:', responseData);
+        }
+        
+        const studentData = Array.isArray(students) ? students.slice(0, 3).map((s: { id: string; full_name: string; email: string; created_at?: string }) => ({
+          id: s.id,
+          full_name: s.full_name,
+          email: s.email,
+          created_at: s.created_at ?? ''
+        })) : [];
+        
         previews.push({
           id: 'students',
           title: 'Recent Students',
           description: 'Latest student enrollments',
           icon: <User className="h-4 w-4" />,
-           
-          data: (students || []).slice(0, 3).map((s: any) => ({
-            id: s.id,
-            full_name: s.full_name,
-            email: s.email,
-            created_at: s.created_at
-          })),
+          data: studentData,
           loading: false,
           lastUpdated: new Date().toISOString()
         });
       } catch (error) {
-        console.error('Students preview unavailable', error);
+        console.error('Students preview unavailable:', error);
+        // Still add the preview card but with empty data so UI doesn't break
+        previews.push({
+          id: 'students',
+          title: 'Recent Students',
+          description: 'Latest student enrollments',
+          icon: <User className="h-4 w-4" />,
+          data: [],
+          loading: false,
+          lastUpdated: new Date().toISOString()
+        });
       }
+    } else if (studentsResponse.status === 'rejected') {
+      console.error('Students API request failed:', studentsResponse.reason);
     }
 
     // Process courses preview
     if (coursesResponse.status === 'fulfilled' && coursesResponse.value.ok) {
       try {
-        const { courses } = await coursesResponse.value.json();
+        const responseData = await coursesResponse.value.json();
+        // Handle both pagination formats: {courses: [...]} or {data: [...]}
+        const courses = responseData.courses || responseData.data || [];
+        
+        if (!Array.isArray(courses)) {
+          console.warn('Courses API returned non-array data:', responseData);
+        }
+        
+        const courseData = Array.isArray(courses) ? courses.slice(0, 3).map((c: { id: string; title?: string; course_name?: string; name?: string; status?: string; created_at?: string }) => ({
+          id: c.id,
+          title: c.title || c.course_name || c.name,
+          status: c.status,
+          created_at: c.created_at ?? ''
+        })) : [];
+        
         previews.push({
           id: 'courses',
           title: 'Recent Courses',
           description: 'Latest course publications',
           icon: <BookOpen className="h-4 w-4" />,
-           
-          data: (courses || []).slice(0, 3).map((c: any) => ({
-            id: c.id,
-            title: c.title || c.course_name || c.name,
-            status: c.status,
-            created_at: c.created_at
-          })),
+          data: courseData,
           loading: false,
           lastUpdated: new Date().toISOString()
         });
       } catch (error) {
-        console.error('Courses preview unavailable', error);
+        console.error('Courses preview unavailable:', error);
+        // Still add the preview card but with empty data so UI doesn't break
+        previews.push({
+          id: 'courses',
+          title: 'Recent Courses',
+          description: 'Latest course publications',
+          icon: <BookOpen className="h-4 w-4" />,
+          data: [],
+          loading: false,
+          lastUpdated: new Date().toISOString()
+        });
       }
+    } else if (coursesResponse.status === 'rejected') {
+      console.error('Courses API request failed:', coursesResponse.reason);
     }
 
       setQuickActionPreviews(previews);
@@ -358,7 +424,6 @@ export default function AdminDashboard() {
   });
 
   const handleRefresh = async () => {
-    // loadDashboardData already calls loadChartData internally
     await loadDashboardData();
   };
 
@@ -546,9 +611,8 @@ export default function AdminDashboard() {
 
           {/* Main Content Tabs */}
           <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics</TabsTrigger>
               <TabsTrigger value="management">Management</TabsTrigger>
               <TabsTrigger value="reports">Reports</TabsTrigger>
               <TabsTrigger value="student-progress">Student Progress</TabsTrigger>
@@ -563,18 +627,6 @@ export default function AdminDashboard() {
                   recentActivity={recentActivity}
                   isLoading={isRefreshing}
                   onQuickAction={handleQuickAction}
-                />
-              </Suspense>
-            </TabsContent>
-
-            {/* Analytics Tab */}
-            <TabsContent value="analytics" className="space-y-6">
-              <Suspense fallback={<SkeletonDashboard />}>
-                <AdminAnalyticsTab
-                  growthData={growthData}
-                  attendanceData={attendanceData}
-                  courseProgressData={courseProgressData}
-                  isLoading={isRefreshing}
                 />
               </Suspense>
             </TabsContent>

@@ -57,8 +57,7 @@ try {
       .from('schools')
       .select('school_admin_id')
       .eq('id', schoolId)
-       
-      .single() as any;
+      .single();
 
     if (schoolError || !schoolData) {
       return NextResponse.json(
@@ -71,8 +70,7 @@ try {
     const { data: schoolUsers, error: usersError } = await supabaseAdmin
       .from('profiles')
       .select('id')
-       
-      .eq('school_id', schoolId) as any;
+      .eq('school_id', schoolId);
 
     if (usersError) {
       return NextResponse.json(
@@ -97,16 +95,17 @@ try {
             base64 += '=';
           }
           const payloadJson = Buffer.from(base64, 'base64').toString('utf-8');
-          const payload = JSON.parse(payloadJson);
+          const payload = JSON.parse(payloadJson) as { sub?: string };
           if (payload && payload.sub) {
+            type ProfileRow = { role?: string | null };
             const { data: profile } = await supabaseAdmin
               .from('profiles')
               .select('role')
               .eq('id', payload.sub)
-               
-              .single() as any;
+              .single();
             
-            if (profile && profile.role === 'school_admin') {
+            const profileRow = profile as ProfileRow | null;
+            if (profileRow?.role === 'school_admin') {
               currentSchoolAdminId = payload.sub;
             }
           }
@@ -216,6 +215,13 @@ try {
 
 // POST: Send notifications from school admin
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
   ensureCsrfToken(request);
   
   // Apply rate limiting
@@ -250,7 +256,8 @@ try {
     const validation = validateRequestBody(createNotificationSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      type ZodIssue = { path: (string | number)[]; message: string };
+      const errorMessages = validation.details?.issues?.map((e: ZodIssue) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for school admin notification creation', {
         endpoint: '/api/school-admin/notifications',
         errors: errorMessages,
@@ -290,7 +297,7 @@ try {
         .select('id')
         .eq('school_id', schoolId)
          
-        .in('role', recipients) as any;
+        .in('role', recipients);
 
       if (roleError) {
         console.error('❌ Error fetching profiles by role:', roleError);
@@ -308,7 +315,7 @@ try {
         .select('id')
         .eq('school_id', schoolId)
          
-        .in('id', recipients) as any;
+        .in('id', recipients);
 
       if (profilesError) {
         console.error('❌ Error fetching profiles:', profilesError);
@@ -329,7 +336,7 @@ try {
     }
 
     // Create notifications for all recipients
-    const notificationsToInsert = userIds.map((userId: any) => ({
+    const notificationsToInsert = userIds.map((userId: string) => ({
       user_id: userId,
       title,
       message,
@@ -337,12 +344,10 @@ try {
       is_read: false
     }));
 
-    const { data: insertedNotifications, error: insertError } = await (supabaseAdmin
+    const { data: insertedNotifications, error: insertError } = await supabaseAdmin
       .from('notifications')
-       
-      .insert(notificationsToInsert as any)
-       
-      .select() as any);
+      .insert(notificationsToInsert as never)
+      .select();
 
     if (insertError) {
       console.error('❌ Error inserting notifications:', insertError);

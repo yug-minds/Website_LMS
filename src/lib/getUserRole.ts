@@ -8,10 +8,9 @@ export async function getUserRole() {
     .from('profiles')
     .select('role')
     .eq('id', user.id)
-     
-    .single() as any;
+    .single();
   
-  return profile?.role || null;
+  return (profile as { role?: string } | null)?.role || null;
 }
 
 export async function getUserProfile() {
@@ -22,8 +21,7 @@ export async function getUserProfile() {
     .from('profiles')
     .select('*')
     .eq('id', user.id)
-     
-    .single() as any;
+    .single();
   
   return profile;
 }
@@ -36,17 +34,16 @@ export async function getSchoolAdminSchool() {
     .from('profiles')
     .select('school_id')
     .eq('id', user.id)
-     
-    .single() as any;
+    .single();
   
-  if (!profile?.school_id) return null;
+  const profileData = profile as { school_id?: string } | null;
+  if (!profileData?.school_id) return null;
 
   const { data: school } = await supabaseAdmin
     .from('schools')
     .select('*')
-    .eq('id', profile.school_id)
-     
-    .single() as any;
+    .eq('id', profileData.school_id)
+    .single();
   
   return school;
 }

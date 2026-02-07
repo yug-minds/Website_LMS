@@ -5,9 +5,6 @@ import { updateJoiningCodeSchema, validateRequestBody } from '../../../../lib/va
 import { logger, handleApiError } from '../../../../lib/logger';
 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-
 // Get joining codes for a school or all codes
 export async function GET(request: NextRequest) {
   
@@ -106,7 +103,7 @@ try {
     const validation = validateRequestBody(updateJoiningCodeSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${(e.path as (string | number)[]).join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for joining code update', {
         endpoint: '/api/admin/joining-codes',
         errors: errorMessages,
@@ -121,16 +118,14 @@ try {
       );
     }
 
-    const { code, schoolId, grade, manualCode, usageType, maxUses } = validation.data;
+    const { code, schoolId, grade, usageType, maxUses } = validation.data;
 
     // First, deactivate the old code
-     
-    const { error: deactivateError } = await ((supabaseAdmin as any)
+    const { error: deactivateError } = await supabaseAdmin
       .from('join_codes')
-       
-      .update({ is_active: false } as any)
-       
-      .eq('code', code)) as any;
+      // @ts-expect-error - join_codes table update type not in schema
+      .update({ is_active: false })
+      .eq('code', code);
 
     if (deactivateError) {
       console.warn('Failed to deactivate old code:', deactivateError.message);
@@ -151,6 +146,7 @@ try {
     // Insert the new code into the database
     const { error: insertError } = await (supabaseAdmin
       .from('join_codes')
+      // @ts-expect-error - join_codes table insert type not in schema
       .insert({
         code: newCode,
         school_id: schoolId,
@@ -159,9 +155,8 @@ try {
         usage_type: usageType || 'multiple',
         times_used: 0,
         max_uses: maxUses || null,
-        expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString() // 1 year from now
-       
-      } as any) as any);
+        expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      }));
 
     if (insertError) {
       console.error('Code insertion error:', insertError);
@@ -233,14 +228,11 @@ try {
         );
       }
 
-      const { data, error } = await (supabaseAdmin
-         
-        .rpc('toggle_joining_code_status' as any, {
-           
-          code_param: code as any,
-          activate_param: isActive
-         
-        } as any) as any);
+      const { error } = await supabaseAdmin
+        .rpc('toggle_joining_code_status', {
+          code_param: code,
+          activate_param: isActive,
+        } as never);
 
       if (error) {
         console.error('Toggle code status error:', error);
@@ -268,19 +260,25 @@ try {
       }
 
        
-      const updateData: any = {};
+      interface UpdateData {
+        code?: string;
+        usage_type?: string;
+        max_uses?: number | null;
+        expires_at?: string;
+      }
+      
+      const updateData: UpdateData = {};
       if (code) updateData.code = code;
       if (usageType) updateData.usage_type = usageType;
       if (maxUses !== undefined) updateData.max_uses = maxUses;
       if (expiresAt) updateData.expires_at = expiresAt;
 
        
-      const { error } = await ((supabaseAdmin as any)
+      const { error } = await supabaseAdmin
         .from('join_codes')
-         
-        .update(updateData as any)
-         
-        .eq('id', codeId)) as any;
+        // @ts-expect-error - join_codes table update type not in schema
+        .update(updateData)
+        .eq('id', codeId);
 
       if (error) {
         console.error('Update code error:', error);
@@ -349,12 +347,12 @@ try {
     }
 
     // Get school name for code prefix
+    type SchoolRow = { name?: string; grades_offered?: unknown };
     const { data: school } = await supabaseAdmin
       .from('schools')
       .select('name, grades_offered')
       .eq('id', schoolId)
-       
-      .single() as any;
+      .single() as { data: SchoolRow | null; error: unknown };
 
     if (!school) {
       return NextResponse.json(
@@ -381,12 +379,12 @@ try {
           attempts++;
           
           // Check if code already exists
+          type JoinCodeRow = { code?: string };
           const { data: existing } = await supabaseAdmin
             .from('join_codes')
             .select('code')
             .eq('code', code)
-             
-            .single() as any;
+            .single() as { data: JoinCodeRow | null; error: unknown };
           
           if (!existing) break; // Code is unique
         } while (attempts < 10);
@@ -395,6 +393,7 @@ try {
       // Insert the code
       const { error: insertError } = await (supabaseAdmin
         .from('join_codes')
+        // @ts-expect-error - join_codes table insert type not in schema
         .insert({
           code,
           school_id: schoolId,
@@ -403,9 +402,8 @@ try {
           usage_type: usageType || 'multiple',
           times_used: 0,
           max_uses: maxUses || null,
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
-         
-        } as any) as any);
+          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        }));
 
       if (insertError) {
         console.error(`Failed to create code for ${grade}:`, insertError);

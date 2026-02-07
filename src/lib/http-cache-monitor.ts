@@ -74,31 +74,31 @@ export function getHttpCacheHitRate(timeWindow?: number): {
   const cutoff = now - window;
 
   // Filter operations within time window
-  const recentOps = httpCacheOperations.filter((op: any) => op.timestamp >= cutoff);
+  const recentOps = httpCacheOperations.filter((op: HttpCacheOperation) => op.timestamp >= cutoff);
 
   // Overall statistics
   const total = recentOps.length;
-  const requests304 = recentOps.filter((op: any) => op.is304).length;
-  const requests200 = recentOps.filter((op: any) => op.statusCode === 200 && !op.is304).length;
+  const requests304 = recentOps.filter((op: HttpCacheOperation) => op.is304).length;
+  const requests200 = recentOps.filter((op: HttpCacheOperation) => op.statusCode === 200 && !op.is304).length;
   const hitRate = total > 0 ? (requests304 / total) * 100 : 0;
 
   const avgResponseTime = total > 0
-    ? recentOps.reduce((sum: number, op: any) => sum + op.duration, 0) / total
+    ? recentOps.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / total
     : 0;
 
-  const ops304 = recentOps.filter((op: any) => op.is304);
-  const ops200 = recentOps.filter((op: any) => op.statusCode === 200 && !op.is304);
+  const ops304 = recentOps.filter((op: HttpCacheOperation) => op.is304);
+  const ops200 = recentOps.filter((op: HttpCacheOperation) => op.statusCode === 200 && !op.is304);
   
   const avg304ResponseTime = ops304.length > 0
-    ? ops304.reduce((sum: number, op: any) => sum + op.duration, 0) / ops304.length
+    ? ops304.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / ops304.length
     : 0;
 
   const avg200ResponseTime = ops200.length > 0
-    ? ops200.reduce((sum: number, op: any) => sum + op.duration, 0) / ops200.length
+    ? ops200.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / ops200.length
     : 0;
 
   // Calculate bandwidth saved (size of 200 responses that could have been 304)
-  const bandwidthSaved = ops200.reduce((sum: number, op: any) => sum + op.responseSize, 0);
+  const bandwidthSaved = ops200.reduce((sum: number, op: HttpCacheOperation) => sum + op.responseSize, 0);
 
   // Statistics by endpoint
   const byEndpoint: Record<string, EndpointCacheStats> = {};
@@ -113,27 +113,27 @@ export function getHttpCacheHitRate(timeWindow?: number): {
 
   endpointGroups.forEach((ops, endpoint) => {
     const endpointTotal = ops.length;
-    const endpoint304 = ops.filter((op: any) => op.is304).length;
-    const endpoint200 = ops.filter((op: any) => op.statusCode === 200 && !op.is304).length;
+    const endpoint304 = ops.filter((op: HttpCacheOperation) => op.is304).length;
+    const endpoint200 = ops.filter((op: HttpCacheOperation) => op.statusCode === 200 && !op.is304).length;
     const endpointHitRate = endpointTotal > 0 ? (endpoint304 / endpointTotal) * 100 : 0;
 
-    const endpointOps304 = ops.filter((op: any) => op.is304);
-    const endpointOps200 = ops.filter((op: any) => op.statusCode === 200 && !op.is304);
+    const endpointOps304 = ops.filter((op: HttpCacheOperation) => op.is304);
+    const endpointOps200 = ops.filter((op: HttpCacheOperation) => op.statusCode === 200 && !op.is304);
 
     const avgResponseTime = endpointTotal > 0
-      ? ops.reduce((sum: number, op: any) => sum + op.duration, 0) / endpointTotal
+      ? ops.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / endpointTotal
       : 0;
 
     const avg304ResponseTime = endpointOps304.length > 0
-      ? endpointOps304.reduce((sum: number, op: any) => sum + op.duration, 0) / endpointOps304.length
+      ? endpointOps304.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / endpointOps304.length
       : 0;
 
     const avg200ResponseTime = endpointOps200.length > 0
-      ? endpointOps200.reduce((sum: number, op: any) => sum + op.duration, 0) / endpointOps200.length
+      ? endpointOps200.reduce((sum: number, op: HttpCacheOperation) => sum + op.duration, 0) / endpointOps200.length
       : 0;
 
     const avgResponseSize = endpointTotal > 0
-      ? ops.reduce((sum: number, op: any) => sum + op.responseSize, 0) / endpointTotal
+      ? ops.reduce((sum: number, op: HttpCacheOperation) => sum + op.responseSize, 0) / endpointTotal
       : 0;
 
     // Extract cache control from first operation
@@ -274,8 +274,8 @@ function generateTTLRecommendations(
     }
   });
 
-  return recommendations.sort((a: any, b: any) => {
-    // Prioritize endpoints with more requests
+  type Rec = { endpoint: string; currentTTL?: number; recommendedTTL: number; reason: string; expectedImprovement: string };
+  return recommendations.sort((a: Rec, b: Rec) => {
     const aStats = endpointStats[a.endpoint];
     const bStats = endpointStats[b.endpoint];
     return (bStats?.totalRequests || 0) - (aStats?.totalRequests || 0);

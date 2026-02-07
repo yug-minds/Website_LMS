@@ -3,7 +3,21 @@ import { supabaseAdmin } from '../../../../../lib/supabase'
 import { generateCertificateImage } from '../../../../../lib/certificate-image-generator'
 import { getAuthenticatedUserId } from '../../../../../lib/auth-utils'
 
+type CertRow = { id?: string; certificate_url?: string | null };
+type ProfileRow = { full_name?: string | null; email?: string | null };
+type CourseRow = { name?: string | null; title?: string | null; description?: string | null };
+type CertRecordRow = { id?: string; issued_at?: string | null; name?: string | null; title?: string | null };
+
 export async function POST(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
+  
   try {
     // Get authenticated user ID
     const studentId = await getAuthenticatedUserId(request)
@@ -26,12 +40,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Get student profile
-    const { data: student, error: studentError } = await supabaseAdmin
+    const { data: studentData, error: studentError } = await supabaseAdmin
       .from('profiles')
       .select('full_name, email')
       .eq('id', studentId)
       .single()
 
+    const student = studentData as ProfileRow | null
     if (studentError || !student) {
       return NextResponse.json(
         { error: 'Student not found', success: false },
@@ -40,12 +55,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Get course details
-    const { data: course, error: courseError } = await supabaseAdmin
+    const { data: courseData, error: courseError } = await supabaseAdmin
       .from('courses')
       .select('name, title, description')
       .eq('id', courseId)
       .single()
 
+    const course = courseData as CourseRow | null
     if (courseError || !course) {
       return NextResponse.json(
         { error: 'Course not found', success: false },
@@ -103,7 +119,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const completedChapters = progress?.filter((p: any) => p.completed === true).length || 0
+    const completedChapters = progress?.filter((p: { completed?: boolean }) => p.completed === true).length || 0
 
     // Calculate completion percentage (round to 2 decimal places)
     const completionPercent = totalChapters > 0
@@ -123,13 +139,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if certificate already exists
-    const { data: existingCert } = await supabaseAdmin
+    const { data: existingCertData } = await supabaseAdmin
       .from('certificates')
       .select('id, certificate_url')
       .eq('student_id', studentId)
       .eq('course_id', courseId)
       .single()
 
+    const existingCert = existingCertData as CertRow | null
     if (existingCert && existingCert.certificate_url) {
       return NextResponse.json({
         success: true,
@@ -140,8 +157,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate student and course names before generating
-    const studentName = student.full_name?.trim() || 'Student'
-    const courseName = course.name?.trim() || course.title?.trim() || 'Course'
+    const studentRow = student as ProfileRow
+    const courseRow = course as CourseRow
+    const studentName = studentRow.full_name?.trim() || 'Student'
+    const courseName = courseRow.name?.trim() || courseRow.title?.trim() || 'Course'
     
     if (!studentName || studentName === 'Student') {
       console.warn('Student name is missing or default, using fallback:', { studentId, student })
@@ -158,12 +177,12 @@ export async function POST(request: NextRequest) {
         studentName,
         courseName,
       })
-    } catch (imageError: any) {
+    } catch (imageError: unknown) {
       console.error('Error generating certificate image:', imageError)
       return NextResponse.json(
         { 
           error: 'Failed to generate certificate image', 
-          details: imageError.message,
+          details: imageError instanceof Error ? imageError.message : String(imageError),
           success: false 
         },
         { status: 500 }
@@ -175,7 +194,7 @@ export async function POST(request: NextRequest) {
     const fileName = `${timestamp}.png`
     const filePath = `${studentId}/${courseId}/${fileName}`
 
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+    const { data: _uploadData, error: uploadError } = await supabaseAdmin.storage
       .from('certificates')
       .upload(filePath, certificateBuffer, {
         contentType: 'image/png',
@@ -229,14 +248,14 @@ export async function POST(request: NextRequest) {
     let certificate
     if (existingCertRecord) {
       // Update existing certificate
-      const { data: updatedCert, error: updateError } = await supabaseAdmin
+      const updatePayload = {
+        certificate_name: `${courseRow.name || courseRow.title} - Certificate of Completion`,
+        certificate_url: certificateUrl,
+      }
+      const { data: updatedCertData, error: updateError } = await supabaseAdmin
         .from('certificates')
-        .update({
-          certificate_name: `${course.name || course.title} - Certificate of Completion`,
-          certificate_url: certificateUrl,
-          // Keep original issued_at if it exists
-        })
-        .eq('id', existingCertRecord.id)
+        .update(updatePayload as unknown as never)
+        .eq('id', (existingCertRecord as { id?: string }).id ?? '')
         .select()
         .single()
 
@@ -256,18 +275,19 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
-      certificate = updatedCert
+      certificate = updatedCertData as CertRecordRow & { certificate_url?: string }
     } else {
       // Insert new certificate
-      const { data: newCert, error: insertError } = await supabaseAdmin
+      const insertPayload = {
+        student_id: studentId,
+        course_id: courseId,
+        certificate_name: `${courseRow.name || courseRow.title} - Certificate of Completion`,
+        certificate_url: certificateUrl,
+        issued_at: new Date().toISOString(),
+      }
+      const { data: newCertData, error: insertError } = await supabaseAdmin
         .from('certificates')
-        .insert({
-          student_id: studentId,
-          course_id: courseId,
-          certificate_name: `${course.name || course.title} - Certificate of Completion`,
-          certificate_url: certificateUrl,
-          issued_at: new Date().toISOString(),
-        })
+        .insert(insertPayload as unknown as never)
         .select()
         .single()
 
@@ -287,13 +307,13 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
-      certificate = newCert
+      certificate = newCertData as CertRecordRow & { certificate_url?: string }
     }
 
     return NextResponse.json({
       success: true,
-      certificateId: certificate.id,
-      certificateUrl: certificate.certificate_url,
+      certificateId: certificate?.id,
+      certificateUrl: certificate?.certificate_url,
       message: 'Certificate generated successfully',
     })
   } catch (error) {

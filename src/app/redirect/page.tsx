@@ -29,7 +29,7 @@ export default function RedirectPage() {
           .select('role, force_password_change')
           .eq('id', session.user.id)
            
-          .single() as any;
+          .single();
 
         if (profileData?.force_password_change) {
           console.log('User must change password, redirecting to update-password');
@@ -77,13 +77,13 @@ export default function RedirectPage() {
           // Redirect directly - no cookies needed
           router.push(redirectPath);
          
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('Error fetching role:', error);
-          setError(error?.message || 'Failed to determine user role');
+          setError(error instanceof Error ? error.message : 'Failed to determine user role');
           setLoading(false);
         }
        
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Redirect error:', error);
         setError('An unexpected error occurred');
         setLoading(false);

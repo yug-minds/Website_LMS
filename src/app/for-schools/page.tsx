@@ -192,9 +192,11 @@ export default function ForSchoolsPage() {
             <p className="text-blue-100 mb-6 md:mb-8 max-w-2xl mx-auto text-base md:text-lg lg:text-xl px-2">
               Schedule a free consultation to discuss how we can support your students
             </p>
-            <Button size="lg" variant="secondary" className="bg-white text-blue-600 hover:bg-gray-100 px-8">
-              Get Started Today <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+            <Link href="/contact">
+              <Button size="lg" variant="secondary" className="bg-white text-blue-600 hover:bg-gray-100 px-8">
+                Get Started Today <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Link>
           </div>
         </div>
       </section>

@@ -25,7 +25,7 @@ export function answersMatch(studentAnswer: string, correctAnswer: string): bool
  */
 export function matchesAnyAnswer(studentAnswer: string, correctAnswers: string[]): boolean {
   const normalizedStudent = normalizeAnswer(studentAnswer)
-  return correctAnswers.some((correct: any) => normalizeAnswer(correct) === normalizedStudent)
+  return correctAnswers.some((correct: string) => normalizeAnswer(correct) === normalizedStudent)
 }
 
 /**

@@ -24,7 +24,7 @@ import {
 import { SchoolGradeSelector } from "./SchoolGradeSelector";
 import { FileUploadZone } from "./FileUploadZone";
 import { ChapterContentManager, ChapterContent } from "./ChapterContentManager";
-import { AssignmentBuilder, Assignment } from "./AssignmentBuilder";
+import { AssignmentBuilder, Assignment, type AssignmentQuestion } from "./AssignmentBuilder";
 import { fetchWithCsrf } from "../../lib/csrf-client";
 import { generateUUID } from "../../lib/uuid-utils";
 
@@ -35,26 +35,98 @@ export interface Chapter {
   description?: string;
   learning_outcomes: string[];
   order_number: number;
+  contents?: ChapterContent[];
+  title?: string;
+  [key: string]: unknown;
+}
+
+interface Question {
+  id?: string;
+  question_type?: string;
+  question_text?: string;
+  options?: string[];
+  correct_answer?: string;
+  marks?: number;
+  [key: string]: unknown;
+}
+
+export interface AssignmentFromAPI {
+  id?: string;
+  title?: string;
+  description?: string;
+  chapter_id?: string;
+  max_score?: number;
+  max_marks?: number;
+  auto_grading_enabled?: boolean;
+  assignment_type?: string;
+  questions?: Question[];
+  config?: string | Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+interface ChapterContentFromAPI {
+  id?: string;
+  content_id?: string;
+  chapter_id?: string;
+  content_type?: string;
+  title?: string;
+  content_url?: string;
+  content_text?: string;
+  duration_minutes?: number;
+  storage_path?: string;
+  order_index?: number;
+  [key: string]: unknown;
+}
+
+interface VideoFromAPI {
+  chapter_id?: string;
+  title?: string;
+  video_url?: string;
+  duration?: number;
+  [key: string]: unknown;
+}
+
+interface CourseFromAPI {
+  id: string;
+  name?: string;
+  course_name?: string;
+  title?: string;
+  description?: string;
+  duration_weeks?: number;
+  prerequisites_course_ids?: string[];
+  prerequisites_text?: string;
+  thumbnail_url?: string;
+  school_ids?: string[];
+  grades?: string[];
+  status?: 'Draft' | 'Published' | 'Archived';
+  chapters?: Chapter[];
+  assignments?: AssignmentFromAPI[];
+  chapter_contents?: ChapterContentFromAPI[];
+  videos?: VideoFromAPI[];
+  difficulty_level?: string;
+  [key: string]: unknown;
+}
+
+interface CourseData {
+  id: string;
+  name: string;
+  description?: string;
+  duration_weeks?: number;
+  prerequisites_course_ids?: string[];
+  prerequisites_text?: string;
+  thumbnail_url?: string;
+  difficulty_level?: string;
+  school_ids: string[];
+  grades: string[];
+  chapters: Chapter[];
+  assignments?: AssignmentFromAPI[];
+  videos?: Array<{ chapter_id: string; title: string; video_url: string; duration?: number }>;
+  [key: string]: unknown;
 }
 
 interface CourseEditorProps {
-  course: {
-    id: string;
-    name: string;
-    description?: string;
-    duration_weeks?: number;
-    prerequisites_course_ids?: string[];
-    prerequisites_text?: string;
-    thumbnail_url?: string;
-    school_ids?: string[];
-    grades?: string[];
-    status: 'Draft' | 'Published' | 'Archived';
-    chapters?: Chapter[];
-    assignments?: any[]; // Assignments from API
-    chapter_contents?: any[]; // Top-level chapter_contents array from API
-    [key: string]: any; // Allow additional properties from API response
-  };
-  onSave: (courseData: any) => void;
+  course: CourseFromAPI;
+  onSave: (courseData: CourseData) => void;
   onCancel?: () => void;
 }
 
@@ -63,7 +135,7 @@ export function CourseEditor({
   onSave,
   onCancel,
 }: CourseEditorProps) {
-  const [loading, setLoading] = useState(false);
+  const [_loading, _setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -77,7 +149,7 @@ export function CourseEditor({
     prerequisites_text: course.prerequisites_text || "",
     prerequisites_course_ids: course.prerequisites_course_ids || [] as string[],
     thumbnail_url: course.thumbnail_url || "",
-    difficulty_level: (course as any).difficulty_level || "Beginner",
+    difficulty_level: course.difficulty_level || "Beginner",
   });
 
   // School & Grade
@@ -96,11 +168,11 @@ export function CourseEditor({
   const [assignments, setAssignments] = useState<Record<string, Assignment>>({});
 
   // Extract complex expressions for dependency arrays
-  const courseChapterContents = (course as any).chapter_contents;
-  const courseAssignments = (course as any).assignments;
-  const courseVideos = (course as any).videos;
+  const courseChapterContents = course.chapter_contents;
+  const courseAssignments = course.assignments;
+  const courseVideos = course.videos;
   const [videos, setVideos] = useState<Array<{ chapter_id: string; title: string; video_url: string; duration?: number }>>([]);
-  const [availableCourses, setAvailableCourses] = useState<Array<{ id: string; name: string }>>([]);
+  const [_availableCourses, setAvailableCourses] = useState<Array<{ id: string; name: string }>>([]);
   
   // Ref to track latest assignments state to prevent stale closures
   const assignmentsRef = useRef<Record<string, Assignment>>({});
@@ -129,7 +201,7 @@ export function CourseEditor({
       newCount: newCount,
       count: Object.keys(assignments).length,
       keys: Object.keys(assignments),
-      hasLocalAssignments: Object.values(assignments).some((a: any) => !a.id),
+      hasLocalAssignments: Object.values(assignments).some((a: Assignment) => !a.id),
       assignments: Object.entries(assignments).map(([key, ass]) => ({
         key: key,
         title: ass.title,
@@ -138,8 +210,8 @@ export function CourseEditor({
       })),
       prevKeys: prevKeys,
       newKeys: newKeys,
-      keysAdded: newKeys.filter((k: any) => !prevKeys.includes(k)),
-      keysRemoved: prevKeys.filter((k: any) => !newKeys.includes(k)),
+      keysAdded: newKeys.filter((k: string) => !prevKeys.includes(k)),
+      keysRemoved: prevKeys.filter((k: string) => !newKeys.includes(k)),
       stackTrace: new Error().stack?.split('\n').slice(1, 4).join('\n')
     });
     
@@ -154,7 +226,7 @@ export function CourseEditor({
     }
     
     // Alert if specific assignment was removed
-    const removedKeys = prevKeys.filter((k: any) => !newKeys.includes(k));
+    const removedKeys = prevKeys.filter((k: string) => !newKeys.includes(k));
     if (removedKeys.length > 0) {
       console.warn('⚠️ [CourseEditor] Assignments were removed:', {
         removedKeys: removedKeys,
@@ -166,10 +238,10 @@ export function CourseEditor({
   
   // Additional useEffect to track when assignments prop changes (from parent)
   useEffect(() => {
-    if ((course as any).assignments && Array.isArray((course as any).assignments)) {
+    if (course.assignments && Array.isArray(course.assignments)) {
       console.log('📥 [CourseEditor] Course prop assignments changed:', {
-        count: (course as any).assignments.length,
-        assignments: (course as any).assignments.map((a: any) => ({
+        count: course.assignments.length,
+        assignments: course.assignments.map((a: AssignmentFromAPI) => ({
           id: a.id,
           title: a.title,
           chapter_id: a.chapter_id
@@ -201,7 +273,7 @@ export function CourseEditor({
       });
       if (response.ok) {
         const data = await response.json();
-        const courses = (data.courses || []).filter((c: any) => c.id !== course.id).map((c: any) => ({
+        const courses = (data.courses || []).filter((c: CourseFromAPI) => c.id !== course.id).map((c: CourseFromAPI) => ({
           id: c.id,
           name: c.name || c.course_name || c.title || "Untitled Course",
         }));
@@ -214,13 +286,14 @@ export function CourseEditor({
 
   useEffect(() => {
     loadAvailableCourses();
-  }, [course.id, loadAvailableCourses]);
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- loadAvailableCourses recreated each render, load on course.id */
+  }, [course.id]);
 
   useEffect(() => {
     // Update chapters state when course.chapters changes
     if (course.chapters && course.chapters.length > 0) {
       // Ensure all chapters have permanent IDs
-      const chaptersWithIds = course.chapters.map((ch: any) => {
+      const chaptersWithIds = course.chapters.map((ch: Chapter) => {
         if (!ch.id) {
           // Generate ID for chapters that don't have one (shouldn't happen, but handle gracefully)
           console.warn('⚠️ Chapter missing ID, generating one:', ch.name || ch.title);
@@ -231,7 +304,7 @@ export function CourseEditor({
       
       console.log('📚 Updating chapters state:', {
         chaptersCount: chaptersWithIds.length,
-        chaptersWithContents: chaptersWithIds.map((ch: any) => ({
+        chaptersWithContents: chaptersWithIds.map((ch: Chapter) => ({
           id: ch.id,
           name: ch.name || ch.title,
           contentsCount: ch.contents?.length || 0
@@ -249,8 +322,8 @@ export function CourseEditor({
     const hasRecentAssignment = timeSinceLastChange < 10000 && Object.keys(assignmentsRef.current).length > 0;
     
     // CRITICAL: Immediately check if questions are in course prop assignments
-    const courseAssignments = (course as any).assignments || [];
-    const assignmentA4 = courseAssignments.find((a: any) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
+    const courseAssignments = course.assignments || [];
+    const assignmentA4 = courseAssignments.find((a: AssignmentFromAPI) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
     if (assignmentA4) {
       console.group('🔍 [useEffect] IMMEDIATE CHECK - Assignment a4 in course prop');
       console.log('Assignment ID:', assignmentA4.id);
@@ -263,7 +336,7 @@ export function CourseEditor({
       console.log('Questions Value:', assignmentA4.questions);
       if (questionsArray.length > 0) {
         console.log('✅ QUESTIONS FOUND:', questionsArray.length);
-        questionsArray.forEach((q: any, idx: number) => {
+        questionsArray.forEach((q: Question, idx: number) => {
           console.log(`  Question ${idx + 1}:`, { id: q.id, type: q.question_type, text: q.question_text?.substring(0, 50) });
         });
       } else {
@@ -276,7 +349,7 @@ export function CourseEditor({
           .then(async (response) => {
             if (response.ok) {
               const data = await response.json();
-              const apiAssignmentA4 = data.course?.assignments?.find((a: any) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
+              const apiAssignmentA4 = data.course?.assignments?.find((a: AssignmentFromAPI) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
               if (apiAssignmentA4) {
                 console.group('📡 [API Direct Fetch] Assignment a4 from API');
                 const apiQuestions = Array.isArray(apiAssignmentA4.questions) ? apiAssignmentA4.questions : [];
@@ -284,7 +357,7 @@ export function CourseEditor({
                 console.log('Questions:', apiQuestions);
                 if (apiQuestions.length > 0) {
                   console.log('✅ QUESTIONS FOUND in API response!');
-                  apiQuestions.forEach((q: any, idx: number) => {
+                  apiQuestions.forEach((q: Question, idx: number) => {
                     console.log(`  Question ${idx + 1}:`, { id: q.id, type: q.question_type, text: q.question_text?.substring(0, 50) });
                   });
                 } else {
@@ -310,8 +383,8 @@ export function CourseEditor({
       courseId: course.id,
       chaptersCount: course.chapters?.length || 0,
       localChaptersCount: chapters.length,
-      hasChapterContents: !!(course as any).chapter_contents,
-      chapterContentsCount: (course as any).chapter_contents?.length || 0,
+      hasChapterContents: !!course.chapter_contents,
+      chapterContentsCount: course.chapter_contents?.length || 0,
       hasAssignments: !!(courseAssignments && courseAssignments.length > 0),
       assignmentsCount: courseAssignments.length,
       currentAssignmentsInState: Object.keys(assignments).length,
@@ -325,8 +398,8 @@ export function CourseEditor({
     loadChapterContents();
     
     // Load videos from API if available
-    if ((course as any).videos && Array.isArray((course as any).videos)) {
-      const courseVideos = (course as any).videos.map((v: any) => ({
+    if (course.videos && Array.isArray(course.videos)) {
+      const courseVideos = course.videos.map((v: VideoFromAPI) => ({
         chapter_id: v.chapter_id || '',
         title: v.title || '',
         video_url: v.video_url || '',
@@ -350,11 +423,12 @@ export function CourseEditor({
     } else {
       console.log('⏸️ [useEffect] Skipping loadAssignments - no chapters available');
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- intentional deps subset to avoid loops */
   }, [chapters, course.chapters, course.id, courseChapterContents, courseAssignments, courseVideos]);
   
   // Watch for assignments in course prop and force load if they appear
   useEffect(() => {
-    const courseAssignments = (course as any).assignments;
+    const courseAssignments = course.assignments;
     if (courseAssignments && Array.isArray(courseAssignments) && courseAssignments.length > 0) {
       console.log('📥 [useEffect] Course prop assignments detected, checking if load is needed...', {
         assignmentsCount: courseAssignments.length,
@@ -371,11 +445,11 @@ export function CourseEditor({
         loadAssignments();
       } else {
         // Check if assignments from course prop match what we have in state
-        const courseAssignmentIds = new Set(courseAssignments.map((a: any) => a.id).filter(Boolean));
-        const stateAssignmentIds = new Set(Object.values(assignmentsRef.current).map((a: any) => a.id).filter(Boolean));
+        const courseAssignmentIds = new Set(courseAssignments.map((a: AssignmentFromAPI) => a.id).filter(Boolean));
+        const stateAssignmentIds = new Set(Object.values(assignmentsRef.current).map((a: Assignment) => a.id).filter(Boolean));
         
         // If there are new assignments in course prop that aren't in state, reload
-        const hasNewAssignments = Array.from(courseAssignmentIds).some((id: any) => !stateAssignmentIds.has(id));
+        const hasNewAssignments = Array.from(courseAssignmentIds).some((id: string | undefined) => id && !stateAssignmentIds.has(id));
         if (hasNewAssignments) {
           console.log('📥 [useEffect] New assignments detected in course prop, forcing reload...');
           hasInitialLoadCompletedRef.current = false;
@@ -383,6 +457,7 @@ export function CourseEditor({
         }
       }
     }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- intentional, loadAssignments when course assignments change */
   }, [courseAssignments, assignments, course]);
   
   // Track component re-renders
@@ -404,22 +479,22 @@ export function CourseEditor({
     const chaptersToUse = course.chapters || chapters;
     
     // First, try to load from chapters.contents (nested structure)
-    chaptersToUse.forEach((ch: any) => {
+    chaptersToUse.forEach((ch: Chapter) => {
       if (ch.id) {
         // Check if chapter has contents array (from API response structure)
         const chapterContents = ch.contents || [];
         if (chapterContents.length > 0) {
-          contents[ch.id] = chapterContents.map((content: any) => ({
-            id: content.id || content.content_id,
-            content_id: content.content_id || content.id,
-            chapter_id: content.chapter_id || ch.id,
-            content_type: content.content_type || 'text',
-            title: content.title || '',
-            content_url: content.content_url || null,
-            content_text: content.content_text || null,
-            duration_minutes: content.duration_minutes || null,
-            storage_path: content.storage_path || null,
-            order_index: content.order_index || 0,
+          contents[ch.id] = chapterContents.map((content: ChapterContent | ChapterContentFromAPI) => ({
+            id: content.id ?? (content as ChapterContentFromAPI).content_id,
+            content_id: (content as ChapterContentFromAPI).content_id ?? content.id,
+            chapter_id: ((content as { chapter_id?: string }).chapter_id ?? ch.id ?? '') as string,
+            content_type: ((content as { content_type?: string }).content_type === 'material' ? 'text' : ((content as { content_type?: string }).content_type ?? 'text')) as ChapterContent['content_type'],
+            title: content.title ?? '',
+            content_url: (content as { content_url?: string | null }).content_url ?? undefined,
+            content_text: (content as { content_text?: string | null }).content_text ?? undefined,
+            duration_minutes: (content as { duration_minutes?: number | null }).duration_minutes ?? undefined,
+            storage_path: (content as { storage_path?: string | null }).storage_path ?? undefined,
+            order_index: (content as { order_index?: number }).order_index ?? 0,
           }));
         } else {
           // Initialize empty array if no contents
@@ -429,36 +504,36 @@ export function CourseEditor({
     });
     
     // Fallback: If no contents found in chapters, check top-level chapter_contents array
-    const totalContentsFromChapters = Object.values(contents).reduce((sum: number, arr: any) => sum + arr.length, 0);
-    if (totalContentsFromChapters === 0 && (course as any).chapter_contents) {
+    const totalContentsFromChapters = Object.values(contents).reduce((sum: number, arr: ChapterContent[]) => sum + arr.length, 0);
+    if (totalContentsFromChapters === 0 && course.chapter_contents) {
       console.log('📦 No contents in chapters, checking top-level chapter_contents array...');
-      const topLevelContents = (course as any).chapter_contents || [];
+      const topLevelContents = course.chapter_contents || [];
       
       // Group by chapter_id
-      topLevelContents.forEach((content: any) => {
+      topLevelContents.forEach((content: ChapterContentFromAPI) => {
         const chapterId = content.chapter_id;
         if (chapterId) {
           if (!contents[chapterId]) {
             contents[chapterId] = [];
           }
           contents[chapterId].push({
-            id: content.id || content.content_id,
-            content_id: content.content_id || content.id,
-            chapter_id: content.chapter_id,
-            content_type: content.content_type || 'text',
-            title: content.title || '',
-            content_url: content.content_url || null,
-            content_text: content.content_text || null,
-            duration_minutes: content.duration_minutes || null,
-            storage_path: content.storage_path || null,
-            order_index: content.order_index || 0,
+            id: content.id ?? content.content_id,
+            content_id: content.content_id ?? content.id,
+            chapter_id: content.chapter_id ?? '',
+            content_type: (content.content_type === 'material' ? 'text' : (content.content_type ?? 'text')) as ChapterContent['content_type'],
+            title: content.title ?? '',
+            content_url: content.content_url ?? undefined,
+            content_text: content.content_text ?? undefined,
+            duration_minutes: content.duration_minutes ?? undefined,
+            storage_path: content.storage_path ?? undefined,
+            order_index: content.order_index ?? 0,
           });
         }
       });
     }
     
     // If still no contents, try fetching directly from API
-    if (Object.values(contents).reduce((sum: number, arr: any) => sum + arr.length, 0) === 0 && chaptersToUse.length > 0) {
+    if (Object.values(contents).reduce((sum: number, arr: ChapterContent[]) => sum + arr.length, 0) === 0 && chaptersToUse.length > 0) {
       console.log('📦 No contents found in course data, fetching from API...');
       try {
         const response = await fetchWithCsrf(`/api/admin/courses/${course.id}`, {
@@ -481,22 +556,22 @@ export function CourseEditor({
           
           // Try chapters.contents first
           if (fetchedCourse.chapters) {
-            fetchedCourse.chapters.forEach((ch: any) => {
+            fetchedCourse.chapters.forEach((ch: Chapter) => {
               if (ch.id && ch.contents && ch.contents.length > 0) {
                 if (!contents[ch.id]) {
                   contents[ch.id] = [];
                 }
-                contents[ch.id] = ch.contents.map((content: any) => ({
-                  id: content.id || content.content_id,
-                  content_id: content.content_id || content.id,
-                  chapter_id: content.chapter_id || ch.id,
-                  content_type: content.content_type || 'text',
-                  title: content.title || '',
-                  content_url: content.content_url || null,
-                  content_text: content.content_text || null,
-                  duration_minutes: content.duration_minutes || null,
-                  storage_path: content.storage_path || null,
-                  order_index: content.order_index || 0,
+                contents[ch.id] = ch.contents.map((content: ChapterContent | ChapterContentFromAPI) => ({
+                  id: content.id ?? (content as ChapterContentFromAPI).content_id,
+                  content_id: (content as ChapterContentFromAPI).content_id ?? content.id,
+                  chapter_id: ((content as { chapter_id?: string }).chapter_id ?? ch.id ?? '') as string,
+                  content_type: ((content as { content_type?: string }).content_type === 'material' ? 'text' : ((content as { content_type?: string }).content_type ?? 'text')) as ChapterContent['content_type'],
+                  title: content.title ?? '',
+                  content_url: (content as { content_url?: string | null }).content_url ?? undefined,
+                  content_text: (content as { content_text?: string | null }).content_text ?? undefined,
+                  duration_minutes: (content as { duration_minutes?: number | null }).duration_minutes ?? undefined,
+                  storage_path: (content as { storage_path?: string | null }).storage_path ?? undefined,
+                  order_index: (content as { order_index?: number }).order_index ?? 0,
                 }));
               }
             });
@@ -504,23 +579,23 @@ export function CourseEditor({
           
           // Try top-level chapter_contents
           if (fetchedCourse.chapter_contents && fetchedCourse.chapter_contents.length > 0) {
-            fetchedCourse.chapter_contents.forEach((content: any) => {
+            fetchedCourse.chapter_contents.forEach((content: ChapterContentFromAPI) => {
               const chapterId = content.chapter_id;
               if (chapterId) {
                 if (!contents[chapterId]) {
                   contents[chapterId] = [];
                 }
                 contents[chapterId].push({
-                  id: content.id || content.content_id,
-                  content_id: content.content_id || content.id,
-                  chapter_id: content.chapter_id,
-                  content_type: content.content_type || 'text',
-                  title: content.title || '',
-                  content_url: content.content_url || null,
-                  content_text: content.content_text || null,
-                  duration_minutes: content.duration_minutes || null,
-                  storage_path: content.storage_path || null,
-                  order_index: content.order_index || 0,
+                  id: content.id ?? content.content_id,
+                  content_id: content.content_id ?? content.id,
+                  chapter_id: content.chapter_id ?? '',
+                  content_type: (content.content_type === 'material' ? 'text' : (content.content_type ?? 'text')) as ChapterContent['content_type'],
+                  title: content.title ?? '',
+                  content_url: content.content_url ?? undefined,
+                  content_text: content.content_text ?? undefined,
+                  duration_minutes: content.duration_minutes ?? undefined,
+                  storage_path: content.storage_path ?? undefined,
+                  order_index: content.order_index ?? 0,
                 });
               }
             });
@@ -531,7 +606,7 @@ export function CourseEditor({
       }
     }
     
-    const totalContents = Object.values(contents).reduce((sum: number, arr: any) => sum + arr.length, 0);
+    const totalContents = Object.values(contents).reduce((sum: number, arr: ChapterContent[]) => sum + arr.length, 0);
     console.log('📦 Loaded chapter contents:', {
       chaptersCount: chaptersToUse.length,
       contentsKeys: Object.keys(contents),
@@ -539,11 +614,11 @@ export function CourseEditor({
       contentsByChapter: Object.entries(contents).map(([id, arr]) => ({ 
         chapterId: id, 
         count: arr.length,
-        chapterName: chaptersToUse.find((ch: any) => ch.id === id)?.name || 'Unknown'
+        chapterName: chaptersToUse.find((ch: Chapter) => ch.id === id)?.name || 'Unknown'
       })),
       courseId: course.id,
-      hasNestedContents: chaptersToUse.some((ch: any) => ch.contents && ch.contents.length > 0),
-      hasTopLevelContents: !!(course as any).chapter_contents && (course as any).chapter_contents.length > 0
+      hasNestedContents: chaptersToUse.some((ch: Chapter) => ch.contents && ch.contents.length > 0),
+      hasTopLevelContents: !!course.chapter_contents && course.chapter_contents.length > 0
     });
     
     if (totalContents === 0 && chaptersToUse.length > 0) {
@@ -551,7 +626,7 @@ export function CourseEditor({
         courseId: course.id,
         courseName: course.name,
         chaptersCount: chaptersToUse.length,
-        chapterIds: chaptersToUse.map((ch: any) => ch.id),
+        chapterIds: chaptersToUse.map((ch: Chapter) => ch.id),
         courseDataKeys: Object.keys(course)
       });
     }
@@ -570,8 +645,8 @@ export function CourseEditor({
       // SAFEGUARD: Only apply safeguards after initial load
       // Skip if an assignment was just created (within last 2 seconds)
       const timeSinceLastChange = Date.now() - lastAssignmentChangeRef.current;
-      const hasLocalAssignments = Object.keys(assignmentsRef.current).length > 0;
-      const hasUnsavedAssignments = Object.values(assignmentsRef.current).some((a: any) => !a.id);
+      const _hasLocalAssignments = Object.keys(assignmentsRef.current).length > 0;
+      const hasUnsavedAssignments = Object.values(assignmentsRef.current).some((a: Assignment) => !a.id);
       const hasAnyAssignments = Object.keys(assignmentsRef.current).length > 0;
       
       // After initial load, apply safeguards
@@ -595,8 +670,8 @@ export function CourseEditor({
         console.log('⏳ Skipping loadAssignments - unsaved assignments exist', {
           assignmentsCount: Object.keys(assignmentsRef.current).length,
           unsavedAssignments: Object.entries(assignmentsRef.current)
-            .filter(([k, a]) => !a.id)
-            .map(([k, a]) => ({ key: k, title: a.title }))
+            .filter(([_k, a]) => !a.id)
+            .map(([_k, a]) => ({ key: _k, title: a.title }))
         });
         return;
       }
@@ -640,12 +715,12 @@ export function CourseEditor({
     });
     
     // Get assignments from course prop (API returns assignments array)
-    let courseAssignments = (course as any).assignments || [];
+    let courseAssignments = (course as CourseFromAPI).assignments ?? [];
     
     // CRITICAL: Explicitly check if questions are in course prop assignments
     console.log('📥 [loadAssignments] Course prop assignments check:', {
       totalAssignments: courseAssignments.length,
-      assignments: courseAssignments.map((a: any) => ({
+      assignments: courseAssignments.map((a: AssignmentFromAPI) => ({
         id: a.id,
         title: a.title,
         questionsCount: Array.isArray(a.questions) ? a.questions.length : 0,
@@ -657,7 +732,7 @@ export function CourseEditor({
     });
     
     // #region agent log
-    const assignmentA4FromProp = courseAssignments.find((a: any) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
+    const assignmentA4FromProp = courseAssignments.find((a: AssignmentFromAPI) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
     if (assignmentA4FromProp) {
       const questionsArray = Array.isArray(assignmentA4FromProp.questions) ? assignmentA4FromProp.questions : [];
       console.group('📋 [loadAssignments] Assignment a4 from course prop');
@@ -671,7 +746,7 @@ export function CourseEditor({
       
       if (questionsArray.length > 0) {
         console.log('✅ QUESTIONS FOUND:', questionsArray.length);
-        questionsArray.forEach((q: any, idx: number) => {
+        questionsArray.forEach((q: Question, idx: number) => {
           console.log(`  Question ${idx + 1}:`, {
             id: q.id,
             type: q.question_type,
@@ -688,7 +763,7 @@ export function CourseEditor({
     } else {
       console.warn('⚠️ [loadAssignments] Assignment a4 NOT FOUND in course prop!', {
         totalAssignments: courseAssignments.length,
-        assignmentTitles: courseAssignments.map((a: any) => a.title)
+        assignmentTitles: courseAssignments.map((a: AssignmentFromAPI) => a.title)
       });
     }
     fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:567',message:'BEFORE loadAssignments - checking course prop',data:{totalAssignmentsInProp:courseAssignments.length,assignmentA4Exists:!!assignmentA4FromProp,assignmentA4Questions:assignmentA4FromProp?.questions?.length||0,assignmentA4HasQuestionsProp:'questions' in (assignmentA4FromProp||{}),assignmentA4Keys:Object.keys(assignmentA4FromProp||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
@@ -714,7 +789,7 @@ export function CourseEditor({
           console.log(`✅ Fetched ${courseAssignments.length} assignment(s) directly from API`);
           
           if (courseAssignments.length > 0) {
-            console.log('   Assignments from API:', courseAssignments.map((a: any) => ({
+            console.log('   Assignments from API:', courseAssignments.map((a: AssignmentFromAPI) => ({
               id: a.id,
               title: a.title,
               chapter_id: a.chapter_id,
@@ -741,8 +816,8 @@ export function CourseEditor({
       preservedLocalCount: Object.keys(assignmentsData).length,
       apiAssignmentsCount: courseAssignments.length,
       chaptersCount: chaptersToUse.length,
-      chapterIds: chaptersToUse.map((ch: any) => ch.id),
-      assignments: courseAssignments.map((a: any) => ({
+      chapterIds: chaptersToUse.map((ch: Chapter) => ch.id ?? ''),
+      assignments: courseAssignments.map((a: AssignmentFromAPI) => ({
         id: a.id,
         title: a.title,
         chapter_id: a.chapter_id,
@@ -751,7 +826,7 @@ export function CourseEditor({
     });
     
     // Group assignments by chapter_id using permanent IDs
-    courseAssignments.forEach((assignment: any) => {
+    courseAssignments.forEach((assignment: AssignmentFromAPI) => {
       // Extract chapter_id - should always be present with permanent ID system
       let chapterId: string | null = null;
       if (assignment.chapter_id) {
@@ -771,19 +846,15 @@ export function CourseEditor({
       if (chapterId) {
         // Find matching chapter by permanent ID
         // Try multiple matching strategies for robustness
-        let matchingChapter = chaptersToUse.find((ch: any) => {
+        let matchingChapter = chaptersToUse.find((ch: Chapter) => {
           if (!ch.id) return false;
-          // Direct match
           if (ch.id === chapterId) return true;
-          // Case-insensitive match
           const chId = String(ch.id).trim().toLowerCase();
           const assignId = String(chapterId).trim().toLowerCase();
           return chId === assignId;
         });
-        
-        // If no match found, try UUID comparison (handle different UUID formats)
         if (!matchingChapter && chapterId) {
-          matchingChapter = chaptersToUse.find((ch: any) => {
+          matchingChapter = chaptersToUse.find((ch: Chapter) => {
             if (!ch.id) return false;
             // Remove dashes and compare (handles UUID format differences)
             const chIdNormalized = String(ch.id).replace(/-/g, '').toLowerCase();
@@ -831,7 +902,7 @@ export function CourseEditor({
           // CRITICAL: Ensure questions are included - check both assignment.questions and assignment.questions array
           const questionsFromAPI = assignment.questions || [];
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:715',message:'BEFORE storing assignment in state',data:{assignmentId:assignment.id,assignmentTitle:assignment.title,chapterKey,questionsFromAPICount:questionsFromAPI.length,questionsFromAPI:questionsFromAPI.map((q:any)=>({id:q.id,type:q.question_type})),rawQuestionsFromAssignment:assignment.questions},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:715',message:'BEFORE storing assignment in state',data:{assignmentId:assignment.id,assignmentTitle:assignment.title,chapterKey,questionsFromAPICount:questionsFromAPI.length,questionsFromAPI:questionsFromAPI.map((q: Question) => ({ id: q.id, type: q.question_type })),rawQuestionsFromAssignment:assignment.questions},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
           // #endregion
           
           assignmentsData[chapterKey] = {
@@ -844,13 +915,13 @@ export function CourseEditor({
             questions: questionsFromAPI, // Use the questions from API directly
           };
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:725',message:'AFTER storing assignment in state',data:{chapterKey,assignmentId:assignmentsData[chapterKey].id,questionsInState:assignmentsData[chapterKey].questions?.length||0,questionsInStateArray:assignmentsData[chapterKey].questions?.map((q:any)=>({id:q.id,type:q.question_type}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:725',message:'AFTER storing assignment in state',data:{chapterKey,assignmentId:assignmentsData[chapterKey].id,questionsInState:assignmentsData[chapterKey].questions?.length||0,questionsInStateArray:assignmentsData[chapterKey].questions?.map((q: Question) => ({ id: q.id, type: q.question_type }))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
           // #endregion
           
           // Debug: Log questions for this assignment
           if (assignmentsData[chapterKey].questions && assignmentsData[chapterKey].questions.length > 0) {
             console.log(`✅ [loadAssignments] Assignment "${assignment.title}" has ${assignmentsData[chapterKey].questions.length} question(s):`, 
-              assignmentsData[chapterKey].questions.map((q: any) => ({
+              assignmentsData[chapterKey].questions.map((q: Question) => ({
                 id: q.id,
                 question_type: q.question_type,
                 question_text: q.question_text?.substring(0, 50) + '...'
@@ -890,7 +961,7 @@ export function CourseEditor({
             assignmentChapterId: chapterId,
             assignmentChapterIdType: typeof chapterId,
             assignmentChapterIdLength: chapterId?.length,
-            availableChapterIds: chaptersToUse.map((ch: any) => ({
+            availableChapterIds: chaptersToUse.map((ch: Chapter) => ({
               id: ch.id,
               idType: typeof ch.id,
               idLength: ch.id?.length,
@@ -904,7 +975,7 @@ export function CourseEditor({
             const fallbackChapter = chaptersToUse[0];
             const fallbackKey = fallbackChapter.id;
             if (fallbackKey) {
-              console.warn(`   Using first chapter as fallback: ${fallbackKey} (${fallbackChapter.name || (fallbackChapter as any).title || 'Unknown'})`);
+              console.warn(`   Using first chapter as fallback: ${fallbackKey} (${fallbackChapter.name ?? (fallbackChapter as Chapter).title ?? 'Unknown'})`);
               
               assignmentsData[fallbackKey] = {
                 id: assignment.id,
@@ -932,7 +1003,7 @@ export function CourseEditor({
           const fallbackChapter = chaptersToUse[0];
           const fallbackKey = fallbackChapter.id;
           if (fallbackKey) {
-            console.warn(`   Using first chapter as fallback: ${fallbackKey} (${fallbackChapter.name || (fallbackChapter as any).title || 'Unknown'})`);
+            console.warn(`   Using first chapter as fallback: ${fallbackKey} (${fallbackChapter.name ?? (fallbackChapter as Chapter).title ?? 'Unknown'})`);
             
             assignmentsData[fallbackKey] = {
               id: assignment.id,
@@ -956,12 +1027,12 @@ export function CourseEditor({
     // Note: Removed emergency fallback - with permanent IDs, assignments should always map correctly
     
     console.log('📋 Loaded assignments (merged):', {
-      preservedLocalCount: Object.keys(assignmentsData).filter((key: any) => !assignmentsData[key].id).length,
-      loadedFromApiCount: Object.keys(assignmentsData).filter((key: any) => assignmentsData[key].id).length,
+      preservedLocalCount: Object.keys(assignmentsData).filter((key: string) => !assignmentsData[key].id).length,
+      loadedFromApiCount: Object.keys(assignmentsData).filter((key: string) => !!assignmentsData[key].id).length,
       totalAssignmentsCount: Object.keys(assignmentsData).length,
       assignmentsByChapter: Object.keys(assignmentsData),
       assignmentKeys: Object.keys(assignmentsData),
-      chapterIds: chaptersToUse.map((ch: any) => ch.id),
+      chapterIds: chaptersToUse.map((ch: Chapter) => ch.id ?? ''),
       assignments: Object.entries(assignmentsData).map(([chapterId, assignment]) => ({
         chapterId: chapterId,
         assignmentId: assignment.id,
@@ -976,13 +1047,13 @@ export function CourseEditor({
     if (Object.keys(assignmentsData).length === 0 && courseAssignments.length > 0) {
       console.error('❌ FINAL CHECK: Still 0 assignments in state after all processing!');
       console.error('   This indicates a critical bug in the assignment loading logic.');
-      console.error('   Course assignments that failed to load:', courseAssignments.map((a: any) => ({
+      console.error('   Course assignments that failed to load:', courseAssignments.map((a: AssignmentFromAPI) => ({
         id: a.id,
         title: a.title,
         chapter_id: a.chapter_id,
         config: a.config
       })));
-      console.error('   Available chapters:', chaptersToUse.map((ch: any) => ({
+      console.error('   Available chapters:', chaptersToUse.map((ch: Chapter) => ({
         id: ch.id,
         name: ch.name || ch.title
       })));
@@ -993,7 +1064,7 @@ export function CourseEditor({
         const emergencyKey = emergencyChapter.id;
         if (emergencyKey) {
           console.warn('🚨 EMERGENCY FALLBACK: Assigning all unmatched assignments to first chapter:', emergencyKey);
-          courseAssignments.forEach((assignment: any, idx: number) => {
+          courseAssignments.forEach((assignment: AssignmentFromAPI, idx: number) => {
             if (!assignmentsData[emergencyKey] || idx === 0) {
               assignmentsData[emergencyKey] = {
               id: assignment.id,
@@ -1021,7 +1092,7 @@ export function CourseEditor({
       Object.entries(assignmentsData).forEach(([key, assignment]) => {
         // #region agent log
         if (assignment.title === 'a4' || assignment.id === 'ed84fe55-9c57-4a32-864b-105d44116428') {
-          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:892',message:'Merging assignment a4 into state',data:{chapterKey:key,assignmentId:assignment.id,questionsInAssignmentData:assignment.questions?.length||0,questions:assignment.questions?.map((q:any)=>({id:q.id,type:q.question_type}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:892',message:'Merging assignment a4 into state',data:{chapterKey:key,assignmentId:assignment.id,questionsInAssignmentData:assignment.questions?.length||0,questions:assignment.questions?.map((q: Question) => ({ id: q.id, type: q.question_type }))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
         }
         // #endregion
         merged[key] = assignment;
@@ -1052,7 +1123,7 @@ export function CourseEditor({
       assignmentsRef.current = merged;
       
       // CRITICAL: Verify questions are preserved in merged state
-      const assignmentA4InMerged = Object.values(merged).find((a: any) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
+      const assignmentA4InMerged = Object.values(merged).find((a: Assignment) => a.title === 'a4' || a.id === 'ed84fe55-9c57-4a32-864b-105d44116428');
       if (assignmentA4InMerged) {
         const questionsInMerged = Array.isArray(assignmentA4InMerged.questions) ? assignmentA4InMerged.questions : [];
         const questionsCount = questionsInMerged.length;
@@ -1064,12 +1135,12 @@ export function CourseEditor({
           questionsIsArray: Array.isArray(assignmentA4InMerged.questions),
           questionsType: typeof assignmentA4InMerged.questions,
           hasQuestionsProperty: 'questions' in assignmentA4InMerged,
-          questions: questionsInMerged.map((q: any) => ({ id: q.id, type: q.question_type }))
+          questions: questionsInMerged.map((q: { id?: string; question_type?: string }) => ({ id: q.id, type: q.question_type }))
         });
         
         // Explicitly log questions so they're visible
         if (questionsCount > 0) {
-          console.log('✅ [Merge] QUESTIONS FOUND in merged state:', questionsInMerged.map((q: any) => ({
+          console.log('✅ [Merge] QUESTIONS FOUND in merged state:', questionsInMerged.map((q: Question) => ({
             id: q.id,
             type: q.question_type,
             text: q.question_text?.substring(0, 50)
@@ -1088,7 +1159,7 @@ export function CourseEditor({
       
       // Also check ALL assignments in merged state
       console.log('📋 [Merge] ALL assignments questions check:', 
-        Object.entries(merged).map(([key, a]: [string, any]) => ({
+        Object.entries(merged).map(([key, a]: [string, Assignment]) => ({
           key: key,
           title: a.title,
           id: a.id,
@@ -1122,16 +1193,16 @@ export function CourseEditor({
           if (emergencyKey) {
             console.warn('🚨 EMERGENCY: Adding all assignments to first chapter:', emergencyKey);
             
-            courseAssignments.forEach((assignment: any, idx: number) => {
+            courseAssignments.forEach((assignment: AssignmentFromAPI, idx: number) => {
               if (!merged[emergencyKey] || idx === 0) {
                 merged[emergencyKey] = {
                 id: assignment.id,
                 chapter_id: emergencyKey,
                 title: assignment.title || `Assignment ${idx + 1}`,
                 description: assignment.description || '',
-                max_score: assignment.max_score || assignment.max_marks || 100,
-                auto_grading_enabled: assignment.auto_grading_enabled || false,
-                questions: assignment.questions || [],
+                max_score: assignment.max_score ?? assignment.max_marks ?? 100,
+                auto_grading_enabled: assignment.auto_grading_enabled ?? false,
+                questions: (assignment.questions || []) as Assignment['questions'],
               };
               }
             });
@@ -1162,10 +1233,10 @@ export function CourseEditor({
       }
     }, 500);
     
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Error in loadAssignments:', error);
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:917',message:'ERROR in loadAssignments',data:{errorMessage:error?.message,errorStack:error?.stack,courseId:course.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'N'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:917',message:'ERROR in loadAssignments',data:{errorMessage:(error as Error)?.message,errorStack:(error as Error)?.stack,courseId:course.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'N'})}).catch(()=>{});
       // #endregion
     } finally {
       isLoadingAssignmentsRef.current = false;
@@ -1270,13 +1341,13 @@ export function CourseEditor({
         }
         
         // Ensure assignment has required fields for API
-        const assignmentForSave: any = {
+        const assignmentForSave: AssignmentFromAPI = {
           ...assignment,
-          id: assignment.id || generateUUID(), // Ensure permanent ID
-          chapter_id: chapterId, // Use chapter ID from key (should match assignment.chapter_id)
-          assignment_type: (assignment as any).assignment_type || 'essay',
-          max_score: assignment.max_score || (assignment as any).max_marks || 100,
-          max_marks: (assignment as any).max_marks || assignment.max_score || 100,
+          id: assignment.id ?? generateUUID(),
+          chapter_id: chapterId ?? undefined,
+          assignment_type: (assignment as AssignmentFromAPI).assignment_type ?? 'essay',
+          max_score: assignment.max_score ?? (assignment as AssignmentFromAPI).max_marks ?? 100,
+          max_marks: (assignment as AssignmentFromAPI).max_marks ?? assignment.max_score ?? 100,
         };
         
         console.log('📦 Prepared assignment for save:', {
@@ -1331,7 +1402,16 @@ export function CourseEditor({
       
       // Validate each assignment has required fields
       const invalidAssignments: string[] = [];
-      assignmentsArray.forEach((assignment: any, index: number) => {
+      interface AssignmentForSave {
+        title?: string;
+        chapter_id?: string;
+        assignment_type?: string;
+        questions?: Question[];
+        max_score?: number;
+        [key: string]: unknown;
+      }
+      
+      assignmentsArray.forEach((assignment: AssignmentForSave, index: number) => {
         if (!assignment.title || !assignment.title.trim()) {
           invalidAssignments.push(`Assignment at index ${index}: Missing title`);
         }
@@ -1351,7 +1431,7 @@ export function CourseEditor({
       }
       
       if (assignmentsArray.length > 0) {
-        console.log('✅ Assignments validated and will be saved:', assignmentsArray.map((a: any) => ({
+        console.log('✅ Assignments validated and will be saved:', assignmentsArray.map((a: AssignmentForSave) => ({
           title: a.title,
           chapter_id: a.chapter_id,
           assignment_type: a.assignment_type,
@@ -1364,7 +1444,7 @@ export function CourseEditor({
       }
       
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1098',message:'Before creating courseData object',data:{assignmentsArrayLength:assignmentsArray.length,assignmentsArray:assignmentsArray.map((a:any)=>({title:a.title,chapter_id:a.chapter_id,id:a.id})),chaptersCount:chapters.length,chapterIds:chapters.map(ch=>ch.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1098',message:'Before creating courseData object',data:{assignmentsArrayLength:assignmentsArray.length,assignmentsArray:assignmentsArray.map((a: AssignmentFromAPI) => ({ title: a.title, chapter_id: a.chapter_id, id: a.id })),chaptersCount:chapters.length,chapterIds:chapters.map(ch=>ch.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
       // #endregion
       
       console.log('💾 Saving course with data:', {
@@ -1372,7 +1452,7 @@ export function CourseEditor({
         chaptersCount: chapters.length,
         assignmentsCount: assignmentsArray.length,
         chapterContentsCount: Object.values(chapterContents).flat().length,
-        assignmentsDetails: assignmentsArray.length > 0 ? assignmentsArray.map((a: any) => ({
+        assignmentsDetails: assignmentsArray.length > 0 ? assignmentsArray.map((a: AssignmentForSave) => ({
           title: a.title,
           chapter_id: a.chapter_id,
           assignment_type: a.assignment_type,
@@ -1393,18 +1473,18 @@ export function CourseEditor({
         difficulty_level: basicInfo.difficulty_level || "Beginner",
         school_ids: selectedSchoolIds,
         grades: selectedGrades,
-        chapters: chapters.map((ch: any) => ({
+        chapters: chapters.map((ch: Chapter) => ({
           ...ch,
           name: ch.name.trim(),
         })),
         chapter_contents: Object.entries(chapterContents).flatMap(([chapterId, contents]) =>
-          contents.map((content: any) => ({
+          contents.map((content: ChapterContent) => ({
             ...content,
             chapter_id: chapterId,
           }))
         ),
         assignments: assignmentsArray, // Always include, even if empty
-        videos: videos.length > 0 ? videos.map((v: any) => ({
+        videos: videos.length > 0 ? videos.map((v: { chapter_id: string; title: string; video_url: string; duration?: number }) => ({
           chapter_id: v.chapter_id,
           title: v.title,
           video_url: v.video_url,
@@ -1414,7 +1494,7 @@ export function CourseEditor({
       };
       
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1130',message:'courseData object created, calling onSave',data:{courseId:courseData.id,hasAssignments:!!courseData.assignments,assignmentsCount:courseData.assignments?.length||0,assignmentsInCourseData:courseData.assignments?.map((a:any)=>({title:a.title,chapter_id:a.chapter_id,id:a.id}))||[],allKeys:Object.keys(courseData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1130',message:'courseData object created, calling onSave',data:{courseId:courseData.id,hasAssignments:!!courseData.assignments,assignmentsCount:courseData.assignments?.length||0,assignmentsInCourseData:courseData.assignments?.map((a: AssignmentFromAPI) => ({ title: a.title, chapter_id: a.chapter_id, id: a.id }))||[],allKeys:Object.keys(courseData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
       // #endregion
       
       // Final validation before sending
@@ -1423,7 +1503,7 @@ export function CourseEditor({
         hasAssignments: !!courseData.assignments,
         assignmentsCount: courseData.assignments?.length || 0,
         assignmentsArray: courseData.assignments,
-        assignmentsDetails: courseData.assignments?.map((a: any) => ({
+        assignmentsDetails: courseData.assignments?.map((a: AssignmentFromAPI) => ({
           title: a.title,
           chapter_id: a.chapter_id,
           assignment_type: a.assignment_type,
@@ -1644,7 +1724,7 @@ export function CourseEditor({
                       <strong>Ref Count:</strong> {Object.keys(assignmentsRef.current).length}
                     </div>
                     <div>
-                      <strong>Course Prop Assignments:</strong> {(course as any).assignments?.length || 0}
+                      <strong>Course Prop Assignments:</strong> {course.assignments?.length || 0}
                     </div>
                     <div>
                       <strong>Initial Load Completed:</strong> {hasInitialLoadCompletedRef.current ? '✅ Yes' : '❌ No'}
@@ -1661,13 +1741,13 @@ export function CourseEditor({
                     <strong>Course Prop Assignments Details:</strong>
                     <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto max-h-24">
                       {JSON.stringify(
-                        ((course as any).assignments || []).map((a: any) => ({
+                        (course.assignments || []).map((a: AssignmentFromAPI) => ({
                           id: a.id,
                           title: a.title,
                           chapter_id: a.chapter_id,
                           questionsCount: a.questions?.length || 0,
                           hasQuestions: 'questions' in a,
-                          questions: a.questions?.map((q: any) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) })) || [],
+                          questions: a.questions?.map((q: Question) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) })) || [],
                           hasConfig: !!a.config,
                           configChapterId: a.config ? (() => {
                             try {
@@ -1695,7 +1775,7 @@ export function CourseEditor({
                           chapter_id: ass.chapter_id,
                           questionsCount: ass.questions?.length || 0,
                           hasQuestions: 'questions' in ass,
-                          questions: ass.questions?.map((q: any) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) })) || []
+                          questions: ass.questions?.map((q: Question) => ({ id: q.id, type: q.question_type, text: q.question_text?.substring(0, 30) })) ?? []
                         })),
                         null,
                         2
@@ -1723,7 +1803,7 @@ export function CourseEditor({
                     <strong>Chapter ID Matching Test:</strong>
                     <pre className="mt-1 p-2 bg-white rounded text-xs">
                       {(() => {
-                        const courseAssignments = (course as any).assignments || [];
+                          const courseAssignments = course.assignments || [];
                         if (courseAssignments.length === 0) {
                           return 'No assignments in course prop to match';
                         }
@@ -1731,7 +1811,7 @@ export function CourseEditor({
                           const chapterKey = getChapterKey(ch, idx);
                           const stateFound = assignments[chapterKey];
                           const refFound = assignmentsRef.current[chapterKey];
-                          const courseAssignmentsForChapter = courseAssignments.filter((a: any) => {
+                          const courseAssignmentsForChapter = courseAssignments.filter((a: AssignmentFromAPI) => {
                             const aChapterId = a.chapter_id || (a.config ? (() => {
                               try {
                                 const config = typeof a.config === 'string' ? JSON.parse(a.config) : a.config;
@@ -1751,7 +1831,7 @@ export function CourseEditor({
                                  `  State: ${stateFound ? `✅ "${stateFound.title}"` : '❌ Not found'}\n` +
                                  `  Ref: ${refFound ? `✅ "${refFound.title}"` : '❌ Not found'}\n` +
                                  (courseAssignmentsForChapter.length > 0 ? 
-                                   `  Course Assignments: ${courseAssignmentsForChapter.map((a: any) => 
+                                   `  Course Assignments: ${courseAssignmentsForChapter.map((a: AssignmentFromAPI) => 
                                      `${a.title} (chapter_id: ${a.chapter_id || 'NULL'})`
                                    ).join(', ')}\n` : '');
                         }).join('\n\n');
@@ -1894,11 +1974,11 @@ export function CourseEditor({
                           const questionsInfo = questionsArray.length > 0 ? {
                             count: questionsArray.length,
                             hasQuestions: true,
-                            questions: questionsArray.map((q: any) => ({
+                            questions: questionsArray.map((q: Question | AssignmentQuestion) => ({
                               id: q.id,
                               question_type: q.question_type,
-                              question_text: q.question_text?.substring(0, 50),
-                              marks: q.marks
+                              question_text: (q as { question_text?: string }).question_text?.substring(0, 50),
+                              marks: (q as { marks?: number }).marks
                             }))
                           } : { count: 0, hasQuestions: false, questions: [] };
                           
@@ -1912,10 +1992,10 @@ export function CourseEditor({
                             assignmentId: assignment?.id,
                             questionsCount: questionsArray.length,
                             hasQuestions: questionsArray.length > 0,
-                            questions: questionsArray.map((q: any) => ({
+                            questions: questionsArray.map((q: Question | AssignmentQuestion) => ({
                               id: q.id,
                               question_type: q.question_type,
-                              question_text: q.question_text?.substring(0, 30) + '...'
+                              question_text: ((q as { question_text?: string }).question_text?.substring(0, 30) ?? '') + '...'
                             })),
                             // EXPANDED: Full questions info
                             questionsInfo: questionsInfo,
@@ -1951,12 +2031,12 @@ export function CourseEditor({
                             // Log each question individually so they're visible
                             if (questionsArray.length > 0) {
                               console.log('✅ QUESTIONS FOUND:', questionsArray.length);
-                              questionsArray.forEach((q: any, idx: number) => {
+                              questionsArray.forEach((q: Question | AssignmentQuestion, idx: number) => {
                                 console.log(`  Question ${idx + 1}:`, {
                                   id: q.id,
                                   type: q.question_type,
-                                  text: q.question_text?.substring(0, 50),
-                                  marks: q.marks
+                                  text: (q as { question_text?: string }).question_text?.substring(0, 50),
+                                  marks: (q as { marks?: number }).marks
                                 });
                               });
                             } else {
@@ -1970,7 +2050,7 @@ export function CourseEditor({
                             console.groupEnd();
                           }
                           // #region agent log
-                          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1642',message:'Passing assignment to AssignmentBuilder',data:{chapterKey,chapterId:chapter.id,assignmentId:assignment?.id,assignmentTitle:assignment?.title,questionsCount:questionsArray.length,questions:questionsArray.map((q:any)=>({id:q.id,type:q.question_type})),hasQuestions:questionsArray.length>0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+                          fetch('http://127.0.0.1:7242/ingest/aa2d37a3-b977-45e9-919f-23aa5642fdcf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CourseEditor.tsx:1642',message:'Passing assignment to AssignmentBuilder',data:{chapterKey,chapterId:chapter.id,assignmentId:assignment?.id,assignmentTitle:assignment?.title,questionsCount:questionsArray.length,questions:questionsArray.map((q: Question) => ({ id: q.id, type: q.question_type })),hasQuestions:questionsArray.length>0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
                           // #endregion
                           
                           return assignment;

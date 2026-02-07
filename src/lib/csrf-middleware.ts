@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
-import { validateCsrfProtection, addCsrfTokenToResponse, getOrCreateCsrfToken, CSRF_COOKIE_NAME, CSRF_COOKIE_OPTIONS } from './csrf';
+import { validateCsrfProtection, addCsrfTokenToResponse } from './csrf';
 
 /**
  * CSRF Protection Middleware Helper

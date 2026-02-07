@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 try {
     // Get user ID from auth token (would need to extract from request)
     // For now, this is a placeholder - in production, extract from auth session
-    const authHeader = request.headers.get('authorization');
+    const _authHeader = request.headers.get('authorization');
     
     // Note: In production, you would extract the user ID from the JWT token
     // For admin operations, we can use the service role, but need user context
@@ -82,7 +82,7 @@ try {
     const validation = validateRequestBody(adminProfileUpdateSchema, body);
     if (!validation.success) {
        
-      const errorMessages = validation.details?.issues?.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') || validation.error || 'Invalid request data';
+      const errorMessages = validation.details?.issues?.map((e) => `${((e.path as (string | number)[]) || []).join('.')}: ${e.message ?? ''}`).join(', ') || validation.error || 'Invalid request data';
       logger.warn('Validation failed for admin profile update', {
         endpoint: '/api/admin/profile',
         errors: errorMessages,
@@ -101,7 +101,12 @@ try {
 
     // Update profile using admin client
      
-    const updateData: any = {};
+    interface UpdateData {
+      full_name?: string;
+      email?: string;
+    }
+    
+    const updateData: UpdateData = {};
     if (full_name !== undefined) {
       updateData.full_name = full_name;
     }
@@ -110,14 +115,13 @@ try {
     }
 
      
-    const { data: updatedProfile, error: updateError } = await ((supabaseAdmin as any)
+    const { data: updatedProfile, error: updateError } = await supabaseAdmin
       .from('profiles')
-       
-      .update(updateData as any)
+      // @ts-expect-error - profiles table update type not in schema
+      .update(updateData)
       .eq('id', user_id)
       .select()
-       
-      .single() as any) as any;
+      .single();
 
     if (updateError) {
       logger.error('Failed to update admin profile', {
@@ -143,7 +147,7 @@ try {
       message: 'Profile updated successfully'
     });
    
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Unexpected error in POST /api/admin/profile', {
       endpoint: '/api/admin/profile',
     }, error instanceof Error ? error : new Error(String(error)));
@@ -159,6 +163,14 @@ try {
 
 // PATCH: Same as POST
 export async function PATCH(request: NextRequest) {
+  // Validate CSRF protection
+  const { validateCsrf, ensureCsrfToken } = await import('../../../../lib/csrf-middleware');
+  const csrfError = await validateCsrf(request);
+  if (csrfError) {
+    return csrfError;
+  }
+
+  ensureCsrfToken(request);
   
   // Apply rate limiting
   const rateLimitResult = await rateLimit(request, RateLimitPresets.WRITE);

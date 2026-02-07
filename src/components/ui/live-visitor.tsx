@@ -1,7 +1,4 @@
-import { cn } from "@/lib/utils";
-
 import { useState, useEffect, useRef } from 'react';
-import { MotionValue, motion, useSpring, useTransform } from 'motion/react';
 import '@/index.css';
 
 // Local emoji paths - these are stored in public/images/emojis/
@@ -89,7 +86,7 @@ const LiveVisitorCounter = () => {
         return (
             <div className="digit-place">
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => {
-                    let digitOffset = (10 + num - offset) % 10;
+                    const digitOffset = (10 + num - offset) % 10;
                     let translateY = digitOffset * 20;
 
                     if (digitOffset > 5) {
@@ -127,7 +124,7 @@ const LiveVisitorCounter = () => {
 
             <div className="content">
                 <div className="counter">
-                    {[10000, 1000, 100, 10, 1].map((place: any) => (
+                    {[10000, 1000, 100, 10, 1].map((place: number) => (
                         <DigitPlace key={place} place={place} value={visitorCount} />
                     ))}
                 </div>
@@ -143,6 +140,7 @@ const LiveVisitorCounter = () => {
                                 animationDelay: `${index * 120}ms`
                             }}
                         >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img 
                                 src={url} 
                                 alt={`Visitor ${index}`}

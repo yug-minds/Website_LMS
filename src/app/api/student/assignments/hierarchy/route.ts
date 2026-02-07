@@ -36,12 +36,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get student's school and grade
-    const { data: studentSchool } = await supabaseAdmin
+    type StudentSchoolRow = { school_id?: string | null; grade?: string | null }
+    const { data: studentSchoolData } = await supabaseAdmin
       .from('student_schools')
       .select('school_id, grade')
       .eq('student_id', user.id)
       .maybeSingle()
 
+    const studentSchool = studentSchoolData as StudentSchoolRow | null
     if (!studentSchool) {
       return NextResponse.json(
         { error: 'Student school not found' },
@@ -56,15 +58,17 @@ export async function GET(request: NextRequest) {
       .eq('student_id', user.id)
       .eq('status', 'active')
 
+    const schoolId = studentSchool.school_id ?? ''
+    const gradeVal = studentSchool.grade ?? ''
     const { data: courseAccess } = await supabaseAdmin
       .from('course_access')
       .select('course_id')
-      .eq('school_id', studentSchool.school_id)
-      .eq('grade', studentSchool.grade)
+      .eq('school_id', schoolId)
+      .eq('grade', gradeVal)
 
     const courseIds = new Set<string>()
-    enrollments?.forEach((e: { course_id: string }) => e.course_id && courseIds.add(e.course_id))
-    courseAccess?.forEach((ca: { course_id: string }) => ca.course_id && courseIds.add(ca.course_id))
+    enrollments?.forEach((e: { course_id?: string | null }) => { if (e.course_id) courseIds.add(e.course_id) })
+    courseAccess?.forEach((ca: { course_id?: string | null }) => { if (ca.course_id) courseIds.add(ca.course_id) })
 
     if (courseIds.size === 0) {
       return NextResponse.json({ courses: [] })
@@ -98,10 +102,12 @@ export async function GET(request: NextRequest) {
       .eq('is_published', true)
 
     // Fetch submissions to determine status
-    const { data: submissions } = await supabaseAdmin
+    type SubmissionRow = { id: string; assignment_id: string; status: string; grade: number | null; submitted_at: string | null; feedback: string | null }
+    const { data: submissionsData } = await supabaseAdmin
       .from('submissions')
       .select('id, assignment_id, status, grade, submitted_at, feedback')
       .eq('student_id', user.id)
+    const submissions = (submissionsData || []) as SubmissionRow[]
 
     // Organize data hierarchically
     type CourseWithChapters = {
@@ -110,7 +116,28 @@ export async function GET(request: NextRequest) {
       grade: string | null
       subject: string | null
       description: string | null
-      chapters: any[]
+      chapters: Array<{
+        id: string
+        course_id: string
+        title: string
+        name: string
+        order_index: number | null
+        order_number: number | null
+        assignments: Array<{
+          id: string
+          course_id: string
+          chapter_id: string | null
+          title: string
+          description: string | null
+          assignment_type: string | null
+          due_date: string | null
+          max_score: number | null
+          auto_grading_enabled: boolean | null
+          is_published: boolean | null
+          [key: string]: unknown
+        }>
+        [key: string]: unknown
+      }>
     }
     const coursesMap = new Map<string, CourseWithChapters>(courses.map((c: {
       id: string
@@ -120,7 +147,7 @@ export async function GET(request: NextRequest) {
       description: string | null
     }) => [c.id, {
       ...c,
-      chapters: [] as any[]
+      chapters: []
     }]))
 
     // Add chapters to courses
@@ -136,7 +163,7 @@ export async function GET(request: NextRequest) {
       if (course) {
         course.chapters.push({
           ...chapter,
-          assignments: [] as any[]
+          assignments: []
         })
       }
     })
@@ -158,16 +185,9 @@ export async function GET(request: NextRequest) {
       if (course) {
         if (assignment.chapter_id) {
           // Assignment linked to a chapter
-          const chapter = course.chapters.find((ch: any) => ch.id === assignment.chapter_id)
+          const chapter = course.chapters.find((ch) => ch.id === assignment.chapter_id)
           if (chapter) {
-            const submission = submissions?.find((s: {
-              id: string
-              assignment_id: string
-              status: string
-              grade: number | null
-              submitted_at: string | null
-              feedback: string | null
-            }) => s.assignment_id === assignment.id)
+            const submission = submissions?.find((s) => s.assignment_id === assignment.id)
             const dueDate = assignment.due_date ? new Date(assignment.due_date) : null
             const now = new Date()
             const isOverdue = dueDate && dueDate < now && (!submission || submission.status !== 'submitted')
@@ -197,7 +217,17 @@ export async function GET(request: NextRequest) {
         } else {
           // Assignment linked directly to course (no chapter)
           // Create a virtual "Uncategorized" chapter
-          let uncategorizedChapter = course.chapters.find((ch: any) => ch.id === 'uncategorized')
+          type ChapterItem = {
+            id: string;
+            course_id?: string;
+            title?: string;
+            name?: string;
+            order_index?: number | null;
+            order_number?: number | null;
+            assignments?: unknown[];
+          }
+          
+          let uncategorizedChapter = course.chapters.find((ch: ChapterItem) => ch.id === 'uncategorized')
           if (!uncategorizedChapter) {
             uncategorizedChapter = {
               id: 'uncategorized',
@@ -211,14 +241,7 @@ export async function GET(request: NextRequest) {
             course.chapters.push(uncategorizedChapter)
           }
 
-          const submission = submissions?.find((s: {
-            id: string
-            assignment_id: string
-            status: string
-            grade: number | null
-            submitted_at: string | null
-            feedback: string | null
-          }) => s.assignment_id === assignment.id)
+          const submission = submissions?.find((s) => s.assignment_id === assignment.id)
           const dueDate = assignment.due_date ? new Date(assignment.due_date) : null
           const now = new Date()
           const isOverdue = dueDate && dueDate < now && (!submission || submission.status !== 'submitted')
@@ -249,8 +272,9 @@ export async function GET(request: NextRequest) {
     })
 
     // Sort chapters by order_index
+    type ChapterSort = { order_index?: number | null; order_number?: number | null }
     coursesMap.forEach(course => {
-      course.chapters.sort((a: any, b: any) => {
+      course.chapters.sort((a: ChapterSort, b: ChapterSort) => {
         const orderA = a.order_index ?? a.order_number ?? 9999
         const orderB = b.order_index ?? b.order_number ?? 9999
         return orderA - orderB
@@ -261,10 +285,11 @@ export async function GET(request: NextRequest) {
     const result = Array.from(coursesMap.values())
 
     return NextResponse.json({ courses: result })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching assignment hierarchy:', error)
+    const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'Internal server error', details: error.message },
+      { error: 'Internal server error', details: message },
       { status: 500 }
     )
   }

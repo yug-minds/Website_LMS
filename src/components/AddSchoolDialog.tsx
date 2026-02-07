@@ -27,21 +27,13 @@ import {
   Mail,
   User,
   Key,
-  Settings,
   Building,
   Users,
   GraduationCap,
   Plus,
   RefreshCw,
-  Eye,
-  EyeOff,
-  CheckCircle,
   AlertCircle,
   Copy,
-  RotateCcw,
-  ToggleLeft,
-  ToggleRight,
-  Hash,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
@@ -87,6 +79,7 @@ interface SchoolFormData {
   grades_offered: string[];
   total_students_estimate: number;
   total_teachers_estimate: number;
+  number_of_sections: number | null;
   
   // Joining Codes
   code_generation_type: 'auto' | 'manual';
@@ -121,10 +114,10 @@ const schoolTypes = [
 
 export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoolDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [currentTab, setCurrentTab] = useState('basic');
+  const [currentTab, setCurrentTab] = useState<'basic' | 'admin' | 'academic' | 'codes'>('basic');
   
   // Load saved form data
-  const savedFormData = typeof window !== 'undefined' && isOpen
+  const _savedFormData = typeof window !== 'undefined' && isOpen
     ? loadFormData<SchoolFormData>('add-school-dialog-form')
     : null;
 
@@ -153,6 +146,7 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
     grades_offered: [],
     total_students_estimate: 0,
     total_teachers_estimate: 0,
+    number_of_sections: null,
     // Joining code options
     code_generation_type: 'auto',
     usage_type: 'multiple',
@@ -170,7 +164,7 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
   // Auto-save form data while dialog is open
   const { clearSavedData } = useAutoSaveForm({
     formId: 'add-school-dialog-form',
-    formData: { ...formData, currentTab, generated_codes: generatedCodes } as any,
+    formData: { ...formData, currentTab, generated_codes: generatedCodes } as Record<string, unknown>,
     autoSave: isOpen, // Only auto-save when dialog is open
     autoSaveInterval: 2000,
     debounceDelay: 500,
@@ -187,7 +181,9 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
         setFormData(saved);
         setErrors({});
         setGeneratedCodes(saved.generated_codes || {});
-        if (saved.currentTab) setCurrentTab(saved.currentTab);
+        if (saved.currentTab && ['basic', 'admin', 'academic', 'codes'].includes(saved.currentTab)) {
+          setCurrentTab(saved.currentTab as 'basic' | 'admin' | 'academic' | 'codes');
+        }
       } else {
         setFormData(initialFormData);
         setErrors({});
@@ -198,6 +194,7 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
       // Clear saved data when dialog closes (optional - can keep for recovery)
       // clearFormData('add-school-dialog-form');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- initialFormData is stable, only reset when isOpen changes
   }, [isOpen]);
 
   // Check if all required fields are filled
@@ -254,7 +251,7 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
   };
 
    
-  const handleInputChange = (field: keyof SchoolFormData, value: any) => {
+  const handleInputChange = (field: keyof SchoolFormData, value: string | number | string[] | Record<string, string>) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -273,26 +270,73 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
     setFormData(prev => ({
       ...prev,
       grades_offered: prev.grades_offered.includes(grade)
-        ? prev.grades_offered.filter((g: any) => g !== grade)
+        ? prev.grades_offered.filter((g: string) => g !== grade)
         : [...prev.grades_offered, grade]
     }));
   };
 
   const generatePreviewCodes = () => {
-    if (formData.grades_offered.length === 0) return {};
+    if (formData.grades_offered.length === 0) {
+      setGeneratedCodes({});
+      return {};
+    }
     
-    const schoolNameShort = formData.name.split(' ').map((word: any) => word[0]).join('').toUpperCase().substring(0, 3) || 'SCH';
+    const schoolNameShort = formData.name.split(' ').map((word: string) => word[0]).join('').toUpperCase().substring(0, 3) || 'SCH';
     const codes: Record<string, string> = {};
     
-    formData.grades_offered.forEach(grade => {
-      const gradeAbbr = grade.replace('Grade ', 'G').replace('Pre-K', 'PK').replace('Kindergarten', 'K');
-      const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      codes[grade] = `${schoolNameShort}-${gradeAbbr}-${randomNum}`;
+    // Check if number_of_sections is set
+    const numSections = formData.number_of_sections;
+    console.log('🔍 Generating preview codes:', { 
+      numSections, 
+      type: typeof numSections,
+      gradesCount: formData.grades_offered.length,
+      grades: formData.grades_offered 
     });
     
+    if (numSections && numSections > 0) {
+      // Ensure numSections is a number
+      const sectionsCount = typeof numSections === 'number' ? numSections : parseInt(String(numSections));
+      console.log('📊 Sections count:', sectionsCount);
+      
+      // Generate grade + section specific codes
+      const sections = Array.from({ length: Math.min(sectionsCount, 26) }, (_, i) => 
+        String.fromCharCode(65 + i) // A, B, C, etc.
+      );
+      
+      console.log('📋 Sections array:', sections, 'Length:', sections.length);
+      
+      formData.grades_offered.forEach(grade => {
+        const gradeAbbr = grade.replace('Grade ', 'G').replace('Pre-K', 'PK').replace('Kindergarten', 'K');
+        
+        sections.forEach(section => {
+          const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+          const key = `${grade} - Section ${section}`;
+          codes[key] = `${schoolNameShort}-${gradeAbbr}-${section}-${randomNum}`;
+          console.log(`✅ Generated code for ${key}: ${codes[key]}`);
+        });
+      });
+    } else {
+      // Generate grade-only codes (original behavior)
+      formData.grades_offered.forEach(grade => {
+        const gradeAbbr = grade.replace('Grade ', 'G').replace('Pre-K', 'PK').replace('Kindergarten', 'K');
+        const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        codes[grade] = `${schoolNameShort}-${gradeAbbr}-${randomNum}`;
+      });
+    }
+    
+    console.log('Generated codes:', codes);
     setGeneratedCodes(codes);
     return codes;
   };
+
+  // Auto-regenerate preview codes when grades or sections change (only on codes tab)
+  useEffect(() => {
+    if (formData.grades_offered.length > 0 && currentTab === 'codes' && formData.name) {
+      // Only auto-generate if we're on the codes tab and have a school name
+      generatePreviewCodes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.grades_offered.length, formData.number_of_sections, currentTab, formData.name]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -339,6 +383,10 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
         affiliation_type: formData.affiliation_type,
         school_type: formData.school_type,
         school_logo: formData.school_logo,
+        // Principal Information
+        principal_name: formData.principal_name.trim(),
+        principal_phone: formData.principal_phone.trim(),
+        // School Admin Information
         school_admin_name: formData.school_admin_name.trim(),
         school_admin_email: formData.school_admin_email.trim(),
         school_admin_phone: formData.school_admin_phone.trim(),
@@ -346,6 +394,9 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
         grades_offered: formData.grades_offered,
         total_students_estimate: formData.total_students_estimate,
         total_teachers_estimate: formData.total_teachers_estimate,
+        number_of_sections: formData.number_of_sections && formData.number_of_sections > 0 
+          ? formData.number_of_sections 
+          : null,
         code_generation_type: formData.code_generation_type,
         usage_type: formData.usage_type,
         max_uses: formData.max_uses,
@@ -367,15 +418,30 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
       if (!response.ok) {
         const errorText = await response.text();
         let errorMessage = 'Failed to create school';
+        let errorDetails = '';
         
         try {
           const errorData = JSON.parse(errorText);
           errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch (e) {
+          errorDetails = errorData.details || '';
+        } catch {
           errorMessage = errorText || errorMessage;
         }
         
-        throw new Error(errorMessage);
+        // Include details in error message if available
+        const fullErrorMessage = errorDetails 
+          ? `${errorMessage}: ${errorDetails}`
+          : errorMessage;
+        
+        console.error('School creation error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          details: errorDetails,
+          fullResponse: errorText
+        });
+        
+        throw new Error(fullErrorMessage);
       }
 
       const result = await response.json();
@@ -404,7 +470,7 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
     }
   };
 
-  const tabs = [
+  const tabs: Array<{ id: 'basic' | 'admin' | 'academic' | 'codes'; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'basic', label: 'Basic Information', icon: Building },
     { id: 'admin', label: 'School Admin', icon: Users },
     { id: 'academic', label: 'Academic Details', icon: GraduationCap },
@@ -783,6 +849,43 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
                     {errors.grades_offered && <p className="text-sm text-red-500">{errors.grades_offered}</p>}
                   </div>
 
+                  <div className="space-y-2">
+                    <Label htmlFor="number_of_sections" className="text-sm font-medium">
+                      Number of Sections per Grade
+                    </Label>
+                    <Input
+                      id="number_of_sections"
+                      type="number"
+                      value={formData.number_of_sections || ''}
+                      onChange={(e) => {
+                        const inputValue = e.target.value;
+                        if (inputValue === '') {
+                          handleInputChange('number_of_sections', null);
+                          // Clear preview when sections are removed
+                          setGeneratedCodes({});
+                        } else {
+                          const parsed = parseInt(inputValue);
+                          const value = isNaN(parsed) ? null : parsed;
+                          handleInputChange('number_of_sections', value);
+                          // Regenerate preview when sections change (if on codes tab)
+                          if (value && value > 0 && formData.grades_offered.length > 0 && formData.name) {
+                            // Use setTimeout to ensure state is updated first
+                            setTimeout(() => {
+                              generatePreviewCodes();
+                            }, 100);
+                          }
+                        }
+                      }}
+                      placeholder="e.g., 3 (for sections A, B, C)"
+                      min="1"
+                      max="26"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Set the number of sections for each grade (1-26). This applies to all grades and helps organize students into sections (A, B, C, etc.). Leave empty if sections are not used.
+                    </p>
+                    {errors.number_of_sections && <p className="text-sm text-red-500">{errors.number_of_sections}</p>}
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <Label htmlFor="total_students_estimate" className="text-sm font-medium">
@@ -978,7 +1081,9 @@ export default function AddSchoolDialog({ isOpen, onClose, onSuccess }: AddSchoo
               {formData.grades_offered.length > 0 && (
                 <span className="flex items-center gap-2">
                   <Key className="h-4 w-4" />
-                  {formData.grades_offered.length} joining code(s) will be generated
+                  {formData.number_of_sections && formData.number_of_sections > 0
+                    ? `${formData.grades_offered.length * formData.number_of_sections} joining code(s) will be generated (${formData.grades_offered.length} grades × ${formData.number_of_sections} sections)`
+                    : `${formData.grades_offered.length} joining code(s) will be generated`}
                 </span>
               )}
               {!isFormComplete() && (

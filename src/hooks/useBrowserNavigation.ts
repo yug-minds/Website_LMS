@@ -18,12 +18,12 @@ export interface UseBrowserNavigationOptions {
   /**
    * Callback to get state to save
    */
-  getStateToSave?: () => any;
+  getStateToSave?: () => unknown;
   
   /**
    * Callback when state should be restored
    */
-  onStateRestore?: (state: any) => void;
+  onStateRestore?: (state: unknown) => void;
   
   /**
    * Whether to handle popstate events (back/forward buttons) (default: true)
@@ -75,7 +75,7 @@ export function useBrowserNavigation(options: UseBrowserNavigationOptions = {}) 
 
   // All hooks must be called unconditionally (React rules)
   const appStore = useAppStore();
-  const isDirty = useFormStore((state: any) => state.isDirty);
+  const isDirty = useFormStore((state) => state.isDirty);
   const isClient = typeof window !== 'undefined';
   const currentComponentIdRef = useRef<string>(
     isClient ? (componentId || (pathname ? getComponentIdFromPath(pathname) : 'unknown')) : 'server'
@@ -112,7 +112,7 @@ export function useBrowserNavigation(options: UseBrowserNavigationOptions = {}) 
       return;
     }
 
-    const handlePopStateEvent = (event: PopStateEvent) => {
+    const handlePopStateEvent = (_event: PopStateEvent) => {
       if (typeof window === 'undefined') return;
       
       isNavigatingRef.current = true;
