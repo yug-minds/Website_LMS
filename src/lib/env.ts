@@ -10,22 +10,29 @@
 
 /**
  * Get required environment variable or throw error
+ * During Next.js build (phase-production-build), returns placeholders for NEXT_PUBLIC_* vars so the build can complete.
  * @param key - Environment variable name
  * @param description - Human-readable description for error message
  * @returns The environment variable value
- * @throws Error if variable is missing or empty
+ * @throws Error if variable is missing or empty (except during build for NEXT_PUBLIC_*)
  */
 export function getRequiredEnv(key: string, description?: string): string {
+  const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
   const value = process.env[key];
-  
+
   if (!value || value.trim() === '') {
-    const errorMessage = description 
+    // During build, allow NEXT_PUBLIC_* placeholders so static analysis/page collection succeeds
+    if (isBuildPhase && key.startsWith('NEXT_PUBLIC_')) {
+      if (key === 'NEXT_PUBLIC_SUPABASE_URL') return 'https://placeholder.supabase.co';
+      if (key === 'NEXT_PUBLIC_SUPABASE_ANON_KEY') return 'placeholder-anon-key';
+    }
+    const errorMessage = description
       ? `${description} (${key}) is required but not set`
       : `Environment variable ${key} is required but not set`;
-    
+
     throw new Error(errorMessage);
   }
-  
+
   return value;
 }
 

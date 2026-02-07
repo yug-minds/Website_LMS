@@ -4,13 +4,20 @@ import { getRequiredEnv } from './env'
 // Type for Supabase client - using Record<string, unknown> as database schema type
 type SupabaseClientType = SupabaseClient<Record<string, unknown>>
 
+// Build phase: Next.js sets NEXT_PHASE during 'next build'. Use placeholders so the app can compile.
+const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
+
 // Get environment variables - Next.js automatically exposes NEXT_PUBLIC_* vars to client
 // Access them directly via process.env which Next.js replaces at build time
 const supabaseUrlRaw = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKeyRaw = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
+// During build, use placeholders so createClient and imports don't throw
+const urlForNormalize = isBuildPhase ? 'https://placeholder.supabase.co' : supabaseUrlRaw;
+const keyForNormalize = isBuildPhase ? 'placeholder-anon-key' : supabaseAnonKeyRaw;
+
 // Ensure URL is properly formatted
-let supabaseUrl = supabaseUrlRaw.trim();
+let supabaseUrl = urlForNormalize.trim();
 // Remove trailing slash if present
 if (supabaseUrl) {
   supabaseUrl = supabaseUrl.replace(/\/$/, '');
@@ -25,13 +32,13 @@ if (supabaseUrl) {
   }
 }
 
-// Validate required environment variables
-if (!supabaseUrl || !supabaseAnonKeyRaw) {
+// Validate required environment variables (skip during build so CI/build can complete)
+if (!isBuildPhase && (!supabaseUrlRaw || !supabaseAnonKeyRaw)) {
   const missing = [];
-  if (!supabaseUrl) missing.push('NEXT_PUBLIC_SUPABASE_URL');
+  if (!supabaseUrlRaw) missing.push('NEXT_PUBLIC_SUPABASE_URL');
   if (!supabaseAnonKeyRaw) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 
-  // Only throw in production, log warning in development
+  // Only throw in production at runtime, log warning in development
   if (process.env.NODE_ENV === 'production') {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   } else {
@@ -40,8 +47,8 @@ if (!supabaseUrl || !supabaseAnonKeyRaw) {
   }
 }
 
-// Use the validated values
-const supabaseAnonKey = supabaseAnonKeyRaw;
+// Use the validated values (placeholders during build)
+const supabaseAnonKey = keyForNormalize;
 
 // Log the URL in development to help debug
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -228,7 +235,10 @@ function createSupabaseAdmin() {
   }
 
   try {
-    const supabaseServiceKey = getRequiredEnv('SUPABASE_SERVICE_ROLE_KEY', 'Supabase Service Role Key');
+    // During build, use placeholder so module can load; real key required at runtime
+    const supabaseServiceKey = isBuildPhase
+      ? 'placeholder-service-role-key'
+      : getRequiredEnv('SUPABASE_SERVICE_ROLE_KEY', 'Supabase Service Role Key');
 
     // Always log connection details (helps with debugging)
     console.log('🔧 [supabaseAdmin] Initializing admin client...')
